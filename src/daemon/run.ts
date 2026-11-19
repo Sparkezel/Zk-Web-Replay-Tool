@@ -70,6 +70,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       stdoutBuf = lines.pop() ?? "";
       for (const line of lines) {
         rawLines++;
+        if (rawLines % 10000 === 0) log.info(`capturing ... ${rawLines} stdout lines, ${zkrLines} ZKR`);
         const res = ingestLine(snapshot, line);
         if (res.isZkr) {
           zkrLines++;
