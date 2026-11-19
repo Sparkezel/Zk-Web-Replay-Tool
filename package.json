@@ -1,0 +1,16 @@
+{
+  "name": "zk-web-replay-tool",
+  "version": "0.1.0",
+  "description": "Parse Zero-K (.sdfz) demos and pack replay artifacts (.zkr) for the battle-result screen viewer",
+  "type": "module",
+  "license": "GPL-2.0-or-later",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test --experimental-strip-types test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
