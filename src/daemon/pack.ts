@@ -112,7 +112,10 @@ export function encodePos(snap: SnapshotData): Uint8Array {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
       w.s16(qx - prevX).s16(qz - prevZ);
-      w.u8(Math.round((s.hp ?? 1) * 255)).u8(Math.round((s.build ?? 1) * 255));
+      // hp/build arrive as 0..255 from the event model (samples carry raw 0..1 fractions);
+      // unknown (undefined) packs as 255 = full hp / finished build
+      w.u8(Math.max(0, Math.min(255, Math.round(s.hp ?? 255))))
+        .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
       prevX = qx;
       prevZ = qz;
     }

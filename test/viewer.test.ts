@@ -17,12 +17,12 @@ function syntheticSnapshot() {
     meta: { mapW: 16384, mapH: 16384, engine: "test" },
     units: new Map([
       [1, { unitID: 1, defID: 10, samples: [
-        { frame: 6, x: 1024.5, z: 2048.25, hp: 0.9, build: 1 },
-        { frame: 12, x: 1124.5, z: 2148.25, hp: 0.8, build: 1 },
-        { frame: 18, x: 1224.5, z: 2248.25, hp: 0.7, build: 1 },
+        { frame: 6, x: 1024.5, z: 2048.25, hp: 230, build: 255 },
+        { frame: 12, x: 1124.5, z: 2148.25, hp: 204, build: 255 },
+        { frame: 18, x: 1224.5, z: 2248.25, hp: 179, build: 255 },
       ] }],
       [2, { unitID: 2, defID: 11, samples: [
-        { frame: 6, x: 4096, z: 8192, hp: 1, build: 1 },
+        { frame: 6, x: 4096, z: 8192, hp: 255, build: 255 },
       ] }],
     ]),
     unitDefs: new Map(),

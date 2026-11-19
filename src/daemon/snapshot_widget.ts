@@ -54,10 +54,11 @@ local function num(v)
   return string.format("%.3f", v)
 end
 
+-- raw 0..1 fraction ("null" when unknown); the daemon scales to 0..255 at pack time
 local function frac(v)
   v = tonumber(v)
   if v == nil or v < 0 then return "null" end
-  return string.format("%d", math.floor(math.max(0, math.min(1, v)) * 255 + 0.5))
+  return string.format("%.3f", math.max(0, math.min(1, v)))
 end
 
 local function maybeUdef(defID)
@@ -94,9 +95,11 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
     builderDef = Spring.GetUnitDefID(builderID) or -1
     maybeUdef(builderDef)
   end
+  local x, _, z = Spring.GetUnitPosition(unitID)
   emit('{"t":"spawn","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
     ',"d":' .. (unitDefID or -1) .. ',"n":"' .. name .. '","tm":' .. (unitTeam or -1) ..
-    ',"b":' .. (builderID or -1) .. ',"bd":' .. builderDef .. '}')
+    ',"b":' .. (builderID or -1) .. ',"bd":' .. builderDef ..
+    ',"x":' .. num(x) .. ',"z":' .. num(z) .. '}')
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)

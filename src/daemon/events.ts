@@ -107,6 +107,7 @@ const LINK_PAIR = { djinn: "amphtele", lamp: "tele_beacon" } as const;
 const LINK_OPEN_SENTINEL = 0xffffffff;
 
 function num(v: unknown, fallback = -1): number {
+  if (v === null || v === undefined) return fallback;
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
@@ -195,8 +196,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
             lampID: unitID,
             team,
             openFrame: frame,
-            lampX: ev["x"] !== undefined ? num(ev["x"]) : undefined,
-            lampZ: ev["z"] !== undefined ? num(ev["z"]) : undefined,
+            lampX: ev["x"] !== undefined && ev["x"] !== null ? num(ev["x"]) : undefined,
+            lampZ: ev["z"] !== undefined && ev["z"] !== null ? num(ev["z"]) : undefined,
           });
         }
       }
