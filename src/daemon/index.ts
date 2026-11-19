@@ -12,6 +12,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseDemoAuto } from "../demo/load.js";
 import type { ParsedDemo } from "../demo/parse.js";
 import { buildZkrFromDemo } from "../zkr/build.js";
@@ -57,8 +58,9 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
     await downloadFile(demoUrl(job.battleID), demoPath, log);
   }
   if (!existsSync(demoPath)) throw new Error(`demo not found: ${demoPath}`);
+  log.info(`parsing demo ${demoPath} ...`);
   const demo: ParsedDemo = loadDemoFile(demoPath);
-  log.info(`demo ${path.basename(demoPath)}: engine=${demo.header.versionString} players=${demo.header.numPlayers} complete=${demo.complete}`);
+  log.info(`parsed demo ${path.basename(demoPath)}: engine=${demo.header.versionString} players=${demo.header.numPlayers} teams=${demo.header.numTeams ?? "?"} complete=${demo.complete}`);
 
   let zkrLines = 0;
   let resimulated = false;
@@ -83,12 +85,13 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   }
 
   const artifactPath = job.outPath ?? path.join(root, "artifacts", `${battleID}.zkr`);
+  log.info(`packing ${snap !== undefined ? "resim" : "cheap-parse"} sections ...`);
   mkdirSync(path.dirname(artifactPath), { recursive: true });
   const zkr = snap !== undefined
     ? buildZkrFromResim(snap, { demo, posRate: job.posRate, projectiles: job.projectiles })
     : buildZkrFromDemo(demo);
   writeFileSync(artifactPath, zkr);
-  log.info(`artifact: ${artifactPath} (${zkr.byteLength} bytes, resim=${resimulated})`);
+  log.info(`artifact written: ${artifactPath} (${zkr.byteLength} bytes, resim=${resimulated})`);
 
   return {
     battleID,
@@ -152,11 +155,18 @@ export async function main(argv: string[]): Promise<number> {
   const log = consoleLogger;
   try {
     const job = parseArgs(argv);
+    log.info(`zkr-daemon: demo=${job.demoPath ?? job.battleID} out=${job.outPath ?? "<workDir>"} projectiles=${job.projectiles} posRate=${job.posRate} skipResim=${job.skipResim === true}`);
     const result = await resimBattle(job, log);
     log.info(`done: battle=${result.battleID} artifact=${result.artifactPath} resim=${result.resimulated} zkrLines=${result.zkrLines}`);
     return 0;
   } catch (err) {
     log.error(err instanceof Error ? err.message : String(err));
+    log.error("run failed; no artifact was written (or a stale one is left in place)");
     return 1;
   }
+}
+
+// executed directly: `node dist/daemon/index.js --demo ...`
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  process.exitCode = await main(process.argv.slice(2));
 }
