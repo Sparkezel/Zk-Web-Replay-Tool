@@ -125,14 +125,15 @@ export interface IngestResult {
 }
 
 /**
- * Feed one captured stdout line. Lines that do not start with `ZKR ` are
- * ignored (engine chatter); ZKR lines add to the snapshot.
+ * Feed one captured stdout line. The engine prefixes log output on stdout with
+ * `[t=...][f=...]`, so `ZKR ` is located after that prefix rather than matched
+ * at line start; non-ZKR lines are ignored (engine chatter).
  */
 export function ingestLine(snap: SnapshotData, line: string): IngestResult {
-  const trimmed = line.trimStart();
-  if (!trimmed.startsWith("ZKR ")) return { isZkr: false, ok: false };
+  const idx = line.indexOf("ZKR {");
+  if (idx === -1) return { isZkr: false, ok: false };
   try {
-    ingestEvent(snap, JSON.parse(trimmed.slice(4)) as Record<string, unknown>);
+    ingestEvent(snap, JSON.parse(line.slice(idx + 4)) as Record<string, unknown>);
     return { isZkr: true, ok: true };
   } catch {
     return { isZkr: true, ok: false };
