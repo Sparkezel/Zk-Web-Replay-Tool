@@ -7,6 +7,7 @@
  *              [--pos-rate N] [--projectiles none|beams|heavy|all]
  *              [--script springscript.txt] [--no-resim]
  *              [--timeout SEC] [--status-every-sec N] [--game-over-grace-sec N]
+ *              [--speed N]   sim-speed multiplier (default 5 for max engine resim speed)
  *
  * Without an engine available the daemon still packs a valid artifact from
  * the cheap-parse demo sections (M1 data only, no POS/EVNT/PROJ/LINK rows).
@@ -23,7 +24,7 @@ import { stageDataDir } from "./stage.js";
 import { newSnapshot, type SnapshotData } from "./events.js";
 import { loadDemoFile, runHeadlessCapture, writeStartscript } from "./run.js";
 import { buildZkrFromResim, type PackOptions } from "./pack.js";
-import { SNAPSHOT_WIDGET_LUA, SNAPSHOT_WIDGET_NAME } from "./snapshot_widget.js";
+import { SNAPSHOT_WIDGET_LUA, SNAPSHOT_WIDGET_NAME, speedUpPressesFor } from "./snapshot_widget.js";
 import type { ProjectilePreset } from "./classify.js";
 
 export type { ProjectilePreset } from "./classify.js";
@@ -47,6 +48,8 @@ export interface ResimJob {
   statusEverySec?: number;
   /** seconds past game-over before a lingering engine gets killed (default 30, 0 disables) */
   gameOverGraceSec?: number;
+  /** wanted sim-speed multiplier applied via engine /speedup at game start (default 1) */
+  speedFactor?: number;
 }
 
 export interface ResimResult {
@@ -92,11 +95,11 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
         : undefined;
       if (dataDir !== undefined) {
         mkdirSync(path.join(dataDir, "LuaUI", "Widgets"), { recursive: true });
-        injectWidget(dataDir, log);
+        injectWidget(dataDir, job.speedFactor, log);
       }
       const writeDir = path.join(root, "engine-write");
       mkdirSync(path.join(writeDir, "LuaUI", "Widgets"), { recursive: true });
-      injectWidget(writeDir, log);
+      injectWidget(writeDir, job.speedFactor, log);
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
@@ -138,14 +141,16 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   };
 }
 
-export function injectWidget(gameDataDir: string, log: Logger = consoleLogger): string | null {
+export function injectWidget(gameDataDir: string, speedFactor = 1, log: Logger = consoleLogger): string | null {
   const widgetsDir = path.join(gameDataDir, "LuaUI", "Widgets");
   if (!existsSync(widgetsDir)) {
     log.warn(`no LuaUI/Widgets dir at ${widgetsDir}; widget not injected`);
     return null;
   }
+  const speedPresses = speedUpPressesFor(speedFactor);
+  const widgetSource = SNAPSHOT_WIDGET_LUA.replace(/__ZKR_SPEEDUP_PRESSES__/g, String(speedPresses));
   const widgetPath = path.join(widgetsDir, SNAPSHOT_WIDGET_NAME);
-  writeFileSync(widgetPath, SNAPSHOT_WIDGET_LUA);
+  writeFileSync(widgetPath, widgetSource);
   log.info(`snapshot widget injected: ${widgetPath}`);
   return widgetPath;
 }
@@ -177,6 +182,7 @@ export function parseArgs(argv: string[]): ResimJob {
         break;
       }
       case "--no-resim": job.skipResim = true; break;
+      case "--speed": job.speedFactor = Math.max(1, Number(next()) || 1); break;
       case "--data-root": job.dataRoot = next(); break;
       case "--timeout": job.timeoutSec = Math.max(1, Number(next()) | 0); break;
       case "--status-every-sec": job.statusEverySec = Math.max(0, Number(next()) | 0); break;

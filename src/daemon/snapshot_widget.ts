@@ -6,6 +6,22 @@
  */
 export const SNAPSHOT_WIDGET_NAME = "zkreplay_snapshot.lua";
 
+export interface WidgetInjectionOptions {
+  /** wanted sim-speed factor; each engine /speedup steps 0.1 below 2x, 0.2 below 5x, 0.5 beyond */
+  speedFactor?: number;
+}
+
+/** count of `/speedup` sends a widget needs on GameStart to reach the factor */
+export function speedUpPressesFor(targetFactor: number): number {
+  let presses = 0;
+  let speed = 1.0;
+  while (speed < targetFactor - 1e-6 && presses < 1000) {
+    speed += speed < 2 ? 0.1 : speed < 5 ? 0.2 : 0.5;
+    presses++;
+  }
+  return presses;
+}
+
 export const SNAPSHOT_WIDGET_LUA = String.raw`
 function widget:GetInfo()
   return {
@@ -114,6 +130,15 @@ function widget:GameFrame(frame)
         ',"d":' .. wdefID .. ',"tm":' .. (team or -1) ..
         ',"x":' .. num(x) .. ',"y":' .. num(y) .. ',"z":' .. num(z) .. '}')
     end
+  end
+end
+
+function widget:GameStart()
+  -- engine clamps to GameSetup maxSpeed (default 20); each /speedup raises
+  -- wantedSpeedFactor by 0.1 below 5, 0.5 up to 10, 1.0 beyond
+  local presses = __ZKR_SPEEDUP_PRESSES__
+  for i = 1, presses do
+    Spring.SendCommands("speedup")
   end
 end
 
