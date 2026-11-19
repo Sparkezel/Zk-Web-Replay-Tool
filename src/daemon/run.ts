@@ -33,6 +33,8 @@ export interface RunOptions {
   gameOverGraceSec?: number;
   /** seconds between status lines (default 5, 0 disables) */
   statusEverySec?: number;
+  /** kill the engine when zero ZKR lines were captured this many seconds after the sim started (default 120, 0 disables); a broken widget would otherwise waste the whole timeout */
+  noZkrSec?: number;
   log?: Logger;
 }
 
@@ -79,6 +81,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let timedOut = false;
   let gameOverAt = 0;
   let warnedGameOver = false;
+  let simStartedAt = 0;
   let simFrame = 0;
   let phase = "booting";
 
@@ -109,17 +112,28 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
     }, opts.timeoutMs ?? 30 * 60 * 1000);
 
     const startedAt = Date.now();
-    const statusTimer = setInterval(() => {
-      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
-      const pct = opts.lastFrame ? Math.min(100, Math.round((100 * simFrame) / opts.lastFrame)) : "?";
-      log.info(`engine: ${phase} frame=${simFrame}${opts.lastFrame ? `/${opts.lastFrame} (${pct}%)` : ""} zkr=${zkrLines} stdout=${rawLines} ${elapsedSec}s`);
+    const watchdog = setInterval(() => {
+      const noZkrMs = (opts.noZkrSec ?? 120) * 1000;
+      if (noZkrMs > 0 && simStartedAt > 0 && zkrLines === 0 && Date.now() - simStartedAt > noZkrMs) {
+        log.warn(`sim running for ${opts.noZkrSec ?? 120}s with zero ZKR lines captured; assuming broken widget, killing engine (pid ${proc.pid})`);
+        log.warn("check the widget load errors in engine-stdout.log / logs dir; extend the grace with --no-zkr-sec 0 to disable this abort");
+        clearInterval(watchdog);
+        proc.kill("SIGKILL");
+        return;
+      }
       const graceMs = (opts.gameOverGraceSec ?? 30) * 1000;
       if (graceMs > 0 && gameOverAt > 0 && Date.now() - gameOverAt > graceMs) {
         if (!warnedGameOver) log.warn(`game over captured over ${opts.gameOverGraceSec ?? 30}s ago; killing lingering engine (pid ${proc.pid})`);
         warnedGameOver = true;
         proc.kill("SIGKILL");
       }
-    }, (opts.statusEverySec ?? 5) * 1000);
+    }, 1000);
+    const statusEveryMs = (opts.statusEverySec ?? 5) * 1000;
+    const statusTimer = setInterval(() => {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const pct = opts.lastFrame ? Math.min(100, Math.round((100 * simFrame) / opts.lastFrame)) : "?";
+      log.info(`engine: ${phase} frame=${simFrame}${opts.lastFrame ? `/${opts.lastFrame} (${pct}%)` : ""} zkr=${zkrLines} stdout=${rawLines} ${elapsedSec}s`);
+    }, statusEveryMs);
 
     let stdoutBuf = "";
     proc.stdout!.on("data", (chunk: Buffer) => {
@@ -133,6 +147,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
         if (/\[PreGame::StartServer\]|\[GameServer\]/.test(line)) advance("starting");
         const fm = /\[f=(\d+)\]/.exec(line);
         if (fm) {
+          if (simStartedAt === 0) simStartedAt = Date.now();
           simFrame = Math.max(simFrame, Number(fm[1]));
           advance("simulating");
         }
@@ -152,11 +167,13 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
 
     proc.on("error", (err) => {
       clearTimeout(timeout);
+      clearInterval(watchdog);
       clearInterval(statusTimer);
       reject(err);
     });
     proc.on("close", (code) => {
       clearTimeout(timeout);
+      clearInterval(watchdog);
       clearInterval(statusTimer);
       log.info(`engine exited code=${code} timedOut=${timedOut} zkrLines=${zkrLines}/${rawLines} frame=${simFrame} phase=${phase}`);
       if (opts.logDir) {

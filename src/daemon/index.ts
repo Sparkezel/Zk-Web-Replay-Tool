@@ -8,6 +8,7 @@
  *              [--script springscript.txt] [--no-resim]
  *              [--timeout SEC] [--status-every-sec N] [--game-over-grace-sec N]
  *              [--speed N]   sim-speed multiplier (default 5 for max engine resim speed)
+ *              [--no-zkr-sec N]  abort when no ZKR captured N sec into the sim (default 120, 0 disables)
  *
  * Without an engine available the daemon still packs a valid artifact from
  * the cheap-parse demo sections (M1 data only, no POS/EVNT/PROJ/LINK rows).
@@ -50,6 +51,8 @@ export interface ResimJob {
   gameOverGraceSec?: number;
   /** wanted sim-speed multiplier applied via engine /speedup at game start (default 1) */
   speedFactor?: number;
+  /** kill the resim when zero ZKR lines were captured this many seconds after sim start (default 120, 0 disables) */
+  zkrAbortSec?: number;
 }
 
 export interface ResimResult {
@@ -108,6 +111,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
         timeoutMs: job.timeoutSec !== undefined ? job.timeoutSec * 1000 : undefined,
         statusEverySec: job.statusEverySec,
         gameOverGraceSec: job.gameOverGraceSec,
+        noZkrSec: job.zkrAbortSec,
         lastFrame: Math.round(demo.stream.lastModGameTime * 30),
       });
       snap = run.snapshot;
@@ -183,6 +187,7 @@ export function parseArgs(argv: string[]): ResimJob {
       }
       case "--no-resim": job.skipResim = true; break;
       case "--speed": job.speedFactor = Math.max(1, Number(next()) || 1); break;
+      case "--no-zkr-sec": job.zkrAbortSec = Math.max(0, Number(next()) | 0); break;
       case "--data-root": job.dataRoot = next(); break;
       case "--timeout": job.timeoutSec = Math.max(1, Number(next()) | 0); break;
       case "--status-every-sec": job.statusEverySec = Math.max(0, Number(next()) | 0); break;
