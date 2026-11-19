@@ -7,6 +7,18 @@
 export const SNAPSHOT_WIDGET_NAME = "zkreplay_snapshot.lua";
 
 export const SNAPSHOT_WIDGET_LUA = String.raw`
+function widget:GetInfo()
+  return {
+    name    = "ZKR Snapshot",
+    desc    = "Captures POS/EVNT/PROJ/LINK data and prints ZKR lines for the resim daemon",
+    author  = "zk-web-replay-tool",
+    date    = "2026-07-04",
+    license = "GPL-2.0-or-later",
+    layer   = 0,
+    enabled = true,
+  }
+end
+
 local probeEvery = 6 -- frames between probes (6 @ 30 fps = 0.2 s)
 local knownUnitDefs = {}
 local knownWeaponDefs = {}
