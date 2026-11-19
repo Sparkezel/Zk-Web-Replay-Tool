@@ -20,3 +20,16 @@ consumes): [`docs/REPLAY_LOGGING_SPEC.md`](docs/REPLAY_LOGGING_SPEC.md)
 
 After enabling GitHub Pages (Settings → Pages → Deploy from branch `gh-pages`):
 https://sparkezel.github.io/Zk-Web-Replay-Tool/
+
+## M1 — demo parser + `.zkr` writer
+
+- `src/demo/` — `.sdfz` demo parsing: 352-byte header, startscript (rosters,
+  allyteams, modoptions, commanders), network-message stream (chat, mapdraws,
+  start positions, game-overs, player stats, per-type chunk counts), winners,
+  player/team stat blocks. Usable from Node: `parseSdfzFile(path)`.
+- `src/zkr/` — `.zkr` v1 sectioned artifact (per
+  [`docs/REPLAY_LOGGING_SPEC.md`](docs/REPLAY_LOGGING_SPEC.md)); cheap-parse
+  sections (META/ROST/PSTA/ECO/MACR/CHAT/DRAW) written from the demo alone,
+  POS/EVNT/PROJ/LINK follow with the M2 headless resim.
+- Validated against battle [2539874](https://zero-k.info/Battles/Detail/2539874)
+  (1.75 MB demo → 96 KB artifact; gameID 3da5f96a… matches End-of-file stats).
