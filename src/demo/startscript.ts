@@ -13,6 +13,8 @@ export interface ParsedStartscript {
   sections: Record<string, StartscriptSection[]>;
   /** first top-level `game` section's flat lookup */
   root: StartscriptSection;
+  /** original script text (for the engine during resim) */
+  raw: string;
 }
 
 export function parseStartscript(text: string): ParsedStartscript {
@@ -78,7 +80,7 @@ export function parseStartscript(text: string): ParsedStartscript {
     }
   }
 
-  return { sections, root };
+  return { sections, root, raw: text };
 }
 
 export interface ParsedRosterPlayer {
