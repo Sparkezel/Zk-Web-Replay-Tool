@@ -76,7 +76,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
     if (engineDir !== undefined && headlessBinaryPath(engineDir) !== null) {
       const scriptPath = job.scriptPath ?? writeStartscript(demo, path.resolve(root, "script.txt"));
       const dataDir = job.dataRoot !== undefined
-        ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, engineDir, log })
+        ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, log })
         : undefined;
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
