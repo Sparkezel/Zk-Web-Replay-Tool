@@ -62,6 +62,11 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (opts.dataDir) env.SPRING_DATADIR = opts.dataDir;
   if (opts.writeDir) env.SPRING_WRITEDIR = opts.writeDir;
+  if (opts.writeDir) mkdirSync(opts.writeDir, { recursive: true });
+
+  // persist the engine's raw output; when it crashes before game start the
+  // fatal line only ever shows up here, never inside the packed artifact
+  const rawOutput: string[] = [];
 
   return new Promise((resolve, reject) => {
     const proc = spawn(enginePath, [opts.scriptPath], {
@@ -82,6 +87,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       stdoutBuf = lines.pop() ?? "";
       for (const line of lines) {
         rawLines++;
+        rawOutput.push(line);
         if (rawLines % 10000 === 0) log.info(`capturing ... ${rawLines} stdout lines, ${zkrLines} ZKR`);
         const res = ingestLine(snapshot, line);
         if (res.isZkr) {
@@ -102,7 +108,11 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       log.info(`engine exited code=${code} timedOut=${timedOut} zkrLines=${zkrLines}/${rawLines}`);
       if (opts.logDir) {
         mkdirSync(opts.logDir, { recursive: true });
+        writeFileSync(path.join(opts.logDir, "engine-stdout.log"), rawOutput.join("\n"));
         writeFileSync(path.join(opts.logDir, "engine-stderr.log"), Buffer.concat(errChunks));
+      }
+      if (zkrLines === 0 && rawOutput.length > 0) {
+        log.warn(`no ZKR frames captured; last engine output:\n${rawOutput.slice(-5).join("\n")}`);
       }
       resolve({ code, timedOut, snapshot, rawLines, zkrLines });
     });
