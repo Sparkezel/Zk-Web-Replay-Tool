@@ -107,7 +107,7 @@
 
 <div class="wrap">
   <div class="crumbs">Home › Replays › Battle detail</div>
-  <div class="mock-note">⚠ Mockup – layout exploration for the battle-result page. The replay stage shows synthetic data; in production it renders a pre-simulated artifact (unit snapshots + death/kill events) generated server-side from the .sdfz demo.</div>
+  <div class="mock-note">⚠ Mockup – layout exploration for the battle-result page. The replay stage renders <code>battle.zkr</code> (the pre-simulated artifact produced by the resim daemon) when placed next to this page; without it, synthetic preview data is shown.</div>
 
   <div class="head">
     <h1>[A] Teams All Welcome #1</h1>
@@ -226,146 +226,223 @@
 
 <div class="footer">Zero-K battle detail mockup · synthetic replay data · demo source: zero-k.info/replays 2539874</div>
 
+<script src="replay.js"></script>
 <script>
-/* ================= synthetic battle ================= */
-var T1="#8bd34f", T2="#e05a4e";
+/* ================= page model ================= */
+var T_COLORS = ["#8bd34f", "#e05a4e", "#4aa3e8", "#d9b545"];
+var MODEL = null;
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
-var R=mulberry(2539874);
-
-// map blob (stylised Otago: rocky plateaus)
-var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
-
-var units=[], projectiles=[], END=1516, feedData=[], ecoPts=[];
-function spawn(t,tm,x,y,kind){units.push({t:t,born:tm,died:-1,x:x,y:y,tx:x,ty:y,kind:kind||R()<.2?"str":R()<.4?"sup":"base",hp:1})}
-// scripted macro-plan: both teams push from opposite corners, fights at mid
-for(tm=30;tm<1330;tm+=6+R()*10){
-  var p=R(), x,y;
-  if(p<.62){x=.12+R()*.14+(tm/1330)*.4+R()*.08; y=.35+R()*.3;}        // push lane
-  else if(p<.85){x=.08+R()*.15; y=.15+R()*.7;}                        // expansions
-  else {x=.85+R()*.1; y=.35+R()*.3;}                                  // raider flank (team2)
-  if(R()<.5){y=1-y; x=1-x}
-  spawn(p<.5?1:2,tm,x,y);
-}
-// deaths: attrition, staggered; team2 loses more (winners=team1)
-var deathtimes=[];
-for(var u of units){ if(R()<.35) continue;
-  deathtimes.push({u:u,tm:120+R()*1180});}
-deathtimes=deathtimes.sort(function(a,b){return a.tm-b.tm});
-deathtimes.forEach(function(d,ix){
-  d.u.died=d.tm;
-  var w=R()<.58?2:1; // attacker team
-  feedData.push({tm:d.tm,cls:R()<.3?"kill":"death",
-     txt:(ix%3==0?"Commander strike! ":"")+"Unit lost — killed by Team "+w});
-});
-// kill projectiles for some deaths
-units.forEach(function(u){ if(u.died>0&&R()<.3){
-  projectiles.push({born:u.died-2,impact:u.died,x:u.x+(R()-.5)*.3,y:u.y+(R()-.5)*.3,tx:u.x,ty:u.y});
-}});
-// economy curves
-for(var s=0;s<=1516;s+=15){var f=s/1516;
-  ecoPts.push([s, 1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)), 1-Math.pow(1-f,2.4)]);}
-
-function aliveAt(u,tm){return u.born<=tm&&(u.died<0||u.died>tm)}
-function ease(u,tm){ // simple drift toward lane mid
-  var age=(tm-u.born)/100; if(age>1)age=1;
-  var k=u.t==1?1:-1;
-  var x=u.x+0.10*k*age*(0.4+0.6*Math.sin(u.y*9)*Math.sin(u.y*9));
-  return {x:Math.min(1,Math.max(0,x)),y:u.y};
-}
 function fmt(s){var m=(s/60)|0;var ss=(s|0)%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
+function teamColor(t){return T_COLORS[((t%T_COLORS.length)+T_COLORS.length)%T_COLORS.length]}
 
-/* ================= rendering ================= */
+/* ---------- synthetic preview (fallback when battle.zkr is absent) ---------- */
+function buildSyntheticModel(){
+  var R=mulberry(2539874);
+  var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
+  var units=[],projectiles=[],END=1516,feedData=[],ecoPts=[];
+  function spawn(tn,tm,x,y){units.push({t:tn,born:tm,died:-1,kind:R()<.2?"str":R()<.4?"sup":"base",
+    posAt:function(tm2){var age=(tm2-tm)/100;if(age>1)age=1;var k=tn==1?1:-1;
+      var x2=x+0.10*k*age*(0.4+0.6*Math.sin(y*9)*Math.sin(y*9));
+      return {x:Math.min(1,Math.max(0,x2)),y:y,hp:1}}})}
+  for(var tm=30;tm<1330;tm+=6+R()*10){var p=R(),x,y;
+    if(p<.62){x=.12+R()*.14+(tm/1330)*.4+R()*.08;y=.35+R()*.3;}
+    else if(p<.85){x=.08+R()*.15;y=.15+R()*.7;}
+    else{x=.85+R()*.1;y=.35+R()*.3;}
+    if(R()<.5){y=1-y;x=1-x}
+    spawn(p<.5?1:2,tm,x,y);}
+  var deathtimes=[];
+  units.forEach(function(u){if(R()<.35)return;deathtimes.push({u:u,tm:120+R()*1180});});
+  deathtimes.sort(function(a,b){return a.tm-b.tm});
+  deathtimes.forEach(function(d){
+    d.u.died=d.tm;
+    feedData.push({tm:d.tm,cls:"death",txt:"Unit lost \u2014 killed by Team "+(R()<.58?2:1)});});
+  units.forEach(function(u){if(u.died>0&&R()<.3){
+    var bx=u.posAt(u.died);var sx=bx.x+(R()-.5)*.3,sy=bx.y+(R()-.5)*.3,born=u.died-2;
+    projectiles.push({born:born,impact:u.died,
+      posAt:function(tm2){if(tm2<this.born||tm2>this.impact)return null;var f=(tm2-this.born)/(this.impact-this.born);
+        var px=sx+(bx.x-sx)*f,py=sy+(bx.y-sy)*f;
+        var f2=Math.max(0,f-.25);
+        return {x:px,y:py,prev:{x:sx+(bx.x-sx)*f2,y:sy+(bx.y-sy)*f2}}}});}});
+  for(var s=0;s<=1516;s+=15){var f=s/1516;
+    ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
+  return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
+    winner:1,teams:[1,2],synthetic:true};
+}
+
+/* ---------- artifact model (battle.zkr) ---------- */
+function buildArtifactModel(artifact){
+  var m=ZkrReplay.artifactToModel(artifact);
+  var R=mulberry(2539874);
+  var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
+  var units=m.units.map(function(u){
+    return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
+      posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp}}};});
+  var projectiles=m.projectiles.map(function(p){
+    return {born:p.born,impact:p.end,
+      posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
+        var s=ZkrReplay.pathAt(p.path,tm);
+        var pr=ZkrReplay.pathAt(p.path,Math.max(p.born,tm-0.5));
+        return {x:s.x,y:s.z,prev:{x:pr.x,y:pr.z}}}};});
+  var tset={};
+  m.units.forEach(function(u){if(u.team>=0)tset[u.team]=1});
+  var teams=Object.keys(tset).map(Number).sort(function(a,b){return a-b});
+  if(teams.length===0)teams=[0];
+  return {units:units,projectiles:projectiles,feedData:m.feedData,
+    ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,teams:teams,
+    END:m.END||1516,synthetic:false,
+    links:m.links,
+    meta:{map:m.mapName,game:m.gameVersion,engine:m.engine}};
+}
+
+/* ================= renderer ================= */
 var cv=document.getElementById("replay"),cx=cv.getContext("2d");
-function draw(tm){
+function draw(model,tm){
   var W=cv.width,H=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
-  blobs.forEach(function(b){cx.fillStyle="#20262a";
+  model.blobs.forEach(function(b){cx.fillStyle="#20262a";
     cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
-  // territory tint
-  cx.fillStyle="rgba(106,184,64,.05)";cx.fillRect(0,0,W*(0.35+0.5*adv),H);
-  cx.fillStyle="rgba(224,90,78,.05)";cx.fillRect(W*(0.65-0.5*adv),0,W*(0.35+0.5*(1-adv)),H);
-  // startboxes
   cx.strokeStyle="rgba(139,211,79,.6)";cx.strokeRect(W*.04,H*.3,W*.16,H*.4);
   cx.strokeStyle="rgba(224,90,78,.6)";cx.strokeRect(W*.8,H*.3,W*.16,H*.4);
-  // units
+  if(model.links){
+    cx.setLineDash([6,4,2,4]);
+    model.links.forEach(function(l){
+      if(l.open>tm||(l.close>0&&l.close<tm))return;
+      var dj=null;
+      for(var i=0;i<model.units.length;i++){if(model.units[i].id===l.djinnID){dj=model.units[i];break}}
+      var djp=dj?dj.posAt(tm):null;
+      cx.strokeStyle=teamColor(l.team);cx.lineWidth=1.2;cx.globalAlpha=.8;
+      cx.beginPath();cx.moveTo(djp?djp.x*W:l.lampX*W,djp?djp.y*H:l.lampZ*H);
+      cx.lineTo(l.lampX*W,l.lampZ*H);cx.stroke();
+    });
+    cx.setLineDash([]);cx.globalAlpha=1;cx.lineWidth=1;
+  }
   var n1=0,n2=0;
-  units.forEach(function(u){
-    if(!aliveAt(u,tm))return;
-    var pos=ease(u,tm),x=pos.x*W,y=pos.y*H;
-    if(u.t==1)n1++;else n2++;
-    cx.fillStyle=u.t==1?T1:T2;
-    var r=u.kind=="str"?5:u.kind=="sup"?4:3;
+  model.units.forEach(function(u){
+    var pos=u.posAt(tm);
+    if(!pos)return;
+    if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
+    var x=pos.x*W,y=pos.y*H;
+    var r=u.kind?u.kind=="str"?5:u.kind=="sup"?4:3:
+      (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
+    cx.fillStyle=teamColor(u.t);
     cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
-    if(u.hp<1){cx.strokeStyle="rgba(217,181,69,.9)";cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke()}
+    if(pos.hp!==undefined&&pos.hp<0.999){cx.strokeStyle="rgba(217,181,69,.9)";cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke()}
   });
-  // projectile tracers
-  projectiles.forEach(function(pr){
-    if(tm<pr.born||tm>pr.impact)return;
-    var f=(tm-pr.born)/(pr.impact-pr.born);
-    var x=(pr.x+(pr.tx-pr.x)*f)*W,y=(pr.y+(pr.ty-pr.y)*f)*H;
+  model.projectiles.forEach(function(pr){
+    var pos=pr.posAt(tm);
+    if(!pos)return;
+    var x=pos.x*W,y=pos.y*H;
     cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
-    cx.beginPath();cx.moveTo((pr.x+(pr.tx-pr.x)*Math.max(0,f-.25))*W,(pr.y+(pr.ty-pr.y)*Math.max(0,f-.25))*H);
-    cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
-    cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6*(1-f)+2,0,7);cx.fill();
+    cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
+    cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
   });
   document.getElementById("cnt1").textContent=n1;
   document.getElementById("cnt2").textContent=n2;
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
-  document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(END);
-  document.getElementById("timeline").value=Math.min(tm,END);
-  if(tm>=END)document.getElementById("victory").classList.add("show");
-  else document.getElementById("victory").classList.remove("show");
+  document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
+  document.getElementById("timeline").value=Math.min(tm,model.END);
+  var vic=document.getElementById("victory");
+  if(tm>=model.END){vic.classList.add("show");
+    document.querySelector("#victory .big").textContent=(model.winner!==null&&model.winner!==undefined)?("Team "+(model.winner+1)+" wins"):"Game over";
+    document.querySelector("#victory .sub").textContent="game time "+fmt(model.END);}
+  else vic.classList.remove("show");
 }
 
-/* event feed: rendered up to current time */
-function renderFeed(tm){
+/* event feed up to current time */
+function renderFeed(model,tm){
   var el=document.getElementById("feed");var html="";
-  for(var i=feedData.length-1;i>=0;i--){var e=feedData[i];
+  for(var i=model.feedData.length-1;i>=0;i--){var e=model.feedData[i];
     if(e.tm>tm)continue;
-    html+='<li class="'+e.cls+'"><b>'+e.txt+"</b> (Team "+(e.cls=="kill"?1:2)+")<time>"+fmt(e.tm)+"</time></li>";
+    html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
     if(html.length>4000)break;}
-  el.innerHTML=html||'<li style="color:#5b666d">No events yet — press Play.</li>';
-  var first=el.firstChild; if(first)el.scrollTop=0;
+  el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
+  var first=el.firstChild;if(first)el.scrollTop=0;
 }
 
-/* economy chart up to tm */
+/* economy chart up to tm; artifact ecoPts: [{team,pts:[[s,val]..]}], synthetic: [[s,t1,t2]] */
 var ec=document.getElementById("eco"),ex=ec.getContext("2d");
-function drawEco(tm){
+function drawEco(model,tm){
   ex.clearRect(0,0,ec.width,ec.height);
-  function line(idx,col){ex.strokeStyle=col;ex.beginPath();
-    ecoPts.forEach(function(p){if(p[0]>tm)return;
-      var X=p[0]/END*ec.width,Y=ec.height-4-(ec.height-10)*p[idx];
-      if(X==0)ex.moveTo(X,Y);else ex.lineTo(X,Y);});
-    ex.stroke();}
-  line(1,T1);line(2,T2);
+  var series=[];
+  if(model.ecoPts.length&&model.ecoPts[0].team!==undefined){
+    model.ecoPts.forEach(function(t){series.push({col:teamColor(t.team),pts:t.pts});});
+  }else{
+    var flat=model.ecoPts;
+    series.push({col:T_COLORS[0],pts:flat.map(function(p){return [p[0],p[1]]})});
+    series.push({col:T_COLORS[1],pts:flat.map(function(p){return [p[0],p[2]]})});
+  }
+  series.forEach(function(s){
+    var mx=1e-9;
+    s.pts.forEach(function(p){if(p[1]>mx)mx=p[1]});
+    ex.strokeStyle=s.col;ex.beginPath();
+    s.pts.forEach(function(p){
+      if(p[0]>tm)return;
+      var X=p[0]/model.END*ec.width,Y=ec.height-4-(ec.height-10)*(p[1]/mx);
+      if(X===0)ex.moveTo(X,Y);else ex.lineTo(X,Y);});
+    ex.stroke();});
 }
 
 /* ================= playback loop ================= */
-var t=0, playing=false, speed=10; // 10 sim-seconds per real second
+var t=0, playing=false, speed=10;
 var speeds=[1,2,4,10,30,60], sbox=document.getElementById("speeds");
 speeds.forEach(function(s){var b=document.createElement("button");
-  b.textContent=s+"×"; b.className=s==speed?"on":""; b.onclick=function(){speed=s;
+  b.textContent=s+"\u00d7"; b.className=s==speed?"on":"";
+  b.onclick=function(){speed=s;
     [].forEach.call(sbox.children,function(c){c.classList.remove("on")});b.classList.add("on");};
   sbox.appendChild(b);});
 var pb=document.getElementById("playBtn");
-pb.onclick=function(){playing=!playing;if(t>=END)t=0;pb.textContent=playing?"⏸ Pause":"▶ Play";};
+pb.onclick=function(){playing=!playing;if(t>=MODEL.END)t=0;pb.textContent=playing?"\u23f8 Pause":"\u25b6 Play";};
 document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
-function drawFrame(){draw(t);renderFeed(t);drawEco(t);}
+function drawFrame(){draw(MODEL,t);renderFeed(MODEL,t);drawEco(MODEL,t);}
 var last=performance.now();
 function loop(now){var dt=(now-last)/1000;last=now;
-  if(playing){t=Math.min(END,t+dt*speed);if(t>=END){playing=false;pb.textContent="▶ Play"}}
+  if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
   drawFrame();requestAnimationFrame(loop);}
-requestAnimationFrame(loop);
 
-/* mock re-sim button */
+function installModel(model){
+  MODEL=model;
+  document.getElementById("timeline").max=model.END;
+  document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
+  t=0;drawFrame();
+}
+
+/* ================= artifact loading ================= */
+function loadArtifact(url){
+  return fetch(url,{cache:"no-cache"}).then(function(res){
+    if(!res.ok)throw new Error("battle.zkr not found ("+res.status+")");
+    return res.arrayBuffer();
+  }).then(function(buf){
+    return ZkrReplay.parse(new Uint8Array(buf));
+  });
+}
+
+function showArtifact(a){
+  installModel(buildArtifactModel(a));
+  document.getElementById("simState").textContent="artifact: ready \u00b7 "+a.sections.map(function(s){return s.id}).join(" \u00b7 ");
+}
+
+loadArtifact("battle.zkr").then(function(a){
+  var m=ZkrReplay.artifactToModel(a);
+  if(!m.hasUnits){
+    installModel(buildSyntheticModel());
+    document.getElementById("simState").textContent="battle.zkr has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
+    return;
+  }
+  showArtifact(a);
+}).catch(function(){
+  installModel(buildSyntheticModel());
+  document.getElementById("simState").textContent="no battle.zkr next to the page \u2014 synthetic preview";
+});
+
+/* mock re-sim button: paragraphs describe what the real daemon does */
 document.getElementById("simBtn").onclick=function(){
   var st=document.getElementById("simState");var b=this;b.disabled=true;
-  var q=["downloading .sdfz → provisioning Zero-K v1.14.10.3 + engine 2026.07.04",
-         "headless resim @ max speed…","simulating… 40%","simulating… 80%","packing artifact"];
-  var i=0;st.textContent=q[0];st.className="chip";
-  var iv=setInterval(function(){i++;if(i>=q.length){clearInterval(iv);
-      st.textContent="artifact: ready (2.1 MB)";b.disabled=false;}
-    else st.textContent=q[i];},700);
+  var q=["downloading .sdfz \u2192 provisioning engine + Zero-K data","headless resim @ max speed\u2026","simulating\u2026 40%","simulating\u2026 80%","packing artifact"];
+  var i=0;st.textContent=q[0];
+  var iv=setInterval(function(){i++;if(i>=q.length){clearInterval(iv);b.disabled=false;
+      loadArtifact("battle.zkr").then(showArtifact).catch(function(){st.textContent="artifact not found \u2014 run: node dist\\daemon\\index.js --out mockup\\battle.zkr";});}
+    else st.textContent=q[i];},600);
 };
 </script>
 </body>

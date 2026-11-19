@@ -57,6 +57,9 @@ Design basis: barreplay (mabn) sectioned-artifact format, adapted to Zero-K.
 17. Death: `(unitID, frame, cause [killed, shot, selfd, captured, crash,
     collapse], killerTeam, killerUnitID, weaponDefID)` — arguments taken from
     the engine callins at source (wrappers may drop attacker/projectile info)
+18. Gameover (EVNT `kind=4`): `(frame, firstWinnerAllyteam, winnerCount)` —
+    one row per game-over; drives the viewer's victory overlay and timeline
+    length
 
 ## C. Projectiles (`P`) — revised policy
 

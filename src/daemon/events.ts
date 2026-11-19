@@ -47,7 +47,7 @@ export interface UnitTrack {
   samples: PosSample[];
 }
 
-export type EventKind = "spawn" | "death" | "finished" | "transfer";
+export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover";
 
 export interface EvntRecord {
   kind: EventKind;
