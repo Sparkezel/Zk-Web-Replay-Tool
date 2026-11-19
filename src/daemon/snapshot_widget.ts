@@ -77,8 +77,7 @@ local function maybeWdef(defID)
 end
 
 function widget:Initialize()
-  local mw, mh = Spring.GetMapSize()
-  emit('{"t":"meta","w":' .. num(mw) .. ',"h":' .. num(mh) .. '}')
+  emit('{"t":"meta","w":' .. num(Game.mapSizeX) .. ',"h":' .. num(Game.mapSizeZ) .. '}')
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
@@ -118,7 +117,7 @@ function widget:GameFrame(frame)
   if #rows > 0 then
     emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')
   end
-  local projs = Spring.GetProjectileList()
+  local projs = Spring.GetAllProjectiles()
   for i = 1, #projs do
     local pid = projs[i]
     local wdefID = Spring.GetProjectileDefID(pid)
