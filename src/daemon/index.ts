@@ -53,7 +53,7 @@ export interface ResimResult {
 
 export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): Promise<ResimResult> {
   const battleID = job.battleID ?? "local";
-  const root = job.workDir;
+  const root = path.resolve(job.workDir);
   mkdirSync(path.join(root, "demos"), { recursive: true });
 
   const demoPath = job.demoPath ?? path.join(root, "demos", `${battleID}.sdfz`);
