@@ -74,14 +74,26 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       ? await provisionEngine(job.engineVersion, { cacheDir: path.join(root, "engines"), log })
       : undefined);
     if (engineDir !== undefined && headlessBinaryPath(engineDir) !== null) {
-      const scriptPath = job.scriptPath ?? writeStartscript(demo, path.resolve(root, "script.txt"));
+      // script.txt stays as a debug artifact; unless the user overrides it
+      // with --script, the engine runs the demo itself in replay mode, which
+      // replays the recorded player command stream. A bare startscript would
+      // reproduce an empty game (commands live only in the demo stream).
+      writeStartscript(demo, path.resolve(root, "script.txt"));
+      const gamePath = job.scriptPath ?? path.resolve(demoPath);
       const dataDir = job.dataRoot !== undefined
         ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, log })
         : undefined;
+      if (dataDir !== undefined) {
+        mkdirSync(path.join(dataDir, "LuaUI", "Widgets"), { recursive: true });
+        injectWidget(dataDir, log);
+      }
+      const writeDir = path.join(root, "engine-write");
+      mkdirSync(path.join(writeDir, "LuaUI", "Widgets"), { recursive: true });
+      injectWidget(writeDir, log);
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
-        engineDir, scriptPath, logDir: path.join(root, "logs"), log,
-        writeDir: path.join(root, "engine-write"),
+        engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
+        writeDir,
         dataDir,
       });
       snap = run.snapshot;

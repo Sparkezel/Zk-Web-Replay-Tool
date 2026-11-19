@@ -42,9 +42,18 @@ export function loadDemoFile(demoPath: string): ParsedDemo {
   return parseDemoAuto(readFileSync(demoPath));
 }
 
-/** Extract the startscript to a file the engine can load (`script.txt`). */
+/**
+ * Extract the startscript to a file the engine can load (`script.txt`).
+ * `hostip` is force-bound to localhost: demo scripts recorded by online
+ * autohosts carry the host's public IP, and the engine aborts at StartServer
+ * when it cannot bind that address for an offline resim.
+ */
 export function writeStartscript(demo: ParsedDemo, destPath: string): string {
-  writeFileSync(destPath, demo.startscript.raw ?? "");
+  const raw = demo.startscript.raw ?? "";
+  const patched = /\bhostip\s*=/i.test(raw)
+    ? raw.replace(/\bhostip\s*=.*$/im, "hostip=127.0.0.1")
+    : raw;
+  writeFileSync(destPath, patched);
   return destPath;
 }
 
