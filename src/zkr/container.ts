@@ -6,11 +6,28 @@
  *   u32 uncompressedSize | u32 compressedSize | payload
  * All little-endian.
  */
-import { deflateSync, inflateSync } from "node:zlib";
+import { deflateSync, inflateSync, zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 export const ZKR_VERSION = 1;
 export const CODEC_RAW = 0;
 export const CODEC_DEFLATE = 1;
+export const CODEC_ZSTD = 2;
+
+const hasZstd = typeof zstdCompressSync === "function" && typeof zstdDecompressSync === "function";
+
+/** Best available compression codec for section payloads (zstd preferred). */
+export function bestCodec(): typeof CODEC_ZSTD | typeof CODEC_DEFLATE {
+  return hasZstd ? CODEC_ZSTD : CODEC_DEFLATE;
+}
+
+function compressCodec(payload: Uint8Array, codec: number): { payload: Uint8Array; codec: number } {
+  if (codec === CODEC_ZSTD) {
+    if (hasZstd) return { payload: zstdCompressSync(payload), codec: CODEC_ZSTD };
+    return { payload: deflateSync(payload, { level: 9 }), codec: CODEC_DEFLATE };
+  }
+  if (codec === CODEC_DEFLATE) return { payload: deflateSync(payload, { level: 9 }), codec: CODEC_DEFLATE };
+  return { payload, codec: CODEC_RAW };
+}
 
 export const SECTION = {
   META: "META",
@@ -32,14 +49,15 @@ export interface SectionInput {
   id: string;
   version: number;
   payload: Uint8Array;
-  codec?: typeof CODEC_RAW | typeof CODEC_DEFLATE;
+  codec?: number;
 }
 
 export function writeZkr(sections: SectionInput[]): Uint8Array {
   const out: Uint8Array[] = [Uint8Array.of(0x5a, 0x4b, 0x52, ZKR_VERSION)];
   for (const sect of sections) {
     const codec = sect.codec ?? CODEC_DEFLATE;
-    const payload = codec === CODEC_DEFLATE ? deflateSync(sect.payload, { level: 9 }) : sect.payload;
+    const compressed = compressCodec(sect.payload, codec);
+    const payload = compressed.payload;
     const id = String(sect.id).padEnd(4, " ").slice(0, 4);
     const head = new DataView(new ArrayBuffer(16));
     head.setUint8(0, id.charCodeAt(0));
@@ -47,7 +65,7 @@ export function writeZkr(sections: SectionInput[]): Uint8Array {
     head.setUint8(2, id.charCodeAt(2));
     head.setUint8(3, id.charCodeAt(3));
     head.setUint16(4, sect.version, true);
-    head.setUint8(6, codec);
+    head.setUint8(6, compressed.codec);
     head.setUint8(7, 0);
     head.setUint32(8, sect.payload.byteLength, true);
     head.setUint32(12, payload.byteLength, true);
@@ -92,7 +110,11 @@ export function readZkr(buf: Uint8Array): ZkrSection[] {
     if (pos + compressedSize > buf.byteLength) throw new Error(`truncated section ${JSON.stringify(id)}`);
     const stored = buf.subarray(pos, pos + compressedSize);
     pos += compressedSize;
-    const payload = codec === CODEC_DEFLATE ? inflateSync(stored) : stored;
+    const payload = codec === CODEC_DEFLATE
+      ? inflateSync(stored)
+      : codec === CODEC_ZSTD
+        ? zstdDecompressSync(stored)
+        : stored;
     if (payload.byteLength !== uncompressedSize) {
       throw new Error(`size mismatch in section ${JSON.stringify(id)}`);
     }

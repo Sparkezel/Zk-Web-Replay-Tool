@@ -147,3 +147,21 @@ creation time; overlap draws go to the most recent pair).
 | `--damage-matrix` | off | adds `DMG` |
 | `--visibility` | off | adds `VIS` |
 | `--torpedoes` | off | record torpedo arcs |
+
+## G. M2 resim daemon package layout (`src/daemon/`)
+
+| File | Role |
+|---|---|
+| `index.ts` | CLI (`zkr-daemon --demo x.sdfz [--work-dir d]`) + `resimBattle()` orchestrator |
+| `provision.ts` | engine download + unpack + headless-binary discovery (Win10 native / Linux / WSL2) |
+| `run.ts` | spawn `spring-headless --script script.txt`, capture `ZKR` stdout, timeout kill |
+| `snapshot_widget.ts` | Lua widget injected into game data; emits `ZKR <json>` on stdout |
+| `events.ts` | `SnapshotData` model + `ZKR ` line ingest (meta/spawn/pos/death/gameover) |
+| `classify.ts` | Â§C projectile classifier + `--projectiles` presets |
+| `pack.ts` | binary section encoders (`POS `/`EVNT`/`PROJ`/`LINK`) + `.zkr` assembly |
+
+Pipeline: download demo â provision engine (cached per version) â inject
+`zkreplay_snapshot.lua` â run headless with the demo's own startscript â
+ingest `ZKR` event lines â pack binary sections + M1 cheap-parse sections into
+`.zkr`. Engine mismatch = refused; resim without an engine available falls
+back to the M1 cheap-parse artifact.
