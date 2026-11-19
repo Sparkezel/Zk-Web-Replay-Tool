@@ -6,6 +6,7 @@
  *              [--engine-dir dir | --engine-version <ver>]
  *              [--pos-rate N] [--projectiles none|beams|heavy|all]
  *              [--script springscript.txt] [--no-resim]
+ *              [--timeout SEC] [--status-every-sec N] [--game-over-grace-sec N]
  *
  * Without an engine available the daemon still packs a valid artifact from
  * the cheap-parse demo sections (M1 data only, no POS/EVNT/PROJ/LINK rows).
@@ -40,6 +41,12 @@ export interface ResimJob {
   posRate?: number;
   projectiles?: ProjectilePreset;
   skipResim?: boolean;
+  /** hard engine kill timeout in seconds (default 1800) */
+  timeoutSec?: number;
+  /** seconds between live `engine: ...` status lines (default 5, 0 disables) */
+  statusEverySec?: number;
+  /** seconds past game-over before a lingering engine gets killed (default 30, 0 disables) */
+  gameOverGraceSec?: number;
 }
 
 export interface ResimResult {
@@ -95,9 +102,15 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
         engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
         writeDir,
         dataDir,
+        timeoutMs: job.timeoutSec !== undefined ? job.timeoutSec * 1000 : undefined,
+        statusEverySec: job.statusEverySec,
+        gameOverGraceSec: job.gameOverGraceSec,
+        lastFrame: Math.round(demo.stream.lastModGameTime * 30),
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;
+      log.info(`resim reached frame=${run.simFrame} phase=${run.phase}`);
+      resimulated = zkrLines > 0;
       if (zkrLines === 0) log.warn("engine produced no ZKR frames; falling back to cheap-parse sections");
     } else {
       log.warn("engine not available; packing cheap-parse sections only (--engine-dir or --engine-version enables resim)");
@@ -165,6 +178,9 @@ export function parseArgs(argv: string[]): ResimJob {
       }
       case "--no-resim": job.skipResim = true; break;
       case "--data-root": job.dataRoot = next(); break;
+      case "--timeout": job.timeoutSec = Math.max(1, Number(next()) | 0); break;
+      case "--status-every-sec": job.statusEverySec = Math.max(0, Number(next()) | 0); break;
+      case "--game-over-grace-sec": job.gameOverGraceSec = Math.max(0, Number(next()) | 0); break;
       default: throw new Error(`unknown flag ${a}`);
     }
   }
@@ -176,7 +192,7 @@ export async function main(argv: string[]): Promise<number> {
   const log = consoleLogger;
   try {
     const job = parseArgs(argv);
-    log.info(`zkr-daemon: demo=${job.demoPath ?? job.battleID} out=${job.outPath ?? "<workDir>"} projectiles=${job.projectiles} posRate=${job.posRate} skipResim=${job.skipResim === true}`);
+    log.info(`zkr-daemon: demo=${job.demoPath ?? job.battleID} out=${job.outPath ?? "<workDir>"} projectiles=${job.projectiles} posRate=${job.posRate} skipResim=${job.skipResim === true} timeoutSec=${job.timeoutSec ?? 1800} statusEverySec=${job.statusEverySec ?? 5}`);
     const result = await resimBattle(job, log);
     log.info(`done: battle=${result.battleID} artifact=${result.artifactPath} resim=${result.resimulated} zkrLines=${result.zkrLines}`);
     return 0;

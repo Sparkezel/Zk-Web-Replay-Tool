@@ -27,6 +27,12 @@ export interface RunOptions {
   dataDir?: string;
   /** writable dir for engine output (infolog.txt, cache/); passed as SPRING_WRITEDIR */
   writeDir?: string;
+  /** expected final sim frame, from the demo stream (drives progress %) */
+  lastFrame?: number;
+  /** seconds past game-over before lingering engines get killed (default 30) */
+  gameOverGraceSec?: number;
+  /** seconds between status lines (default 5, 0 disables) */
+  statusEverySec?: number;
   log?: Logger;
 }
 
@@ -36,6 +42,10 @@ export interface RunResult {
   snapshot: SnapshotData;
   rawLines: number;
   zkrLines: number;
+  /** highest sim frame seen on stdout (`[f=N]`) */
+  simFrame: number;
+  /** final phase of the run (booting/scan/starting/simulating/over) */
+  phase: string;
 }
 
 export function loadDemoFile(demoPath: string): ParsedDemo {
@@ -67,6 +77,15 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let rawLines = 0;
   let zkrLines = 0;
   let timedOut = false;
+  let gameOverAt = 0;
+  let warnedGameOver = false;
+  let simFrame = 0;
+  let phase = "booting";
+
+  const PHASE_RANK: Record<string, number> = { booting: 0, scan: 1, starting: 2, simulating: 3, over: 4 };
+  const advance = (next: "scan" | "starting" | "simulating" | "over") => {
+    if (PHASE_RANK[next] > PHASE_RANK[phase]) phase = next;
+  };
 
   const env: NodeJS.ProcessEnv = { ...process.env };
   if (opts.dataDir) env.SPRING_DATADIR = opts.dataDir;
@@ -89,6 +108,19 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       proc.kill("SIGKILL");
     }, opts.timeoutMs ?? 30 * 60 * 1000);
 
+    const startedAt = Date.now();
+    const statusTimer = setInterval(() => {
+      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const pct = opts.lastFrame ? Math.min(100, Math.round((100 * simFrame) / opts.lastFrame)) : "?";
+      log.info(`engine: ${phase} frame=${simFrame}${opts.lastFrame ? `/${opts.lastFrame} (${pct}%)` : ""} zkr=${zkrLines} stdout=${rawLines} ${elapsedSec}s`);
+      const graceMs = (opts.gameOverGraceSec ?? 30) * 1000;
+      if (graceMs > 0 && gameOverAt > 0 && Date.now() - gameOverAt > graceMs) {
+        if (!warnedGameOver) log.warn(`game over captured over ${opts.gameOverGraceSec ?? 30}s ago; killing lingering engine (pid ${proc.pid})`);
+        warnedGameOver = true;
+        proc.kill("SIGKILL");
+      }
+    }, (opts.statusEverySec ?? 5) * 1000);
+
     let stdoutBuf = "";
     proc.stdout!.on("data", (chunk: Buffer) => {
       stdoutBuf += chunk.toString("utf8");
@@ -97,11 +129,21 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       for (const line of lines) {
         rawLines++;
         rawOutput.push(line);
-        if (rawLines % 10000 === 0) log.info(`capturing ... ${rawLines} stdout lines, ${zkrLines} ZKR`);
+        if (/using writeable data-directory|\[~CBufferedArchive\]|\[AS::/.test(line)) advance("scan");
+        if (/\[PreGame::StartServer\]|\[GameServer\]/.test(line)) advance("starting");
+        const fm = /\[f=(\d+)\]/.exec(line);
+        if (fm) {
+          simFrame = Math.max(simFrame, Number(fm[1]));
+          advance("simulating");
+        }
         const res = ingestLine(snapshot, line);
         if (res.isZkr) {
           zkrLines++;
           if (!res.ok) log.warn(`malformed ZKR line: ${line.slice(0, 120)}`);
+        }
+        if (snapshot.gameOvers.length > 0) {
+          advance("over");
+          if (gameOverAt === 0) gameOverAt = Date.now();
         }
       }
     });
@@ -110,11 +152,13 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
 
     proc.on("error", (err) => {
       clearTimeout(timeout);
+      clearInterval(statusTimer);
       reject(err);
     });
     proc.on("close", (code) => {
       clearTimeout(timeout);
-      log.info(`engine exited code=${code} timedOut=${timedOut} zkrLines=${zkrLines}/${rawLines}`);
+      clearInterval(statusTimer);
+      log.info(`engine exited code=${code} timedOut=${timedOut} zkrLines=${zkrLines}/${rawLines} frame=${simFrame} phase=${phase}`);
       if (opts.logDir) {
         mkdirSync(opts.logDir, { recursive: true });
         writeFileSync(path.join(opts.logDir, "engine-stdout.log"), rawOutput.join("\n"));
@@ -123,7 +167,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       if (zkrLines === 0 && rawOutput.length > 0) {
         log.warn(`no ZKR frames captured; last engine output:\n${rawOutput.slice(-5).join("\n")}`);
       }
-      resolve({ code, timedOut, snapshot, rawLines, zkrLines });
+      resolve({ code, timedOut, snapshot, rawLines, zkrLines, simFrame, phase });
     });
   });
 }
