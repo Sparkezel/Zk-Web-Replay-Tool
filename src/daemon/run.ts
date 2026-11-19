@@ -129,10 +129,20 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       }
     }, 1000);
     const statusEveryMs = (opts.statusEverySec ?? 5) * 1000;
+    let lastStatusAt = 0;
+    let lastStatusFrame = 0;
     const statusTimer = setInterval(() => {
-      const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+      const now = Date.now();
+      const elapsedSec = Math.round((now - startedAt) / 1000);
+      let speedStr = "";
+      if (lastStatusAt !== 0 && simFrame !== lastStatusFrame) {
+        const fps = (simFrame - lastStatusFrame) / ((now - lastStatusAt) / 1000);
+        speedStr = ` ${(fps / 30).toFixed(2)}x (${fps.toFixed(0)}fps)`;
+      }
+      lastStatusAt = now;
+      lastStatusFrame = simFrame;
       const pct = opts.lastFrame ? Math.min(100, Math.round((100 * simFrame) / opts.lastFrame)) : "?";
-      log.info(`engine: ${phase} frame=${simFrame}${opts.lastFrame ? `/${opts.lastFrame} (${pct}%)` : ""} zkr=${zkrLines} stdout=${rawLines} ${elapsedSec}s`);
+      log.info(`engine: ${phase} frame=${simFrame}${opts.lastFrame ? `/${opts.lastFrame} (${pct}%)` : ""}${speedStr} zkr=${zkrLines} stdout=${rawLines} ${elapsedSec}s`);
     }, statusEveryMs);
 
     let stdoutBuf = "";
