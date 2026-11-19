@@ -18,6 +18,7 @@ import type { ParsedDemo } from "../demo/parse.js";
 import { buildZkrFromDemo } from "../zkr/build.js";
 import { demoUrl } from "../config/urls.js";
 import { downloadFile, provisionEngine, headlessBinaryPath, consoleLogger, type Logger } from "./provision.js";
+import { stageDataDir } from "./stage.js";
 import { newSnapshot, type SnapshotData } from "./events.js";
 import { loadDemoFile, runHeadlessCapture, writeStartscript } from "./run.js";
 import { buildZkrFromResim, type PackOptions } from "./pack.js";
@@ -74,10 +75,14 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       : undefined);
     if (engineDir !== undefined && headlessBinaryPath(engineDir) !== null) {
       const scriptPath = job.scriptPath ?? writeStartscript(demo, path.resolve(root, "script.txt"));
+      const dataDir = job.dataRoot !== undefined
+        ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, engineDir, log })
+        : undefined;
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath, logDir: path.join(root, "logs"), log,
-        dataDir: job.dataRoot,
+        writeDir: path.join(root, "engine-write"),
+        dataDir,
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;

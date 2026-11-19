@@ -25,6 +25,8 @@ export interface RunOptions {
   cwd?: string;
   /** extra archive roots (`games/`, `maps/`, `packages/`); passed as SPRING_DATADIR */
   dataDir?: string;
+  /** writable dir for engine output (infolog.txt, cache/); passed as SPRING_WRITEDIR */
+  writeDir?: string;
   log?: Logger;
 }
 
@@ -57,9 +59,10 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let zkrLines = 0;
   let timedOut = false;
 
-  const env = opts.dataDir
-    ? { ...process.env, SPRING_DATADIR: opts.dataDir }
-    : { ...process.env };
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (opts.dataDir) env.SPRING_DATADIR = opts.dataDir;
+  if (opts.writeDir) env.SPRING_WRITEDIR = opts.writeDir;
+
   return new Promise((resolve, reject) => {
     const proc = spawn(enginePath, [opts.scriptPath], {
       stdio: ["ignore", "pipe", "pipe"],
