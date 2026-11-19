@@ -21,6 +21,8 @@ export interface RunOptions {
   logDir?: string;
   /** hard kill timeout in ms (default 30 min) */
   timeoutMs?: number;
+  /** working directory for the engine process (defaults to the engine dir) */
+  cwd?: string;
   log?: Logger;
 }
 
@@ -54,8 +56,9 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let timedOut = false;
 
   return new Promise((resolve, reject) => {
-    const proc = spawn(enginePath, ["--script", opts.scriptPath], {
+    const proc = spawn(enginePath, [opts.scriptPath], {
       stdio: ["ignore", "pipe", "pipe"],
+      cwd: opts.cwd ?? opts.engineDir,
     });
     const timeout = setTimeout(() => {
       timedOut = true;
