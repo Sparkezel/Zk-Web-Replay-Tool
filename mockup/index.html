@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battle 2539874 detail · Zero-K (mockup w/ animated replay)</title>
+<style>
+  :root{
+    --bg:#1b1f22; --panel:#24292d; --panel2:#2c3236; --line:#3a4145;
+    --txt:#cfd6da; --dim:#8a949b; --accent:#6ab840; --accent2:#4e941f;
+    --t1:#8bd34f; --t2:#e05a4e; --gold:#d9b545;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+  a{color:#7fc454;text-decoration:none}
+
+  /* ---- top nav (zero-k.info style) ---- */
+  .navbar{background:#151a1c;border-bottom:2px solid var(--accent2);display:flex;align-items:center;gap:22px;padding:0 18px;height:46px}
+  .navbar .logo{font-weight:800;letter-spacing:1px;color:var(--accent);font-size:16px}
+  .navbar a{color:#aab4ba;font-size:13px}
+  .navbar a:hover{color:var(--accent)}
+  .nav-right{margin-left:auto;display:flex;gap:14px;align-items:center}
+  .nav-right input{background:#0f1314;border:1px solid var(--line);color:var(--txt);padding:3px 8px;font-size:12px;width:110px;border-radius:3px}
+
+  .wrap{max-width:1180px;margin:0 auto;padding:18px}
+  .crumbs{color:var(--dim);font-size:12.5px;margin-bottom:12px}
+
+  /* ---- battle header ---- */
+  .head{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:14px}
+  .head h1{margin:0;font-size:22px;color:#e8ecef}
+  .badge{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11.5px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .badge.win{border-color:var(--accent2);color:var(--accent)}
+
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px}
+  @media(max-width:980px){.grid{grid-template-columns:1fr}}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;margin-bottom:16px}
+  .panel h2{margin:0;padding:9px 14px;font-size:13px;letter-spacing:.8px;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
+  .panel .bd{padding:12px 14px}
+  table.meta{border-collapse:collapse;width:100%;font-size:13px}
+  table.meta td{padding:4px 8px;border-bottom:1px solid #30373b}
+  table.meta td:first-child{color:var(--dim);width:150px}
+  .btn{display:inline-block;background:var(--accent2);color:#fff;border:0;border-radius:4px;padding:8px 16px;font-size:13px;cursor:pointer;margin:2px 6px 2px 0}
+  .btn.ghost{background:transparent;border:1px solid var(--accent2);color:var(--accent)}
+  .btn:disabled{opacity:.45;cursor:default}
+
+  /* ---- replay stage ---- */
+  .stage{position:relative;background:#101416}
+  canvas#replay{display:block;width:100%;height:460px}
+  .stage .overlay-tl{position:absolute;top:10px;left:12px;font-size:12px;color:#c4ccd1;text-shadow:0 1px 2px #000;background:rgba(0,0,0,.35);padding:4px 10px;border-radius:4px}
+  .stage .overlay-tr{position:absolute;top:10px;right:12px;display:flex;flex-direction:column;gap:4px;font-size:12px;text-shadow:0 1px 2px #000}
+  .victory{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,10,.55);flex-direction:column;gap:6px}
+  .victory.show{display:flex}
+  .victory .big{font-size:26px;font-weight:800;letter-spacing:1px;color:var(--gold);text-shadow:0 2px 6px #000}
+  .victory .sub{color:#cfd6da}
+
+  /* ---- controls ---- */
+  .controls{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--panel2);border-top:1px solid var(--line);flex-wrap:wrap}
+  .controls button.icon{width:34px;height:30px;border-radius:4px;border:1px solid var(--line);background:#1d2225;color:var(--txt);cursor:pointer;font-size:13px}
+  #timeline{flex:1 1 240px;min-width:160px;accent-color:var(--accent)}
+  .speed{display:flex;gap:3px}
+  .speed button{border:1px solid var(--line);background:#1d2225;color:var(--dim);font-size:11px;padding:3px 7px;border-radius:3px;cursor:pointer}
+  .speed button.on{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  .clock{font-variant-numeric:tabular-nums;color:var(--txt);min-width:118px;font-size:12.5px}
+  .chip{font-size:11.5px;color:var(--dim)}
+
+  /* ---- teams / players ---- */
+  .team-table{width:100%;border-collapse:collapse;font-size:13px}
+  .team-table th{text-align:left;color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;padding:4px 8px;border-bottom:1px solid var(--line)}
+  .team-table td{padding:6px 8px;border-bottom:1px solid #30373b}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
+  .winner-row td{background:rgba(106,184,64,.08)}
+  .win-txt{color:var(--accent);font-size:11.5px;margin-left:6px}
+  .spec-list{display:flex;flex-wrap:wrap;gap:10px;margin:0;padding:0;list-style:none;color:var(--dim)}
+  .spec-list li{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:3px 10px;font-size:12.5px}
+
+  /* ---- event feed ---- */
+  .feed{list-style:none;margin:0;padding:0;max-height:460px;overflow:auto;font-size:12.5px}
+  .feed li{padding:5px 12px;border-bottom:1px solid #30373b;color:var(--dim)}
+  .feed li b{color:var(--txt);font-weight:600}
+  .feed li.death b{color:var(--t2)}
+  .feed li.kill b{color:var(--gold)}
+  .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
+  .feed li.hit{background:rgba(224,90,78,.05)}
+
+  /* ---- economy sparkline ---- */
+  .eco{display:flex;gap:14px;align-items:center}
+  .eco canvas{flex:1;height:56px;background:#14181a;border:1px solid var(--line);border-radius:4px}
+  .legend{font-size:11.5px;color:var(--dim)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin:0 4px 0 8px}
+
+  .footer{color:#5b666d;font-size:11.5px;text-align:center;padding:18px}
+  .mock-note{background:#33290f;border:1px solid #6b5618;color:#d9b545;border-radius:4px;padding:6px 12px;font-size:12px;margin-bottom:14px}
+</style>
+</head>
+<body>
+
+<nav class="navbar">
+  <span class="logo">Zero-K</span>
+  <a href="#">Home</a><a href="#">Play</a><a href="#">Maps</a><a href="#">Replays</a>
+  <a href="#">Units</a><a href="#">Forum</a><a href="#">Clans</a>
+  <span class="nav-right">
+    <a href="#">Wiki</a><a href="#">PlanetWars</a><a href="#">Donate</a>
+    <input placeholder="Search…">
+  </span>
+</nav>
+
+<div class="wrap">
+  <div class="crumbs">Home › Replays › Battle detail</div>
+  <div class="mock-note">⚠ Mockup – layout exploration for the battle-result page. The replay stage shows synthetic data; in production it renders a pre-simulated artifact (unit snapshots + death/kill events) generated server-side from the .sdfz demo.</div>
+
+  <div class="head">
+    <h1>[A] Teams All Welcome #1</h1>
+    <span class="badge win">Winner: Team 1</span>
+    <span class="badge">Casual</span>
+    <span class="badge">8 players</span>
+  </div>
+
+  <div class="grid">
+    <!-- ============ main column: replay + info ============ -->
+    <div>
+
+      <!-- ====== ANIMATED BATTLE REPLAY (new section) ====== -->
+      <div class="panel">
+        <h2>Animated Battle Replay</h2>
+        <div class="stage">
+          <canvas id="replay" width="1180" height="460"></canvas>
+          <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
+          <div class="overlay-tr">
+            <div><span class="dot" style="background:var(--t1)"></span>Team 1 · <span id="cnt1">0</span> units</div>
+            <div><span class="dot" style="background:var(--t2)"></span>Team 2 · <span id="cnt2">0</span> units</div>
+          </div>
+          <div class="victory" id="victory">
+            <div class="big">Team 1 wins</div>
+            <div class="sub">allyTeam 0 · 25:16 game time</div>
+          </div>
+        </div>
+        <div class="controls">
+          <button class="btn ghost" id="playBtn">▶ Play</button>
+          <span class="clock" id="clock">00:00 / 25:16</span>
+          <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
+          <span class="speed" id="speeds"></span>
+          <span class="chip" id="chip">10 min/s preview</span>
+        </div>
+      </div>
+
+      <!-- ====== battle result info ====== -->
+      <div class="panel">
+        <h2>Battle Result</h2>
+        <div class="bd">
+          <table class="meta">
+            <tr><td>Title</td><td>[A] Teams All Welcome #1</td></tr>
+            <tr><td>Host</td><td>Nobody (autohost)</td></tr>
+            <tr><td>Map</td><td>Otago 1.4</td></tr>
+            <tr><td>Game version</td><td>Zero-K v1.14.10.3</td></tr>
+            <tr><td>Engine version</td><td>2026.07.04</td></tr>
+            <tr><td>Battle ID</td><td>2539874</td></tr>
+            <tr><td>Started</td><td>2026-11-15 12:27 UTC</td></tr>
+            <tr><td>Duration</td><td>25 minutes</td></tr>
+            <tr><td>Rating</td><td>Casual</td></tr>
+            <tr><td>Bots / Mission</td><td>False / False</td></tr>
+          </table>
+          <div style="margin-top:12px">
+            <button class="btn">▶ Watch replay in game</button>
+            <button class="btn" id="simBtn">⟳ Re-simulate replay (server)</button>
+            <button class="btn ghost">⤓ Manual download (.sdfz)</button>
+            <span class="chip" id="simState" style="margin-left:6px">artifact: ready (2.1 MB)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ====== economy ====== -->
+      <div class="panel">
+        <h2>Economy over time (from demo team-stats)</h2>
+        <div class="bd eco">
+          <canvas id="eco" width="760" height="56"></canvas>
+          <div class="legend">
+            <span><i style="background:var(--t1)"></i>Team 1 metal</span>
+            <span><i style="background:var(--t2)"></i>Team 2 metal</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ right column ============ -->
+    <div>
+
+      <div class="panel">
+        <h2>Teams</h2>
+        <div class="bd" style="padding:0">
+          <table class="team-table">
+            <tr><th></th><th>Player</th><th>ELO</th><th>Cmds</th></tr>
+            <tbody>
+              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>SparkezelPL<span class="win-txt">✓</span></td><td>2622</td><td>1121</td></tr>
+              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>lostconnector<span class="win-txt">✓</span></td><td>2396</td><td>1159</td></tr>
+              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>CptSpackJarrow<span class="win-txt">✓</span></td><td>2140</td><td>670</td></tr>
+              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>WM1enjoyer<span class="win-txt">✓</span></td><td>—</td><td>1435</td></tr>
+              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>ninse</td><td>2608</td><td>772</td></tr>
+              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>Boetvaardig</td><td>—</td><td>566</td></tr>
+              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>hallohallo</td><td>—</td><td>889</td></tr>
+              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>kurikurin</td><td>—</td><td>1380</td></tr>
+            </tbody>
+          </table>
+          <div class="bd" style="padding:10px 12px">
+            <div style="margin:0 0 6px;color:var(--dim);font-size:12px">Chance of victory — Team 1: 55.5% · Team 2: 44.5%</div>
+            <div style="color:var(--dim);font-size:12px">Commanders: “In &amp; Ut”, “Bounce”, “Heavy Beam Engineer”, “Simple Missile Engi” (from modoptions)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Event feed (deaths &amp; kills)</h2>
+        <ul class="feed" id="feed"></ul>
+      </div>
+
+      <div class="panel">
+        <h2>Spectators</h2>
+        <ul class="spec-list">
+          <li>Skel</li><li>Pan1sOfLuck</li><li>Sarathos</li>
+          <li>vrod2000regensburg</li><li>LOB_imperialfist</li><li>KetchupStreamer</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">Zero-K battle detail mockup · synthetic replay data · demo source: zero-k.info/replays 2539874</div>
+
+<script>
+/* ================= synthetic battle ================= */
+var T1="#8bd34f", T2="#e05a4e";
+function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+var R=mulberry(2539874);
+
+// map blob (stylised Otago: rocky plateaus)
+var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
+
+var units=[], projectiles=[], END=1516, feedData=[], ecoPts=[];
+function spawn(t,tm,x,y,kind){units.push({t:t,born:tm,died:-1,x:x,y:y,tx:x,ty:y,kind:kind||R()<.2?"str":R()<.4?"sup":"base",hp:1})}
+// scripted macro-plan: both teams push from opposite corners, fights at mid
+for(tm=30;tm<1330;tm+=6+R()*10){
+  var p=R(), x,y;
+  if(p<.62){x=.12+R()*.14+(tm/1330)*.4+R()*.08; y=.35+R()*.3;}        // push lane
+  else if(p<.85){x=.08+R()*.15; y=.15+R()*.7;}                        // expansions
+  else {x=.85+R()*.1; y=.35+R()*.3;}                                  // raider flank (team2)
+  if(R()<.5){y=1-y; x=1-x}
+  spawn(p<.5?1:2,tm,x,y);
+}
+// deaths: attrition, staggered; team2 loses more (winners=team1)
+var deathtimes=[];
+for(var u of units){ if(R()<.35) continue;
+  deathtimes.push({u:u,tm:120+R()*1180});}
+deathtimes=deathtimes.sort(function(a,b){return a.tm-b.tm});
+deathtimes.forEach(function(d,ix){
+  d.u.died=d.tm;
+  var w=R()<.58?2:1; // attacker team
+  feedData.push({tm:d.tm,cls:R()<.3?"kill":"death",
+     txt:(ix%3==0?"Commander strike! ":"")+"Unit lost — killed by Team "+w});
+});
+// kill projectiles for some deaths
+units.forEach(function(u){ if(u.died>0&&R()<.3){
+  projectiles.push({born:u.died-2,impact:u.died,x:u.x+(R()-.5)*.3,y:u.y+(R()-.5)*.3,tx:u.x,ty:u.y});
+}});
+// economy curves
+for(var s=0;s<=1516;s+=15){var f=s/1516;
+  ecoPts.push([s, 1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)), 1-Math.pow(1-f,2.4)]);}
+
+function aliveAt(u,tm){return u.born<=tm&&(u.died<0||u.died>tm)}
+function ease(u,tm){ // simple drift toward lane mid
+  var age=(tm-u.born)/100; if(age>1)age=1;
+  var k=u.t==1?1:-1;
+  var x=u.x+0.10*k*age*(0.4+0.6*Math.sin(u.y*9)*Math.sin(u.y*9));
+  return {x:Math.min(1,Math.max(0,x)),y:u.y};
+}
+function fmt(s){var m=(s/60)|0;var ss=(s|0)%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
+
+/* ================= rendering ================= */
+var cv=document.getElementById("replay"),cx=cv.getContext("2d");
+function draw(tm){
+  var W=cv.width,H=cv.height;
+  cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
+  blobs.forEach(function(b){cx.fillStyle="#20262a";
+    cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
+  // territory tint
+  cx.fillStyle="rgba(106,184,64,.05)";cx.fillRect(0,0,W*(0.35+0.5*adv),H);
+  cx.fillStyle="rgba(224,90,78,.05)";cx.fillRect(W*(0.65-0.5*adv),0,W*(0.35+0.5*(1-adv)),H);
+  // startboxes
+  cx.strokeStyle="rgba(139,211,79,.6)";cx.strokeRect(W*.04,H*.3,W*.16,H*.4);
+  cx.strokeStyle="rgba(224,90,78,.6)";cx.strokeRect(W*.8,H*.3,W*.16,H*.4);
+  // units
+  var n1=0,n2=0;
+  units.forEach(function(u){
+    if(!aliveAt(u,tm))return;
+    var pos=ease(u,tm),x=pos.x*W,y=pos.y*H;
+    if(u.t==1)n1++;else n2++;
+    cx.fillStyle=u.t==1?T1:T2;
+    var r=u.kind=="str"?5:u.kind=="sup"?4:3;
+    cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
+    if(u.hp<1){cx.strokeStyle="rgba(217,181,69,.9)";cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke()}
+  });
+  // projectile tracers
+  projectiles.forEach(function(pr){
+    if(tm<pr.born||tm>pr.impact)return;
+    var f=(tm-pr.born)/(pr.impact-pr.born);
+    var x=(pr.x+(pr.tx-pr.x)*f)*W,y=(pr.y+(pr.ty-pr.y)*f)*H;
+    cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
+    cx.beginPath();cx.moveTo((pr.x+(pr.tx-pr.x)*Math.max(0,f-.25))*W,(pr.y+(pr.ty-pr.y)*Math.max(0,f-.25))*H);
+    cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
+    cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6*(1-f)+2,0,7);cx.fill();
+  });
+  document.getElementById("cnt1").textContent=n1;
+  document.getElementById("cnt2").textContent=n2;
+  document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
+  document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(END);
+  document.getElementById("timeline").value=Math.min(tm,END);
+  if(tm>=END)document.getElementById("victory").classList.add("show");
+  else document.getElementById("victory").classList.remove("show");
+}
+
+/* event feed: rendered up to current time */
+function renderFeed(tm){
+  var el=document.getElementById("feed");var html="";
+  for(var i=feedData.length-1;i>=0;i--){var e=feedData[i];
+    if(e.tm>tm)continue;
+    html+='<li class="'+e.cls+'"><b>'+e.txt+"</b> (Team "+(e.cls=="kill"?1:2)+")<time>"+fmt(e.tm)+"</time></li>";
+    if(html.length>4000)break;}
+  el.innerHTML=html||'<li style="color:#5b666d">No events yet — press Play.</li>';
+  var first=el.firstChild; if(first)el.scrollTop=0;
+}
+
+/* economy chart up to tm */
+var ec=document.getElementById("eco"),ex=ec.getContext("2d");
+function drawEco(tm){
+  ex.clearRect(0,0,ec.width,ec.height);
+  function line(idx,col){ex.strokeStyle=col;ex.beginPath();
+    ecoPts.forEach(function(p){if(p[0]>tm)return;
+      var X=p[0]/END*ec.width,Y=ec.height-4-(ec.height-10)*p[idx];
+      if(X==0)ex.moveTo(X,Y);else ex.lineTo(X,Y);});
+    ex.stroke();}
+  line(1,T1);line(2,T2);
+}
+
+/* ================= playback loop ================= */
+var t=0, playing=false, speed=10; // 10 sim-seconds per real second
+var speeds=[1,2,4,10,30,60], sbox=document.getElementById("speeds");
+speeds.forEach(function(s){var b=document.createElement("button");
+  b.textContent=s+"×"; b.className=s==speed?"on":""; b.onclick=function(){speed=s;
+    [].forEach.call(sbox.children,function(c){c.classList.remove("on")});b.classList.add("on");};
+  sbox.appendChild(b);});
+var pb=document.getElementById("playBtn");
+pb.onclick=function(){playing=!playing;if(t>=END)t=0;pb.textContent=playing?"⏸ Pause":"▶ Play";};
+document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
+function drawFrame(){draw(t);renderFeed(t);drawEco(t);}
+var last=performance.now();
+function loop(now){var dt=(now-last)/1000;last=now;
+  if(playing){t=Math.min(END,t+dt*speed);if(t>=END){playing=false;pb.textContent="▶ Play"}}
+  drawFrame();requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+
+/* mock re-sim button */
+document.getElementById("simBtn").onclick=function(){
+  var st=document.getElementById("simState");var b=this;b.disabled=true;
+  var q=["downloading .sdfz → provisioning Zero-K v1.14.10.3 + engine 2026.07.04",
+         "headless resim @ max speed…","simulating… 40%","simulating… 80%","packing artifact"];
+  var i=0;st.textContent=q[0];st.className="chip";
+  var iv=setInterval(function(){i++;if(i>=q.length){clearInterval(iv);
+      st.textContent="artifact: ready (2.1 MB)";b.disabled=false;}
+    else st.textContent=q[i];},700);
+};
+</script>
+</body>
+</html>
