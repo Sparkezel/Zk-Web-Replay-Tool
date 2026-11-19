@@ -6,7 +6,21 @@
  *   u32 uncompressedSize | u32 compressedSize | payload
  * All little-endian.
  */
-import { deflateSync, inflateSync, zstdCompressSync, zstdDecompressSync } from "node:zlib";
+import * as zlib from "node:zlib";
+
+// zstd landed in Node 23.8 / 22.15+; guard so older versions load this module
+// and simply fall back to deflate.
+const zstdCompressSync: ((buf: Uint8Array) => Uint8Array) | null =
+  typeof (zlib as Record<string, unknown>).zstdCompressSync === "function"
+    ? (zlib as Record<string, unknown>).zstdCompressSync as (buf: Uint8Array) => Uint8Array
+    : null;
+const zstdDecompressSync: ((buf: Uint8Array) => Uint8Array) | null =
+  typeof (zlib as Record<string, unknown>).zstdDecompressSync === "function"
+    ? (zlib as Record<string, unknown>).zstdDecompressSync as (buf: Uint8Array) => Uint8Array
+    : null;
+
+const deflateSync = zlib.deflateSync;
+const inflateSync = zlib.inflateSync;
 
 export const ZKR_VERSION = 1;
 export const CODEC_RAW = 0;
@@ -112,7 +126,7 @@ export function readZkr(buf: Uint8Array): ZkrSection[] {
     pos += compressedSize;
     const payload = codec === CODEC_DEFLATE
       ? inflateSync(stored)
-      : codec === CODEC_ZSTD
+      : codec === CODEC_ZSTD && zstdDecompressSync
         ? zstdDecompressSync(stored)
         : stored;
     if (payload.byteLength !== uncompressedSize) {

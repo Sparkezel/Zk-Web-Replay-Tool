@@ -4,7 +4,7 @@
  * (65535 = map edge), delta-encoded per track, per spec §F.
  */
 import {
-  bestCodec, CODEC_DEFLATE, CODEC_RAW, SECTION,
+  CODEC_DEFLATE, CODEC_RAW, SECTION,
   writeZkr, type SectionInput,
 } from "../zkr/container.js";
 import {
@@ -112,7 +112,7 @@ export function encodePos(snap: SnapshotData): Uint8Array {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
       w.s16(qx - prevX).s16(qz - prevZ);
-      w.u8(s.hp ?? 255).u8(s.build ?? 255);
+      w.u8(Math.round((s.hp ?? 1) * 255)).u8(Math.round((s.build ?? 1) * 255));
       prevX = qx;
       prevZ = qz;
     }
@@ -236,7 +236,7 @@ function utf8(s: string): Uint8Array {
 }
 
 export interface PackOptions {
-  /** section codec override (default: zstd when available, deflate otherwise) */
+  /** section codec override (default CODEC_DEFLATE for browser compat) */
   codec?: number;
   /** position sample cadence multiplier (keep every Nth probe, keep last) */
   posRate?: number;
@@ -261,7 +261,8 @@ function downsample<T>(rows: T[], rate: number): T[] {
  * (+ CHAT/DRAW/MACR/ECO/PSTA when M1 demo data is available), per spec §0.
  */
 export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): Uint8Array {
-  const codec = opts.codec ?? bestCodec();
+  // viewer artifacts default to deflate: browsers lack DecompressionStream('zstd')
+  const codec = opts.codec ?? CODEC_DEFLATE;
   const posRate = opts.posRate ?? 1;
   const posSnap: SnapshotData = posRate > 1
     ? { ...snap, units: new Map([...snap.units.values()].map((u) => [u.unitID, { ...u, samples: downsample(u.samples, posRate) }])) }
