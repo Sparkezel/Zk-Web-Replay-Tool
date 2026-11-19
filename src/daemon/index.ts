@@ -73,7 +73,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       ? await provisionEngine(job.engineVersion, { cacheDir: path.join(root, "engines"), log })
       : undefined);
     if (engineDir !== undefined && headlessBinaryPath(engineDir) !== null) {
-      const scriptPath = job.scriptPath ?? writeStartscript(demo, path.join(root, "script.txt"));
+      const scriptPath = job.scriptPath ?? writeStartscript(demo, path.resolve(root, "script.txt"));
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath, logDir: path.join(root, "logs"), log,
@@ -81,16 +81,16 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;
-      resimulated = true;
+      if (zkrLines === 0) log.warn("engine produced no ZKR frames; falling back to cheap-parse sections");
     } else {
       log.warn("engine not available; packing cheap-parse sections only (--engine-dir or --engine-version enables resim)");
     }
   }
 
   const artifactPath = job.outPath ?? path.join(root, "artifacts", `${battleID}.zkr`);
-  log.info(`packing ${snap !== undefined ? "resim" : "cheap-parse"} sections ...`);
+  log.info(`packing ${snap !== undefined && zkrLines > 0 ? "resim" : "cheap-parse"} sections ...`);
   mkdirSync(path.dirname(artifactPath), { recursive: true });
-  const zkr = snap !== undefined
+  const zkr = snap !== undefined && zkrLines > 0
     ? buildZkrFromResim(snap, { demo, posRate: job.posRate, projectiles: job.projectiles })
     : buildZkrFromDemo(demo);
   writeFileSync(artifactPath, zkr);
