@@ -4,13 +4,13 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   classifyProjectile, presetRecords, ingestLine, newSnapshot,
   buildZkrFromResim, quantize, readZkr, SECTION,
-  resimBattle, parseArgs,
+  resimBattle, parseArgs, injectWidget, SNAPSHOT_WIDGET_NAME,
 } from "../dist/index.js";
 
 const W = (name: string, extra: Record<string, unknown> = {}) => ({
@@ -79,6 +79,19 @@ test("CLI parses flags into a resim job", () => {
   assert.equal(job.posRate, 4);
   assert.equal(job.projectiles, "heavy");
   assert.throws(() => parseArgs(["--projectiles", "none"]));
+});
+
+test("widget injection replaces speed placeholders and leaves none behind", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-widget-"));
+  const luaUi = path.join(dir, "LuaUI", "Widgets");
+  mkdirSync(luaUi, { recursive: true });
+  const wrote = injectWidget(dir, 5);
+  assert.ok(wrote !== null);
+  const lua = readFileSync(path.join(luaUi, SNAPSHOT_WIDGET_NAME), "utf8");
+  assert.ok(!lua.includes("__ZKR_"), "unreplaced placeholder in injected widget");
+  assert.match(lua, /local targetSpeed = tonumber\("5"\) or 1/);
+  assert.match(lua, /Spring\.GetGameSpeed/);
+  assert.equal(injectWidget(path.join(dir, "nope"), 5), null);
 });
 
 test("no-engine resim packs a cheap-parse artifact", async () => {

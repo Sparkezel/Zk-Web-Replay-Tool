@@ -39,6 +39,11 @@ local probeEvery = 6 -- frames between probes (6 @ 30 fps = 0.2 s)
 local knownUnitDefs = {}
 local knownWeaponDefs = {}
 
+-- wanted sim-speed factor for fast-forward (templated by the daemon); the
+-- engine clamps to GameSetup maxSpeed, /speedup steps 0.1 below 2x, 0.2 below
+-- 5x, 0.5 below 10x, 1.0 beyond
+local targetSpeed = tonumber("__ZKR_SPEED_FACTOR__") or 1
+
 local function emit(json)
   Spring.Echo("ZKR " .. json)
 end
@@ -102,6 +107,15 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
 end
 
 function widget:GameFrame(frame)
+  -- press /speedup every probe frame while the engine's wanted factor is below
+  -- target; supplements the GameStart burst in case those presses raced server
+  -- boot or got dropped. Stops pressing once wanted >= target (idempotent).
+  if targetSpeed > 1 and frame % probeEvery == 0 then
+    local wanted = select(1, Spring.GetGameSpeed())
+    if wanted ~= nil and wanted < targetSpeed - 0.001 then
+      Spring.SendCommands("speedup")
+    end
+  end
   if frame % probeEvery ~= 0 then return end
   local units = Spring.GetAllUnits()
   local rows = {}
@@ -133,8 +147,6 @@ function widget:GameFrame(frame)
 end
 
 function widget:GameStart()
-  -- engine clamps to GameSetup maxSpeed (default 20); each /speedup raises
-  -- wantedSpeedFactor by 0.1 below 5, 0.5 up to 10, 1.0 beyond
   local presses = __ZKR_SPEEDUP_PRESSES__
   for i = 1, presses do
     Spring.SendCommands("speedup")

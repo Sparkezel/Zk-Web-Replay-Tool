@@ -7,7 +7,7 @@
  *              [--pos-rate N] [--projectiles none|beams|heavy|all]
  *              [--script springscript.txt] [--no-resim]
  *              [--timeout SEC] [--status-every-sec N] [--game-over-grace-sec N]
- *              [--speed N]   sim-speed multiplier (default 5 for max engine resim speed)
+ *              [--speed N]   sim-speed multiplier (default 5 for fast resim)
  *              [--no-zkr-sec N]  abort when no ZKR captured N sec into the sim (default 120, 0 disables)
  *
  * Without an engine available the daemon still packs a valid artifact from
@@ -49,7 +49,7 @@ export interface ResimJob {
   statusEverySec?: number;
   /** seconds past game-over before a lingering engine gets killed (default 30, 0 disables) */
   gameOverGraceSec?: number;
-  /** wanted sim-speed multiplier applied via engine /speedup at game start (default 1) */
+  /** wanted sim-speed multiplier applied via engine /speedup (default 5) */
   speedFactor?: number;
   /** kill the resim when zero ZKR lines were captured this many seconds after sim start (default 120, 0 disables) */
   zkrAbortSec?: number;
@@ -96,13 +96,14 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       const dataDir = job.dataRoot !== undefined
         ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, log })
         : undefined;
+      const speedFactor = job.speedFactor ?? 5;
       if (dataDir !== undefined) {
         mkdirSync(path.join(dataDir, "LuaUI", "Widgets"), { recursive: true });
-        injectWidget(dataDir, job.speedFactor, log);
+        injectWidget(dataDir, speedFactor, log);
       }
       const writeDir = path.join(root, "engine-write");
       mkdirSync(path.join(writeDir, "LuaUI", "Widgets"), { recursive: true });
-      injectWidget(writeDir, job.speedFactor, log);
+      injectWidget(writeDir, speedFactor, log);
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
@@ -145,14 +146,16 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   };
 }
 
-export function injectWidget(gameDataDir: string, speedFactor = 1, log: Logger = consoleLogger): string | null {
+export function injectWidget(gameDataDir: string, speedFactor = 5, log: Logger = consoleLogger): string | null {
   const widgetsDir = path.join(gameDataDir, "LuaUI", "Widgets");
   if (!existsSync(widgetsDir)) {
     log.warn(`no LuaUI/Widgets dir at ${widgetsDir}; widget not injected`);
     return null;
   }
   const speedPresses = speedUpPressesFor(speedFactor);
-  const widgetSource = SNAPSHOT_WIDGET_LUA.replace(/__ZKR_SPEEDUP_PRESSES__/g, String(speedPresses));
+  const widgetSource = SNAPSHOT_WIDGET_LUA
+    .replace(/__ZKR_SPEEDUP_PRESSES__/g, String(speedPresses))
+    .replace(/__ZKR_SPEED_FACTOR__/g, String(speedFactor));
   const widgetPath = path.join(widgetsDir, SNAPSHOT_WIDGET_NAME);
   writeFileSync(widgetPath, widgetSource);
   log.info(`snapshot widget injected: ${widgetPath}`);
