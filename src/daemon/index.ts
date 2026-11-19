@@ -34,6 +34,8 @@ export interface ResimJob {
   engineDir?: string;
   engineVersion?: string;
   scriptPath?: string;
+  /** root of the game-data tree (containing `games/` and `maps/`); engine cwd */
+  dataRoot?: string;
   posRate?: number;
   projectiles?: ProjectilePreset;
   skipResim?: boolean;
@@ -75,6 +77,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath, logDir: path.join(root, "logs"), log,
+        cwd: job.dataRoot,
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;
@@ -144,6 +147,7 @@ export function parseArgs(argv: string[]): ResimJob {
         break;
       }
       case "--no-resim": job.skipResim = true; break;
+      case "--data-root": job.dataRoot = next(); break;
       default: throw new Error(`unknown flag ${a}`);
     }
   }
