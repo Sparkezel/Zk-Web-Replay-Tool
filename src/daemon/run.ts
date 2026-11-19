@@ -23,6 +23,8 @@ export interface RunOptions {
   timeoutMs?: number;
   /** working directory for the engine process (defaults to the engine dir) */
   cwd?: string;
+  /** extra archive roots (`games/`, `maps/`, `packages/`); passed as SPRING_DATADIR */
+  dataDir?: string;
   log?: Logger;
 }
 
@@ -55,10 +57,14 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let zkrLines = 0;
   let timedOut = false;
 
+  const env = opts.dataDir
+    ? { ...process.env, SPRING_DATADIR: opts.dataDir }
+    : { ...process.env };
   return new Promise((resolve, reject) => {
     const proc = spawn(enginePath, [opts.scriptPath], {
       stdio: ["ignore", "pipe", "pipe"],
       cwd: opts.cwd ?? opts.engineDir,
+      env,
     });
     const timeout = setTimeout(() => {
       timedOut = true;

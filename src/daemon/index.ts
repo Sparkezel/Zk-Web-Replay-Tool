@@ -77,7 +77,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath, logDir: path.join(root, "logs"), log,
-        cwd: job.dataRoot,
+        dataDir: job.dataRoot,
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;
