@@ -27,25 +27,32 @@
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
 
-  /* Blue-green ramp for even allyteams, red-orange ramp for odd allyteams.
-     The hue is spread across the whole ramp between the allyteam's teams, so
+  /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
+     green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
+     dark red -> orange -> dark brown -> light brown. Lightness zigzags so
      teammates stay visually separable (16 hard steps 3° apart were not); the
      family split keeps friend/foe readable at a glance. */
-  const TEAL_RANGE = [152, 203], WARM_RANGE = [8, 58];
-  const TEAL16 = [], WARM16 = [];
-  for (let i = 0; i < 16; i++) {
-    TEAL16.push("hsl(" + Math.round(TEAL_RANGE[0] + (TEAL_RANGE[1] - TEAL_RANGE[0]) * i / 15) + ",62%,46%)");
-    WARM16.push("hsl(" + Math.round(WARM_RANGE[0] + (WARM_RANGE[1] - WARM_RANGE[0]) * i / 15) + ",72%,52%)");
+  const ALLY_STOPS = [
+    [[130, 88, 62], [146, 76, 38], [163, 80, 56], [184, 76, 38], [206, 82, 52]],
+    [[4, 88, 55], [12, 82, 38], [24, 88, 48], [36, 70, 32], [46, 66, 46], [28, 32, 62]],
+  ];
+  function rampColor(ally, f) {
+    const stops = ALLY_STOPS[ally % 2];
+    const pos = f * (stops.length - 1);
+    const k = Math.min(Math.floor(pos), stops.length - 2);
+    const t = pos - k;
+    const c = [0, 1, 2].map((j) => Math.round(stops[k][j] + (stops[k + 1][j] - stops[k][j]) * t));
+    return "hsl(" + c[0] + "," + c[1] + "%," + c[2] + "%)";
   }
+  const ALLY16 = ALLY_STOPS.map((_, ally) => []);
+  for (let ally = 0; ally < ALLY_STOPS.length; ally++) {
+    for (let i = 0; i < 16; i++) ALLY16[ally].push(rampColor(ally, i / 15));
+  }
+  const TEAL16 = ALLY16[0], WARM16 = ALLY16[1];
   function teamColor(t, teamMeta) {
     if (t === null || t === undefined || t < 0) return "#9aa4aa";
     const m = teamMeta && teamMeta[t];
-    if (m) {
-      const range = m.ally % 2 === 0 ? TEAL_RANGE : WARM_RANGE;
-      const sat = m.ally % 2 === 0 ? "62%,46%" : "72%,52%";
-      const f = m.n > 1 ? m.idx / (m.n - 1) : 0;
-      return "hsl(" + Math.round(range[0] + (range[1] - range[0]) * f) + "," + sat + ")";
-    }
+    if (m) return rampColor(m.ally, m.n > 1 ? m.idx / (m.n - 1) : 0);
     const ramp = (t % 2 === 0) ? TEAL16 : WARM16;
     return ramp[Math.floor(t / 2) % 16];
   }

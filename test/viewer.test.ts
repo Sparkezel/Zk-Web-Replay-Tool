@@ -188,6 +188,30 @@ test("viewer model recovers winner, gameover and interpolated positions", async 
   assert.ok(Math.abs(mid!.hp - 0.8) < 0.02);
 });
 
+test("allyteam palettes: green->cyan->blue vs red->orange->brown, lightness-aware separation", () => {
+  /* allyteam 0 walks green -> cyan -> blue, allyteam 1 red -> orange -> brown;
+     lightness zigzags so every teammate pair stays separable (dE not hue-only) */
+  const c0 = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 0, n: 4 } })!;
+  const c3 = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 3, n: 4 } })!;
+  assert.match(c0, /hsl\(\d+,\d+%,\d+%\)/);
+  assert.notEqual(c0, c3);
+  // across the ramp lightness must vary (not a fixed-lightness hue strip),
+  // and no stop may approach black ("bright ... but not so dark")
+  const lights = [0, 3, 6, 9, 12, 15].map((i) =>
+    Number(ZkrReplay.TEAL16[i]!.match(/hsl\(\d+,\d+%,(\d+)%\)/)![1]));
+  assert.ok(Math.max(...lights) - Math.min(...lights) >= 15, "lightness zigzags on the teal ramp");
+  assert.ok(Math.min(...lights) >= 30, "teal ramp never gets near-black");
+  const warmLights = [0, 3, 6, 9, 12, 15].map((i) =>
+    Number(ZkrReplay.WARM16[i]!.match(/hsl\(\d+,\d+%,(\d+)%\)/)![1]));
+  assert.ok(Math.max(...warmLights) - Math.min(...warmLights) >= 15, "lightness zigzags on the warm ramp");
+  assert.ok(Math.min(...warmLights) >= 25, "warm ramp never gets near-black");
+  // two teammates of the same allyteam share the hue family but differ in colour
+  const a = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 0, n: 3 } })!;
+  const b = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 1, n: 3 } })!;
+  const c = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 2, n: 3 } })!;
+  assert.notEqual(a, b); assert.notEqual(b, c); assert.notEqual(a, c);
+});
+
 test("hp ring colour follows the green->orange->red gradient", () => {
   const c = (hp: number) => ZkrReplay.hpColor(hp);
   assert.match(c(1)!, /hsl\(135,/);   // full health: vibrant green
