@@ -219,7 +219,7 @@ function jsonSection(value: unknown): Uint8Array {
 function encodeUnitDefs(snap: SnapshotData): Uint8Array {
   const rows = [...snap.unitDefs.values()]
     .sort((a, b) => a.defID - b.defID)
-    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? ""]);
+    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? ""]);
   return jsonSection({ schema: 1, units: rows });
 }
 

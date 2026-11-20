@@ -27,31 +27,105 @@
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
 
+  /* 16-step blue-green ramp for even allyteams, 16-step red-orange ramp for
+     odd allyteams; the index inside the ramp is the team's position among the
+     teams of its own allyteam, so same-side players get distinct hues that
+     never mix with the enemy family. */
+  const TEAL16 = [], WARM16 = [];
+  for (let i = 0; i < 16; i++) {
+    TEAL16.push("hsl(" + Math.round(152 + 3.4 * i) + ",62%,46%)");
+    WARM16.push("hsl(" + Math.round(8 + 3.3 * i) + ",72%,52%)");
+  }
+  function teamColor(t, teamMeta) {
+    if (t === null || t === undefined || t < 0) return "#9aa4aa";
+    const m = teamMeta && teamMeta[t];
+    if (m) return (m.ally % 2 === 0 ? TEAL16 : WARM16)[m.idx % 16];
+    const ramp = (t % 2 === 0) ? TEAL16 : WARM16;
+    return ramp[Math.floor(t / 2) % 16];
+  }
+
+  /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
+   *  {x1, z1, x2, z2}. Returns null unless all four corners parse. */
+  function parseBoxBody(body) {
+    const box = {};
+    const keyRe = /([xyz]\d)\s*=\s*(-?[\d.]+(?:[eE][+-]?\d+)?)/g;
+    let km, keyed = false;
+    while ((km = keyRe.exec(body)) !== null) { box[km[1]] = parseFloat(km[2]); keyed = true; }
+    if (!keyed) {
+      const nums = (body.match(/-?[\d.]+(?:[eE][+-]?\d+)?/g) || []).map(Number).filter(Number.isFinite);
+      if (nums.length >= 4) { box.x1 = nums[0]; box.z1 = nums[1]; box.x2 = nums[2]; box.z2 = nums[3]; }
+    }
+    if (box.x1 === undefined || box.z1 === undefined || box.x2 === undefined || box.z2 === undefined) return null;
+    return box;
+  }
+
   /**
-   * Parse the Lua startbox blob stored per allyteam in the ROST section
-   * (`startboxes=return { [0]={x1=0.1,z1=0.2,x2=0.9,z2=0.4}, ... }`, values
-   * may be scientific notation). Returns one array of {x1,z1,x2,z2} (all
-   * normalized 0..1 map-space) per allyteam, in allyteam order.
+   * Parse a Lua startbox blob (`return { ... }`, numbers may be scientific
+   * notation). Handles both layouts seen in Zero-K data:
+   *   per-allyteam:  `{ [0]={x1=..,z1=..,x2=..,z2=..}, [1]={..} }`
+   *   bundled:       `{ [allyIdx]={ [0]={x1=..,z1=..,x2=..,z2=..}, .. } }`
+   * Returns Map allyteamIndex -> [boxes] with corners normalized 0..1.
    */
-  function parseStartboxes(allyteams) {
-    const out = [];
-    for (const at of (allyteams || [])) {
-      const boxes = [];
-      const s = String((at && at.startboxes) || "");
-      const boxRe = /\[\s*\d+\s*\]\s*=\s*\{([^{}]*)\}/g;
-      const keyRe = /([xyz]\d)\s*=\s*(-?[\d.]+(?:[eE][+-]?\d+)?)/g;
-      let m;
-      while ((m = boxRe.exec(s)) !== null) {
-        const fields = {};
-        let km;
-        while ((km = keyRe.exec(m[1])) !== null) fields[km[1]] = parseFloat(km[2]);
-        if (fields.x1 !== undefined && fields.z1 !== undefined && fields.x2 !== undefined && fields.z2 !== undefined) {
-          boxes.push({ x1: fields.x1, z1: fields.z1, x2: fields.x2, z2: fields.z2 });
+  function parseStartboxesBlob(blob) {
+    const out = new Map();
+    const s = String(blob || "").replace(/^\s*return\s*/, "");
+    let depth = 0, i = 0;
+    const lastKey = [];
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "{") { depth++; i++; continue; }
+      if (c === "}") { depth--; i++; continue; }
+      const bm = /^\[\s*(\d+)\s*\]\s*=/.exec(s.slice(i));
+      if (bm) { lastKey[depth] = parseInt(bm[1], 10); i += bm[0].length; continue; }
+      const sm = /^[\s;]+/.exec(s.slice(i));
+      if (sm) { i += sm[0].length; continue; }
+      const close = s.indexOf("}", i);
+      const open = s.indexOf("{", i);
+      if (c !== "" && close > i && (open === -1 || open > close)) {
+        const box = parseBoxBody(s.slice(i, close));
+        if (box) {
+          /* leaf depth differs by layout: bundled blobs have the allyteam key
+             one level further out, so fall back to the inner key */
+          const ally = (depth >= 2 && lastKey[depth - 2] !== undefined)
+            ? lastKey[depth - 2]
+            : lastKey[depth - 1];
+          if (ally !== undefined && ally >= 0) {
+            if (!out.has(ally)) out.set(ally, []);
+            out.get(ally).push(box);
+          }
         }
+        i = close;
+        continue;
       }
-      out.push(boxes);
+      i++;
     }
     return out;
+  }
+
+  /**
+   * Startboxes per allyteam, from the ROST section: allyteams[].startboxes
+   * blobs first, otherwise the bundled modoptions.startboxes blob. Returns
+   * one array of {x1,z1,x2,z2} per allyteam (empty arrays when a side — or
+   * the whole game — has no startboxes).
+   */
+  function parseStartboxes(allyteams, modoptions) {
+    const perAlly = [];
+    const blobs = (allyteams || []).map((at) => at && at.startboxes).filter(Boolean);
+    if (blobs.length === 0 && modoptions && String(modoptions.startboxes || "").indexOf("{") !== -1) {
+      const parsed = parseStartboxesBlob(modoptions.startboxes);
+      if (parsed.size > 0) {
+        const maxAlly = Math.max(...parsed.keys());
+        for (let a = 0; a <= maxAlly; a++) perAlly.push(parsed.get(a) || []);
+      }
+      return perAlly;
+    }
+    for (const at of (allyteams || [])) {
+      const parsed = parseStartboxesBlob((at && at.startboxes) || "");
+      const all = [];
+      for (const arr of parsed.values()) all.push(...arr);
+      perAlly.push(all);
+    }
+    return perAlly;
   }
 
   /* unit-icon support: the page calls setUnitIconBase("icons/") once, then
@@ -246,6 +320,7 @@
         name: row[1], metalCost: row[2], health: row[3],
         canMove: row[4] === 1 ? true : row[4] === 0 ? false : undefined,
         iconType: row[5] || undefined,
+        humanName: row[6] || undefined,
       });
     }
     const wdef = new Map();
@@ -268,7 +343,8 @@
       if (unitID === undefined || unitID < 0) return null;
       const d = defByUnit.get(unitID);
       const info = d !== undefined ? udef.get(d) : null;
-      return info && info.name ? info.name : fallback;
+      if (!info) return fallback;
+      return info.humanName || info.name || fallback;
     };
     const teamLabel = (team) => {
       const names = team !== undefined && team >= 0 ? teamNames[team] : null;
@@ -298,6 +374,51 @@
       }).map((p) => p.name).filter(Boolean);
       winnerLabel = winners.length > 0 ? winners.join(" / ") : "Team " + (winner + 1);
     }
+
+    /* team -> colour key: distinct ramp index per team within its own
+       allyteam so same-side players share the hue family but never a colour */
+    const teamsByAlly = {};
+    for (const [num, ally] of teamAllyteam) {
+      if (ally === undefined || ally < 0) continue;
+      (teamsByAlly[ally] = teamsByAlly[ally] || []).push(num);
+    }
+    const teamMeta = {};
+    for (const ally of Object.keys(teamsByAlly)) {
+      teamsByAlly[ally].sort((a, b) => a - b).forEach((tn, idx) => {
+        teamMeta[tn] = { ally: Number(ally), idx };
+      });
+    }
+
+    /* in-game chat: [frame, from, dest, text] rows; dest semantics per the
+       engine's ChatMessage.h: 252 = allies, 253 = spectators, 254 = everyone,
+       < playerNum = whisper; from 255 = autohost. SPRINGIE relay lines are
+       autohost noise and are dropped. */
+    const TO_ALLIES = 252, TO_SPECTATORS = 253, TO_EVERYONE = 254, SERVER_PLAYER = 255;
+    const playerNameByNum = new Map();
+    const playerAllyByNum = new Map();
+    for (const p of rosterPlayers) {
+      const m = /^(?:.*\/)?player(\d+)$/.exec(p.script || "");
+      if (!m) continue;
+      const n = Number(m[1]);
+      if (p.name && !playerNameByNum.has(n)) playerNameByNum.set(n, p.name);
+      if (!playerAllyByNum.has(n) && p.team !== undefined && p.team >= 0) {
+        playerAllyByNum.set(n, teamAllyteam.get(p.team));
+      }
+    }
+    const chatData = [];
+    for (const row of (artifact.chat || [])) {
+      const frame = row[0], from = row[1], dest = row[2], text = String(row[3] || "");
+      if (text.startsWith("SPRINGIE:")) continue;
+      const name = from === SERVER_PLAYER ? "autohost" : (playerNameByNum.get(from) || "Player " + from);
+      let kind = "all", ally = null;
+      if (dest === TO_ALLIES) { kind = "team"; ally = playerAllyByNum.get(from); }
+      else if (dest === TO_SPECTATORS) kind = "spec";
+      else if (dest === TO_EVERYONE) kind = "all";
+      else if (from === SERVER_PLAYER) kind = "host";
+      else if (typeof dest === "number" && dest >= 0 && dest < 32) kind = "whisper";
+      chatData.push({ tm: toSec(frame), name, kind, ally, txt: text });
+    }
+    chatData.sort((a, b) => a.tm - b.tm);
 
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
@@ -344,8 +465,10 @@
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
       winner, winnerLabel,
-      startboxes: parseStartboxes(artifact.roster ? artifact.roster.allyteams : []),
-      teamNames,
+      startboxes: parseStartboxes(
+        artifact.roster ? artifact.roster.allyteams : [],
+        artifact.roster ? artifact.roster.modoptions : null),
+      teamNames, teamMeta, chatData,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -397,7 +520,8 @@
 
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
-    parseStartboxes, setUnitIconBase, iconFor,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor,
+    teamColor, TEAL16, WARM16,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -31,6 +31,8 @@ export interface UnitDefInfo {
   canMove?: boolean;
   /** UnitDefs.iconType — unit icon key for the viewer */
   iconType?: string;
+  /** UnitDefs.humanName — display name for the viewer (e.g. cloakraid → Glaive) */
+  humanName?: string;
 }
 
 export interface PosSample {
@@ -163,6 +165,7 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         health: ev["hp"] !== undefined ? num(ev["hp"]) : undefined,
         canMove: ev["mv"] !== undefined ? num(ev["mv"]) === 1 : undefined,
         iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
+        humanName: typeof ev["hn"] === "string" && ev["hn"] !== "" ? ev["hn"] : undefined,
       });
       return;
     }

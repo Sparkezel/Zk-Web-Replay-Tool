@@ -81,6 +81,51 @@ test("feed falls back to ids and team numbers without ROST/UDEF data", async () 
   assert.deepEqual(model.startboxes, []);
 });
 
+test("startbox parser handles bundled modoptions blobs and positional boxes", () => {
+  const boxes = ZkrReplay.parseStartboxes([], {
+    startboxes: "return { [0]={ [0]={0.1,0.2,0.3,0.4} }; [1]={ [0]={1e-1,5e-1,7e-1,8e-1} }; };",
+  });
+  assert.equal(boxes.length, 2);
+  assert.deepEqual(boxes[0], [{ x1: 0.1, z1: 0.2, x2: 0.3, z2: 0.4 }]);
+  assert.deepEqual(boxes[1], [{ x1: 0.1, z1: 0.5, x2: 0.7, z2: 0.8 }]);
+  /* empty blob (game without startboxes) -> nothing drawn */
+  assert.deepEqual(ZkrReplay.parseStartboxes([], { startboxes: "return { }" }), []);
+});
+
+test("team colours key off allyteam teams, feed/chat use human names", () => {
+  const artifact = {
+    roster: {
+      players: [
+        { name: "A", team: 0, spectator: false, script: "player0" },
+        { name: "B", team: 1, spectator: false, script: "player1" },
+      ],
+      teams: [{ num: 0, allyteam: 0 }, { num: 1, allyteam: 1 }],
+    },
+    unitDefs: { units: [[5, "cloakraid", 65, 230, 1, "kbotraider", "Glaive"]] },
+    evnt: { records: [
+      { kind: "spawn", frame: 6, unitID: 10, int1: 5, int2: 0, int3: -1 },
+      { kind: "death", frame: 90, unitID: 10, int1: -1, int2: 1, int3: -1 },
+    ] },
+    chat: [
+      [30, 0, 254, "hello all"],
+      [60, 0, 252, "hello team"],
+      [90, 1, 253, "hello specs"],
+      [120, 0, 1, "psst"],
+      [150, 255, 254, "SPRINGIE:READY:A"],
+    ],
+  };
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.feedData[0]!.txt, "Glaive destroyed (B)");
+  assert.equal(model.teamMeta[0]!.ally, 0);
+  assert.equal(model.teamMeta[1]!.ally, 1);
+  assert.notEqual(ZkrReplay.teamColor(0, model.teamMeta), ZkrReplay.teamColor(1, model.teamMeta));
+  const chat = model.chatData;
+  assert.deepEqual(chat.map((c) => c.kind), ["all", "team", "spec", "whisper"]);
+  assert.equal(chat[0]!.name, "A");
+  assert.equal(chat[3]!.name, "A");
+  assert.deepEqual(chat.map((c) => c.txt).includes("SPRINGIE:READY:A"), false);
+});
+
 test("viewer decoder accepts Node-packed buffers (roundtrip parity)", () => {
   const snap = syntheticSnapshot();
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });

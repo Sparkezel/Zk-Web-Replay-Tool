@@ -75,7 +75,7 @@ local function maybeUdef(defID)
   if d == nil then return end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '"}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"}')
 end
 
 local function maybeWdef(defID)
