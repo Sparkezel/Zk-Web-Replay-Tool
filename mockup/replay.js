@@ -25,6 +25,53 @@
   const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
+  const STARTBOX_FADE_SEC = 30;
+
+  /**
+   * Parse the Lua startbox blob stored per allyteam in the ROST section
+   * (`startboxes=return { [0]={x1=0.1,z1=0.2,x2=0.9,z2=0.4}, ... }`, values
+   * may be scientific notation). Returns one array of {x1,z1,x2,z2} (all
+   * normalized 0..1 map-space) per allyteam, in allyteam order.
+   */
+  function parseStartboxes(allyteams) {
+    const out = [];
+    for (const at of (allyteams || [])) {
+      const boxes = [];
+      const s = String((at && at.startboxes) || "");
+      const boxRe = /\[\s*\d+\s*\]\s*=\s*\{([^{}]*)\}/g;
+      const keyRe = /([xyz]\d)\s*=\s*(-?[\d.]+(?:[eE][+-]?\d+)?)/g;
+      let m;
+      while ((m = boxRe.exec(s)) !== null) {
+        const fields = {};
+        let km;
+        while ((km = keyRe.exec(m[1])) !== null) fields[km[1]] = parseFloat(km[2]);
+        if (fields.x1 !== undefined && fields.z1 !== undefined && fields.x2 !== undefined && fields.z2 !== undefined) {
+          boxes.push({ x1: fields.x1, z1: fields.z1, x2: fields.x2, z2: fields.z2 });
+        }
+      }
+      out.push(boxes);
+    }
+    return out;
+  }
+
+  /* unit-icon support: the page calls setUnitIconBase("icons/") once, then
+     iconFor(iconType) returns a lazily-loaded Image (or null when no base is
+     configured). Rendering falls back to a coloured circle until the PNG is
+     loaded, and permanently when it fails. */
+  let iconBase = "";
+  const iconCache = new Map();
+  function setUnitIconBase(url) {
+    iconBase = String(url || "").replace(/\/?$/, "/");
+  }
+  function iconFor(iconType) {
+    if (!iconBase || !iconType || typeof Image === "undefined") return null;
+    if (!iconCache.has(iconType)) {
+      const im = new Image();
+      im.src = iconBase + encodeURIComponent(iconType) + ".png";
+      iconCache.set(iconType, im);
+    }
+    return iconCache.get(iconType);
+  }
 
   async function inflateSection(codec, payload) {
     if (codec === 0) return payload;
@@ -194,30 +241,77 @@
     }
 
     const udef = new Map();
-    for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) udef.set(row[0], { name: row[1], metalCost: row[2], health: row[3] });
+    for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) {
+      udef.set(row[0], {
+        name: row[1], metalCost: row[2], health: row[3],
+        canMove: row[4] === 1 ? true : row[4] === 0 ? false : undefined,
+        iconType: row[5] || undefined,
+      });
+    }
     const wdef = new Map();
     for (const w of (artifact.weaponDefs ? artifact.weaponDefs.weapons : [])) wdef.set(w.id, w);
+
+    /* team number -> player name(s), from the ROST section players;
+       team -> allyteam mapping comes from the ROST teams list when present */
+    const rosterPlayers = (artifact.roster && artifact.roster.players) || [];
+    const teamNames = {};
+    for (const p of rosterPlayers) {
+      if (p.spectator || p.team === undefined || p.team < 0 || !p.name) continue;
+      (teamNames[p.team] = teamNames[p.team] || []).push(p.name);
+    }
+    for (const tm of Object.keys(teamNames)) teamNames[tm] = teamNames[tm].join(" / ");
+    const teamAllyteam = new Map();
+    for (const t of ((artifact.roster && artifact.roster.teams) || [])) {
+      if (t.num !== undefined && t.num >= 0) teamAllyteam.set(t.num, t.allyteam);
+    }
+    const defLabel = (unitID, fallback) => {
+      if (unitID === undefined || unitID < 0) return null;
+      const d = defByUnit.get(unitID);
+      const info = d !== undefined ? udef.get(d) : null;
+      return info && info.name ? info.name : fallback;
+    };
+    const teamLabel = (team) => {
+      const names = team !== undefined && team >= 0 ? teamNames[team] : null;
+      return names || "Team " + (team + 1);
+    };
 
     const feedData = [];
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
+      const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
+      const killerName = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
       feedData.push({
         tm: toSec(r.frame), cls: "death",
-        txt: "Unit #" + r.unitID + " destroyed" +
-             (r.int1 >= 0 ? " — killed by unit #" + r.int1 : "") +
-             (r.int2 >= 0 ? " (Team " + (r.int2 + 1) + ")" : ""),
+        txt: unitName + " destroyed" +
+             (killerName ? " — killed by " + killerName : "") +
+             (r.int2 >= 0 ? " (" + teamLabel(r.int2) + ")" : ""),
       });
     }
     feedData.sort((a, b) => a.tm - b.tm);
 
-    const units = (artifact.pos ? artifact.pos.units : []).map((u) => ({
-      id: u.unitID, defID: u.defID,
-      team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
-      metalCost: udef.has(u.defID) ? (udef.get(u.defID).metalCost ?? -1) : -1,
-      born: toSec(u.firstFrame),
-      died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-      track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp })),
-    }));
+    /* victory text: prefer the player names of the winning allyteam */
+    let winnerLabel = null;
+    if (winner !== null && winner !== undefined) {
+      const winners = rosterPlayers.filter((p) => {
+        if (p.spectator || p.team === undefined || p.team < 0) return false;
+        return teamAllyteam.get(p.team) === winner;
+      }).map((p) => p.name).filter(Boolean);
+      winnerLabel = winners.length > 0 ? winners.join(" / ") : "Team " + (winner + 1);
+    }
+
+    const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
+      const info = udef.get(u.defID);
+      return {
+        id: u.unitID, defID: u.defID,
+        team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
+        metalCost: info ? (info.metalCost ?? -1) : -1,
+        kind: info && info.canMove === false ? "str" : undefined,
+        icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
+        born: toSec(u.firstFrame),
+        died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
+        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp })),
+      };
+    });
 
     const projectiles = (artifact.proj ? artifact.proj.paths : []).map((p) => ({
       proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
@@ -249,7 +343,9 @@
       fps: FPS,
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
-      winner,
+      winner, winnerLabel,
+      startboxes: parseStartboxes(artifact.roster ? artifact.roster.allyteams : []),
+      teamNames,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -299,5 +395,9 @@
     };
   }
 
-  global.ZkrReplay = { parse, artifactToModel, trackAt, pathAt, FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME };
+  global.ZkrReplay = {
+    parse, artifactToModel, trackAt, pathAt,
+    parseStartboxes, setUnitIconBase, iconFor,
+    FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -236,6 +236,9 @@ test("roster helper extracts allyteams and startbox info", () => {
   const { roster: r } = { roster: roster(parseStartscript(STARTSCRIPT_EXCERPT)) };
   assert.equal(r.allyteams.length, 2);
   assert.equal(r.allyteams[0]!.numallies, 3);
+  assert.equal(r.teams.length, 1);
+  assert.equal(r.teams[0]!.num, 0);
+  assert.equal(r.teams[0]!.allyteam, 0);
 });
 
 test(".zkr roundtrip", () => {

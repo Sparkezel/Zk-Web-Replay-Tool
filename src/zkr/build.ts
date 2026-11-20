@@ -35,6 +35,7 @@ export function buildRosterSection(demo: ParsedDemo): Uint8Array {
       faction: p.faction, admin: p.admin, script: p.key,
     })),
     allyteams: r.allyteams,
+    teams: r.teams,
     modoptions: r.modoptions ?? {},
     mapoptions: r.mapoptions ?? {},
   };
