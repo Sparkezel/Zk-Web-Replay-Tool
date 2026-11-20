@@ -106,8 +106,31 @@ export function encodePng(w: number, h: number, rgba: Uint8Array): Buffer {
 const MINIMAP_TOP = 1024;
 const DXT1_BYTES = (dim: number) => Math.ceil(dim / 4) ** 2 * 8;
 
-/** Locate the first .smf under the given roots (the staged maps dir). */
-export function findMapFile(roots: string[]): string | null {
+/** Normalise for matching: map names and their .smf filenames drift
+ *  ("Otago 1.4" ~ "otago_v04.smf"), so compare on letters only — version
+ *  digits, separators and underscores are all dropped. */
+function smfKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z]+/g, "");
+}
+
+/** Common prefix length of two normalised keys (0 when either is empty). */
+function keyOverlap(a: string, b: string): number {
+  let n = 0;
+  const len = Math.min(a.length, b.length);
+  while (n < len && a[n] === b[n]) n++;
+  return n;
+}
+
+/**
+ * Locate the best .smf under the given roots (the staged maps dir).
+ * `mapName` (from the startscript, e.g. "Otago 1.4") biases selection: the
+ * file with the highest normalised-name overlap wins (requires a 4-letter
+ * common prefix so unrelated maps never win); same overlap falls back to
+ * the first .smf found, so extraction still works without a map name.
+ */
+export function findMapFile(roots: string[], mapName?: string): string | null {
+  const want = mapName !== undefined ? smfKey(mapName) : "";
+  let best: { p: string; score: number } | null = null;
   for (const root of roots) {
     if (!existsSync(root)) continue;
     const stack = [root];
@@ -117,12 +140,17 @@ export function findMapFile(roots: string[]): string | null {
       try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
       for (const e of entries) {
         const p = path.join(dir, e.name);
-        if (e.isDirectory()) stack.push(p);
-        else if (e.name.toLowerCase().endsWith(".smf")) return p;
+        if (e.isDirectory()) {
+          stack.push(p);
+          continue;
+        }
+        if (!e.name.toLowerCase().endsWith(".smf")) continue;
+        const score = keyOverlap(smfKey(e.name.slice(0, -4)), want);
+        if (best === null || score > best.score) best = { p, score };
       }
     }
   }
-  return null;
+  return best === null ? null : best.p;
 }
 
 /**

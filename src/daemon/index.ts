@@ -138,7 +138,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
 
   // map backdrop: every .smf embeds its own minimap; decode it for the viewer
   const searchRoots = [path.join(root, "data", "maps"), path.join(root, "maps")];
-  const smfPath = findMapFile(searchRoots);
+  const smfPath = findMapFile(searchRoots, demo.roster.mapName);
   if (smfPath === null) {
     log.warn("no .smf map file in the staged data; viewer keeps the plain backdrop (--data-root enables map extraction)");
   } else {

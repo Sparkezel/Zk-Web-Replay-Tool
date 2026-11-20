@@ -104,6 +104,23 @@ test("findMapFile locates the first .smf in nested roots", () => {
   assert.ok(found.endsWith("deadsea.smf"));
 });
 
+test("findMapFile prefers the .smf matching the battle's map name", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-mapname-"));
+  const maps = path.join(dir, "maps");
+  mkdirSync(maps, { recursive: true });
+  // first-in-directory-order must NOT win when it isn't the battle map
+  writeFileSync(path.join(maps, "vittra v3.smf"), Buffer.alloc(0));
+  const deep = path.join(maps, "Otago 1.4");
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(path.join(deep, "otago_v04.smf"), Buffer.alloc(0));
+  const found = findMapFile([maps], "Otago 1.4");
+  assert.ok(found, "battle map must be found");
+  assert.ok(found.endsWith("otago_v04.smf"), `got ${found}`);
+  // no match: fall back to the first .smf so extraction still works
+  const fb = findMapFile([maps], "Shielded Canyon");
+  assert.ok(fb);
+});
+
 test("extractMapImage rejects non-SMF input", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zkr-bad-"));
   const f = path.join(dir, "bad.smf");
