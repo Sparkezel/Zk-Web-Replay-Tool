@@ -97,13 +97,14 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
         ? stageDataDir({ dataRoot: job.dataRoot, workDir: root, log })
         : undefined;
       const speedFactor = job.speedFactor ?? 5;
+      const projPreset = job.projectiles ?? "heavy";
       if (dataDir !== undefined) {
         mkdirSync(path.join(dataDir, "LuaUI", "Widgets"), { recursive: true });
-        injectWidget(dataDir, speedFactor, log);
+        injectWidget(dataDir, speedFactor, log, projPreset);
       }
       const writeDir = path.join(root, "engine-write");
       mkdirSync(path.join(writeDir, "LuaUI", "Widgets"), { recursive: true });
-      injectWidget(writeDir, speedFactor, log);
+      injectWidget(writeDir, speedFactor, log, projPreset);
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
@@ -146,7 +147,12 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   };
 }
 
-export function injectWidget(gameDataDir: string, speedFactor = 5, log: Logger = consoleLogger): string | null {
+export function injectWidget(
+  gameDataDir: string,
+  speedFactor = 5,
+  log: Logger = consoleLogger,
+  projPreset: ProjectilePreset = "heavy",
+): string | null {
   const widgetsDir = path.join(gameDataDir, "LuaUI", "Widgets");
   if (!existsSync(widgetsDir)) {
     log.warn(`no LuaUI/Widgets dir at ${widgetsDir}; widget not injected`);
@@ -155,7 +161,8 @@ export function injectWidget(gameDataDir: string, speedFactor = 5, log: Logger =
   const speedPresses = speedUpPressesFor(speedFactor);
   const widgetSource = SNAPSHOT_WIDGET_LUA
     .replace(/__ZKR_SPEEDUP_PRESSES__/g, String(speedPresses))
-    .replace(/__ZKR_SPEED_FACTOR__/g, String(speedFactor));
+    .replace(/__ZKR_SPEED_FACTOR__/g, String(speedFactor))
+    .replace(/__ZKR_PROJ_MODE__/g, projPreset);
   const widgetPath = path.join(widgetsDir, SNAPSHOT_WIDGET_NAME);
   writeFileSync(widgetPath, widgetSource);
   log.info(`snapshot widget injected: ${widgetPath}`);

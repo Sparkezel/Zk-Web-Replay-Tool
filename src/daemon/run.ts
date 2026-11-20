@@ -102,7 +102,10 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   return new Promise((resolve, reject) => {
     const proc = spawn(enginePath, [opts.scriptPath], {
       stdio: ["ignore", "pipe", "pipe"],
-      cwd: opts.cwd ?? opts.engineDir,
+      // infolog is hardcoded to <cwd>/infolog.txt (LogOutput.cpp SetFileName),
+      // so default the cwd to the isolated write dir - a 100+MB infolog must
+      // never land in the user's Steam engine folder
+      cwd: opts.cwd ?? opts.writeDir ?? opts.engineDir,
       env,
     });
     const timeout = setTimeout(() => {
@@ -152,7 +155,9 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       stdoutBuf = lines.pop() ?? "";
       for (const line of lines) {
         rawLines++;
-        rawOutput.push(line);
+        // ZKR lines are folded into the snapshot/artifact; persist only engine
+        // chatter so this debug log stays small even for 100k-line sims
+        if (line.indexOf("ZKR {") === -1) rawOutput.push(line);
         if (/using writeable data-directory|\[~CBufferedArchive\]|\[AS::/.test(line)) advance("scan");
         if (/\[PreGame::StartServer\]|\[GameServer\]/.test(line)) advance("starting");
         const fm = /\[f=(\d+)\]/.exec(line);

@@ -48,6 +48,13 @@ local function emit(json)
   Spring.Echo("ZKR " .. json)
 end
 
+-- integer elmo (2-3 bytes shorter per coord than %.3f; the packer quantizes
+-- to u16 anyway) - "null" when the engine returned nothing
+local function ipos(v)
+  if v == nil then return "null" end
+  return string.format("%d", math.floor(v))
+end
+
 local function num(v)
   v = tonumber(v)
   if v == nil then return "null" end
@@ -109,6 +116,39 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
     ',"w":' .. (weaponDefID or attackerDefID or -1) .. '}')
 end
 
+-- port of the daemon-side spec §C classifier (src/daemon/classify.ts): only
+-- projectiles whose class survives the preset are echo'd. Spring.Echo lines
+-- hit stdout AND infolog.txt, so every dropped projectile skipped here is
+-- volume saved in both sinks.
+local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
+  LightningCannon = true, TorpedoLauncher = true }
+local projClassByID = {}
+local function classifyWeapon(d, cp)
+  local name = string.lower(d.name or "")
+  if name:find("fake", 1, true) or name:find("bogus", 1, true) or
+     name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
+  local wtype = d.type or ""
+  if DROPPED_TYPES[wtype] then return 0 end
+  local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil
+  if wtype == "StarburstLauncher" then return isnuke and 3 or 4 end
+  local range = d.range or 0
+  if wtype == "MissileLauncher" then
+    if isnuke then return 3 end
+    if range >= 900 then return 4 end
+    return 0
+  end
+  if cp ~= nil and cp.interceptor == "1" then return 5 end
+  if (wtype == "BeamLaser" or wtype == "LaserCannon") and range >= 900 then return 1 end
+  if wtype == "Cannon" and (range >= 1000 or ((d.trajectoryHeight or 0) > 0 and range >= 800)) then return 2 end
+  return 0
+end
+
+local projMode = "__ZKR_PROJ_MODE__"
+local keepProjClass = { [1] = true, [2] = true, [3] = true, [4] = true, [5] = true } -- heavy
+if projMode == "none" then keepProjClass = {}
+elseif projMode == "beams" then keepProjClass = { [1] = true }
+elseif projMode == "all" then keepProjClass = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true } end
+
 function widget:GameFrame(frame)
   -- press /speedup every probe frame while the engine's wanted factor is below
   -- target; supplements the GameStart burst in case those presses raced server
@@ -127,7 +167,7 @@ function widget:GameFrame(frame)
     local x, y, z = Spring.GetUnitPosition(uid)
     local hp, maxHp = Spring.GetUnitHealth(uid)
     local build = select(5, Spring.GetUnitHealth(uid))
-    rows[#rows + 1] = "[" .. uid .. "," .. num(x) .. "," .. num(z) ..
+    rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
       "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
       "," .. frac(build and 1 or nil) .. "]"
   end
@@ -139,12 +179,20 @@ function widget:GameFrame(frame)
     local pid = projs[i]
     local wdefID = Spring.GetProjectileDefID(pid)
     if wdefID ~= nil and wdefID >= 0 then
-      maybeWdef(wdefID)
-      local x, y, z = Spring.GetProjectilePosition(pid)
-      local team = Spring.GetProjectileTeamID(pid)
-      emit('{"t":"proj","f":' .. frame .. ',"u":' .. pid ..
-        ',"d":' .. wdefID .. ',"tm":' .. (team or -1) ..
-        ',"x":' .. num(x) .. ',"y":' .. num(y) .. ',"z":' .. num(z) .. '}')
+      local cls = projClassByID[wdefID]
+      if cls == nil then
+        local d = WeaponDefs[wdefID]
+        cls = d ~= nil and classifyWeapon(d, d.customParams or {}) or 0
+        projClassByID[wdefID] = cls
+        if d ~= nil then maybeWdef(wdefID) end
+      end
+      if keepProjClass[cls] then
+        local x, y, z = Spring.GetProjectilePosition(pid)
+        local team = Spring.GetProjectileTeamID(pid)
+        emit('{"t":"proj","f":' .. frame .. ',"u":' .. pid ..
+          ',"d":' .. wdefID .. ',"tm":' .. (team or -1) ..
+          ',"x":' .. ipos(x) .. ',"y":' .. ipos(y) .. ',"z":' .. ipos(z) .. '}')
+      end
     end
   end
 end
