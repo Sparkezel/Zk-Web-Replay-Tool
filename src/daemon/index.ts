@@ -22,6 +22,7 @@ import { buildZkrFromDemo } from "../zkr/build.js";
 import { demoUrl } from "../config/urls.js";
 import { downloadFile, provisionEngine, headlessBinaryPath, consoleLogger, type Logger } from "./provision.js";
 import { stageDataDir } from "./stage.js";
+import { extractMapImage, findMapFile } from "./mapimage.js";
 import { newSnapshot, type SnapshotData } from "./events.js";
 import { loadDemoFile, runHeadlessCapture, writeStartscript } from "./run.js";
 import { buildZkrFromResim, type PackOptions } from "./pack.js";
@@ -134,6 +135,21 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
     : buildZkrFromDemo(demo);
   writeFileSync(artifactPath, zkr);
   log.info(`artifact written: ${artifactPath} (${zkr.byteLength} bytes, resim=${resimulated})`);
+
+  // map backdrop: every .smf embeds its own minimap; decode it for the viewer
+  const searchRoots = [path.join(root, "data", "maps"), path.join(root, "maps")];
+  const smfPath = findMapFile(searchRoots);
+  if (smfPath === null) {
+    log.warn("no .smf map file in the staged data; viewer keeps the plain backdrop (--data-root enables map extraction)");
+  } else {
+    const mapPng = path.join(path.dirname(artifactPath), "map.png");
+    const dims = extractMapImage(smfPath, mapPng);
+    if (dims !== null) {
+      log.info(`map backdrop extracted: ${mapPng} (${dims.w}x${dims.h}) from ${path.basename(smfPath)}`);
+    } else {
+      log.warn(`map minimap extraction failed for ${smfPath}; viewer keeps the plain backdrop`);
+    }
+  }
 
   return {
     battleID,

@@ -173,3 +173,14 @@ test("viewer model recovers winner, gameover and interpolated positions", async 
   assert.ok(Math.abs(mid!.x - 1124.5 / 16384) < 0.001);
   assert.ok(Math.abs(mid!.hp - 0.8) < 0.02);
 });
+
+test("hp ring colour follows the green->orange->red gradient", () => {
+  const c = (hp: number) => ZkrReplay.hpColor(hp);
+  assert.match(c(1)!, /hsl\(135,/);   // full health: vibrant green
+  assert.match(c(0.6)!, /hsl\(32,/);  // 60%: orange
+  assert.match(c(0)!, /hsl\(5,/);     // 0%: deep bright red
+  const a = Number(c(0.8)!.match(/hsl\((\d+)/)![1]);
+  const b = Number(c(0.7)!.match(/hsl\((\d+)/)![1]);
+  assert.ok(a > b, "hue decreases as hp drops");
+  assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
+});

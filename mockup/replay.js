@@ -27,21 +27,39 @@
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
 
-  /* 16-step blue-green ramp for even allyteams, 16-step red-orange ramp for
-     odd allyteams; the index inside the ramp is the team's position among the
-     teams of its own allyteam, so same-side players get distinct hues that
-     never mix with the enemy family. */
+  /* Blue-green ramp for even allyteams, red-orange ramp for odd allyteams.
+     The hue is spread across the whole ramp between the allyteam's teams, so
+     teammates stay visually separable (16 hard steps 3° apart were not); the
+     family split keeps friend/foe readable at a glance. */
+  const TEAL_RANGE = [152, 203], WARM_RANGE = [8, 58];
   const TEAL16 = [], WARM16 = [];
   for (let i = 0; i < 16; i++) {
-    TEAL16.push("hsl(" + Math.round(152 + 3.4 * i) + ",62%,46%)");
-    WARM16.push("hsl(" + Math.round(8 + 3.3 * i) + ",72%,52%)");
+    TEAL16.push("hsl(" + Math.round(TEAL_RANGE[0] + (TEAL_RANGE[1] - TEAL_RANGE[0]) * i / 15) + ",62%,46%)");
+    WARM16.push("hsl(" + Math.round(WARM_RANGE[0] + (WARM_RANGE[1] - WARM_RANGE[0]) * i / 15) + ",72%,52%)");
   }
   function teamColor(t, teamMeta) {
     if (t === null || t === undefined || t < 0) return "#9aa4aa";
     const m = teamMeta && teamMeta[t];
-    if (m) return (m.ally % 2 === 0 ? TEAL16 : WARM16)[m.idx % 16];
+    if (m) {
+      const range = m.ally % 2 === 0 ? TEAL_RANGE : WARM_RANGE;
+      const sat = m.ally % 2 === 0 ? "62%,46%" : "72%,52%";
+      const f = m.n > 1 ? m.idx / (m.n - 1) : 0;
+      return "hsl(" + Math.round(range[0] + (range[1] - range[0]) * f) + "," + sat + ")";
+    }
     const ramp = (t % 2 === 0) ? TEAL16 : WARM16;
     return ramp[Math.floor(t / 2) % 16];
+  }
+
+  /* health ring colour: vibrant green at full health, orange at 60%,
+     deep bright red at 0% (piecewise-linear hue so 60% lands exactly on
+     orange instead of drifting through yellow-green) */
+  function hpColor(hp) {
+    if (hp === null || hp === undefined || !isFinite(hp)) return "#9aa4aa";
+    let hue;
+    if (hp >= 0.6) hue = 32 + (135 - 32) * ((hp - 0.6) / 0.4);
+    else hue = 5 + (32 - 5) * Math.max(0, hp) / 0.6;
+    const light = hp >= 0.6 ? 47 : 55 - 10 * hp / 0.6;
+    return "hsl(" + Math.round(hue) + ",95%," + Math.round(light) + "%)";
   }
 
   /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
@@ -159,6 +177,11 @@
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       const g = c.getContext("2d");
       g.drawImage(img, 0, 0);
+      /* the dds art is mid-grey (avg ~50%); raise its luminance floor first
+         or the multiply below turns icons nearly invisible on dark maps */
+      g.globalCompositeOperation = "lighten";
+      g.fillStyle = "#b4b4b4";
+      g.fillRect(0, 0, c.width, c.height);
       g.globalCompositeOperation = "multiply";
       g.fillStyle = color;
       g.fillRect(0, 0, c.width, c.height);
@@ -407,8 +430,9 @@
     }
     const teamMeta = {};
     for (const ally of Object.keys(teamsByAlly)) {
-      teamsByAlly[ally].sort((a, b) => a - b).forEach((tn, idx) => {
-        teamMeta[tn] = { ally: Number(ally), idx };
+      const list = teamsByAlly[ally].sort((a, b) => a - b);
+      list.forEach((tn, idx) => {
+        teamMeta[tn] = { ally: Number(ally), idx, n: list.length };
       });
     }
 
@@ -480,7 +504,7 @@
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp })),
+        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build })),
       };
     });
 
@@ -569,7 +593,7 @@
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
-    teamColor, TEAL16, WARM16,
+    teamColor, hpColor, TEAL16, WARM16,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -153,6 +153,7 @@
           <span class="clock" id="clock">00:00 / 25:16</span>
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
           <span class="speed" id="speeds"></span>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wrecks" checked> wrecks</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
       </div>
@@ -325,11 +326,19 @@ function buildArtifactModel(artifact){
 
 /* ================= renderer ================= */
 var cv=document.getElementById("replay"),cx=cv.getContext("2d");
+/* map backdrop written by the daemon (extracted from the .smf's embedded
+   minimap); plain background + blobs while it is unavailable */
+var mapImg=new Image();mapImg.src="map.png";
 function draw(model,tm){
   var W=cv.width,H=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
-  model.blobs.forEach(function(b){cx.fillStyle="#20262a";
-    cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
+  var hasMap=!model.synthetic&&mapImg.complete&&mapImg.naturalWidth>0;
+  if(!hasMap){
+    model.blobs.forEach(function(b){cx.fillStyle="#20262a";
+      cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
+  }else{
+    cx.drawImage(mapImg,0,0,W,H);
+  }
   /* startboxes: engine-loaded polygons (start_boxes gadget → STBX section),
      falling back to startscript rects; filled polygons — allyteam 0 green,
      the rest red — fading out linearly between sim-second 0 and 30 */
@@ -374,6 +383,17 @@ function draw(model,tm){
     var x=pos.x*W,y=pos.y*H;
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
+    var alpha=1;
+    /* ghost units: vanished from tracking without a death event before the
+       battle ended (wrecks / missing kills) — drawn transparent, or hidden
+       with the "wrecks" toggle; under-construction units fade in */
+    if(u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
+      if(!document.getElementById("wrecks").checked)return;
+      alpha=0.45;
+    }else if(pos.bd!==undefined&&pos.bd<1){
+      alpha=0.3+0.7*pos.bd;
+    }
+    cx.globalAlpha=alpha;
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
     var tinted=img?ZkrReplay.tintIcon(img,teamColor(u.t)):null;
     if(tinted){
@@ -382,7 +402,14 @@ function draw(model,tm){
       cx.fillStyle=teamColor(u.t);
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
-    if(pos.hp!==undefined&&pos.hp<0.999){cx.strokeStyle="rgba(217,181,69,.9)";cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke()}
+    cx.globalAlpha=1;
+    /* health ring: outline only, green (full) -> orange (60%) -> deep red (0) */
+    if(pos.hp!==undefined&&pos.hp<0.999){
+      cx.strokeStyle=ZkrReplay.hpColor(pos.hp);
+      cx.lineWidth=1.4;
+      cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke();
+      cx.lineWidth=1;
+    }
   });
   model.projectiles.forEach(function(pr){
     var pos=pr.posAt(tm);
