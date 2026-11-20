@@ -101,8 +101,9 @@ def main() -> None:
             shutil.copyfile(png, target)
             used.append(f"{icon_type}.png" + (" (alias)" if resolution != icon_type else ""))
         elif dds and dds.exists():
-            Image.open(dds).save(target)
-            used.append(f"{icon_type}.png (from dds{', alias' if resolution != icon_type else ''})")
+            flip = getattr(getattr(Image, "Transpose", Image), "FLIP_TOP_BOTTOM")
+            Image.open(dds).transpose(flip).save(target)
+            used.append(f"{icon_type}.png (from dds, flipped{', alias' if resolution != icon_type else ''})")
         elif unitpic and unitpic.exists():
             shutil.copyfile(unitpic, target)
             used.append(f"{icon_type}.png (unitpics{', alias' if resolution != icon_type else ''})")

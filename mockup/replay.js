@@ -147,6 +147,28 @@
     return iconCache.get(iconType);
   }
 
+  /* Recolour a unit icon into the owning player's colour. Spring unit icons
+     are white/greyscale with alpha, so a multiply tint preserves the shape
+     while taking the team hue. Results are cached offscreen per (src, colour). */
+  const tintCache = new Map();
+  function tintIcon(img, color) {
+    if (!img || !img.complete || !img.naturalWidth || !color) return null;
+    const key = (img.src || "") + "|" + color;
+    if (!tintCache.has(key)) {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const g = c.getContext("2d");
+      g.drawImage(img, 0, 0);
+      g.globalCompositeOperation = "multiply";
+      g.fillStyle = color;
+      g.fillRect(0, 0, c.width, c.height);
+      g.globalCompositeOperation = "destination-in";
+      g.drawImage(img, 0, 0);
+      tintCache.set(key, c);
+    }
+    return tintCache.get(key);
+  }
+
   async function inflateSection(codec, payload) {
     if (codec === 0) return payload;
     if (codec !== 1) throw new Error("section codec " + codec + " is not supported in the browser; pack viewer artifacts with deflate");
@@ -435,13 +457,16 @@
       const frame = row[0], from = row[1], dest = row[2], text = String(row[3] || "");
       if (text.startsWith("SPRINGIE:")) continue;
       const name = from === SERVER_PLAYER ? "autohost" : (playerNameByNum.get(from) || "Player " + from);
-      let kind = "all", ally = null;
+      let kind = "all", ally = null, to = null;
       if (dest === TO_ALLIES) { kind = "team"; ally = playerAllyByNum.get(from); }
       else if (dest === TO_SPECTATORS) kind = "spec";
       else if (dest === TO_EVERYONE) kind = "all";
       else if (from === SERVER_PLAYER) kind = "host";
-      else if (typeof dest === "number" && dest >= 0 && dest < 32) kind = "whisper";
-      chatData.push({ tm: toSec(frame), name, kind, ally, txt: text });
+      else if (typeof dest === "number" && dest >= 0 && dest < 32) {
+        kind = "whisper";
+        to = playerNameByNum.get(dest) || ("Player " + dest);
+      }
+      chatData.push({ tm: toSec(frame), name, kind, ally, to, txt: text });
     }
     chatData.sort((a, b) => a.tm - b.tm);
 
@@ -543,7 +568,7 @@
 
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
-    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
     teamColor, TEAL16, WARM16,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
   };

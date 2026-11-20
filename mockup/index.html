@@ -88,12 +88,13 @@
   .chat li{padding:4px 12px;border-bottom:1px solid #30373b;color:#d7dde1}
   .chat li time{float:right;font-variant-numeric:tabular-nums;color:#5b666d;font-size:11px}
   .chat li .dest{color:#5b666d;font-size:11px}
-  .chat li.c-all b{color:#eef1f3;font-weight:600}
-  .chat li.c-spec b,.chat li.c-host b{color:#8a949b;font-weight:500}
-  .chat li.c-spec,.chat li.c-host{color:#9aa2a8}
-  .chat li.c-team0 b,.chat li.c-team0 .dest{color:#45e054;font-weight:600}
-  .chat li.c-team1 b,.chat li.c-team1 .dest{color:#ff453a;font-weight:600}
-  .chat li.c-whisper b{color:#c99ef0;font-weight:600}
+  .chat li b{color:#d7dde1;font-weight:600}
+  .chat li .txt{color:#d7dde1}
+  .chat li.c-all .txt{color:#eef1f3}
+  .chat li.c-spec .txt,.chat li.c-host .txt{color:#8a949b}
+  .chat li.c-team0 .txt{color:#45e054}
+  .chat li.c-team1 .txt{color:#ff453a}
+  .chat li.c-whisper .txt{color:#c99ef0;font-style:italic}
 
   /* ---- economy sparkline ---- */
   .eco{display:flex;gap:14px;align-items:center}
@@ -374,8 +375,9 @@ function draw(model,tm){
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
-    if(img&&img.complete&&img.naturalWidth>0){
-      cx.drawImage(img,x-r,y-r,r*2,r*2);
+    var tinted=img?ZkrReplay.tintIcon(img,teamColor(u.t)):null;
+    if(tinted){
+      cx.drawImage(tinted,x-r,y-r,r*2,r*2);
     }else{
       cx.fillStyle=teamColor(u.t);
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
@@ -418,9 +420,9 @@ function renderChat(model,tm){
   var el=document.getElementById("chat");var html="";
   for(var i=model.chatData.length-1;i>=0;i--){var e=model.chatData[i];
     if(e.tm>tm)continue;
-    var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper":"autohost";
+    var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper \u2192 "+(e.to||"?"):"autohost";
     var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
-    html+='<li class="'+cls+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: '+esc(e.txt)+'<time>'+fmt(e.tm)+"</time></li>";
+    html+='<li class="'+cls+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+fmt(e.tm)+"</time></li>";
     if(html.length>6000)break;}
   el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
   var first=el.firstChild;if(first)el.scrollTop=0;
