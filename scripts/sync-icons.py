@@ -32,7 +32,6 @@ ICON_ALIASES = {
     "commander1": "armcommander",
     "commander2": "armcommander",
     "commander3": "armcommander",
-    "walkerlrarty": "walkerarty",  # walkerlrarty.dds is not shipped by the game
 }
 
 
@@ -58,6 +57,20 @@ def read_zkr_udef(data: bytes):
     return []
 
 
+def find_file(directory: Path, filename: str) -> Path | None:
+    """Locate filename in directory, tolerating case differences (Windows game
+    installs are case-insensitive; the real file may be e.g. walkerLRarty.dds
+    while the iconType is walkerlrarty)."""
+    direct = directory / filename
+    if direct.exists():
+        return direct
+    lower = filename.lower()
+    for entry in directory.iterdir():
+        if entry.name.lower() == lower:
+            return entry
+    return None
+
+
 def main() -> None:
     argv = sys.argv[1:]
     out_dir = Path("mockup/icons")
@@ -80,16 +93,17 @@ def main() -> None:
     for icon_type in icon_types:
         target = out_dir / f"{icon_type}.png"
         resolution = ICON_ALIASES.get(icon_type, icon_type)
-        png = game_dir / "icons" / f"{resolution}.png"
-        dds = game_dir / "icons" / f"{resolution}.dds"
-        unitpic = game_dir / "unitpics" / f"{resolution}.png"
-        if png.exists():
+        icons_dir = game_dir / "icons"
+        png = find_file(icons_dir, f"{resolution}.png")
+        dds = find_file(icons_dir, f"{resolution}.dds")
+        unitpic = find_file(game_dir / "unitpics", f"{resolution}.png")
+        if png and png.exists():
             shutil.copyfile(png, target)
             used.append(f"{icon_type}.png" + (" (alias)" if resolution != icon_type else ""))
-        elif dds.exists():
+        elif dds and dds.exists():
             Image.open(dds).save(target)
             used.append(f"{icon_type}.png (from dds{', alias' if resolution != icon_type else ''})")
-        elif unitpic.exists():
+        elif unitpic and unitpic.exists():
             shutil.copyfile(unitpic, target)
             used.append(f"{icon_type}.png (unitpics{', alias' if resolution != icon_type else ''})")
         else:
