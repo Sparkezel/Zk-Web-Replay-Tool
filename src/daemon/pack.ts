@@ -13,7 +13,7 @@ import {
 } from "../zkr/build.js";
 import type { ParsedDemo } from "../demo/parse.js";
 import { classifyProjectile, presetRecords, type ProjectilePreset } from "./classify.js";
-import { LINK_OPEN_SENTINEL, type SnapshotData } from "./events.js";
+import { LINK_OPEN_SENTINEL, type EvntRecord, type SnapshotData } from "./events.js";
 
 class ByteWriter {
   private buf = new Uint8Array(256);
@@ -112,7 +112,10 @@ export function encodePos(snap: SnapshotData): Uint8Array {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
       w.s16(qx - prevX).s16(qz - prevZ);
-      w.u8(Math.round((s.hp ?? 1) * 255)).u8(Math.round((s.build ?? 1) * 255));
+      // hp/build arrive as 0..255 from the event model (samples carry raw 0..1 fractions);
+      // unknown (undefined) packs as 255 = full hp / finished build
+      w.u8(Math.max(0, Math.min(255, Math.round(s.hp ?? 255))))
+        .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
       prevX = qx;
       prevZ = qz;
     }
@@ -120,19 +123,25 @@ export function encodePos(snap: SnapshotData): Uint8Array {
   return w.finish();
 }
 
-const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3 };
+const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3, gameover: 4 };
 
 /**
  * `EVNT` v1 — unit lifecycle events.
  *
  *   u32 numRecords
  *   repeat: u8 kind, u32 frame, s32 unitID, s32 int1, s32 int2, s32 int3
- *   (spawn: defID, team, builderID — death: killerUnit, killerTeam, weaponDef)
+ *   (spawn: defID, team, builderID — death: killerUnit, killerTeam, weaponDef
+ *    gameover: unitID -1, int1 first winner allyteam, int2 winner count)
  */
 export function encodeEvents(snap: SnapshotData): Uint8Array {
   const w = new ByteWriter();
-  w.u32(snap.events.length);
-  for (const e of snap.events) {
+  const rows: EvntRecord[] = [...snap.events];
+  for (const g of snap.gameOvers) {
+    rows.push({ kind: "gameover", frame: g.frame, unitID: -1, int1: g.winners[0] ?? -1, int2: g.winners.length, int3: -1 });
+  }
+  rows.sort((a, b) => a.frame - b.frame);
+  w.u32(rows.length);
+  for (const e of rows) {
     w.u8(EVNT_KIND[e.kind] ?? 0).u32(e.frame).s32(e.unitID)
       .s32(e.int1).s32(e.int2).s32(e.int3);
   }

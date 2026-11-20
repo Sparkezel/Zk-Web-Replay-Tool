@@ -62,7 +62,6 @@ export function classifyProjectile(w: WeaponDefInfo): number {
   if (MISSILE_TYPES.has(type) && range >= MISSILE_MIN_RANGE) {
     return name.includes("nuke") || w.customParams?.["isnuke"] === "1" ? 3 : 4;
   }
-  if (w.customParams?.["interceptor"] === "1") return 5;
 
   if (BEAM_TYPES.has(type) && range >= BEAM_MIN_RANGE) return 1;
 

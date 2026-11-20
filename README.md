@@ -7,9 +7,11 @@ Static mockup of the battle-result screen with an animated battle replay section
 After merging, it will be served at https://sparkezel.github.io/Zk-Web-Replay-Tool/
 
 - Source: [`mockup/index.html`](mockup/index.html)
-- The replay stage currently renders synthetic seeded data; the target is a
-  pre-simulated artifact (unit snapshots + death/kill events) generated
-  server-side from Zero-K `.sdfz` demo files.
+- The replay stage renders a `battle.zkr` artifact placed next to the page
+  (unit position tracks, kill events, projectile paths, economy, victory).
+  Without one it falls back to a synthetic seeded preview.
+- To regenerate the artifact on a machine with an unpacked engine:
+  `node dist/daemon/index.js --demo <battle.sdfz> --out mockup/battle.zkr`
 
 ## Logging spec
 
@@ -33,3 +35,17 @@ https://sparkezel.github.io/Zk-Web-Replay-Tool/
   POS/EVNT/PROJ/LINK follow with the M2 headless resim.
 - Validated against battle [2539874](https://zero-k.info/Battles/Detail/2539874)
   (1.75 MB demo → 96 KB artifact; gameID 3da5f96a… matches End-of-file stats).
+
+## M3 — mockup viewer wiring
+
+- [`mockup/replay.js`](mockup/replay.js) — browser decoder for the `.zkr`
+  sections (`POS `/`EVNT`/`PROJ`/`LINK` binaries + JSON sections) and a
+  render-model builder; parity-tested against the Node packer in
+  `test/viewer.test.ts`.
+- `mockup/index.html` fetches `battle.zkr` (same directory), renders unit
+  tracks interpolated between probes, dash-dot-dash Djinn↔Lamp links,
+  projectile tracers, the kill feed and the metal economy chart; falls back
+  to the synthetic preview when the artifact is missing or carries no
+  unit tracks (cheap-parse artifact without engine resim).
+- Endgame state (`gameover` rows in `EVNT`) drives the victory overlay and
+  the timeline length.
