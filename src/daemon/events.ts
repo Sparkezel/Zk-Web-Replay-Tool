@@ -27,6 +27,10 @@ export interface UnitDefInfo {
   name: string;
   metalCost?: number;
   health?: number;
+  /** UnitDefs.canMove — false marks structures (fixed-size render) */
+  canMove?: boolean;
+  /** UnitDefs.iconType — unit icon key for the viewer */
+  iconType?: string;
 }
 
 export interface PosSample {
@@ -157,6 +161,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         name: String(ev["n"] ?? ""),
         metalCost: ev["m"] !== undefined ? num(ev["m"]) : undefined,
         health: ev["hp"] !== undefined ? num(ev["hp"]) : undefined,
+        canMove: ev["mv"] !== undefined ? num(ev["mv"]) === 1 : undefined,
+        iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
       });
       return;
     }

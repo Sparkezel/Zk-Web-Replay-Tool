@@ -101,6 +101,7 @@ export interface ParsedRosterPlayer {
 export function roster(script: ParsedStartscript): {
   players: ParsedRosterPlayer[];
   allyteams: Array<{ numallies?: number; startboxes?: string }>;
+  teams: Array<{ num: number; allyteam?: number; teamleader?: number }>;
   mapName?: string;
   gameType?: string;
   modoptions?: StartscriptSection;
@@ -131,9 +132,17 @@ export function roster(script: ParsedStartscript): {
       numallies: s["numallies"] !== undefined ? Number(s["numallies"]) : undefined,
       startboxes: asOpt(s, "startboxes"),
     })));
+  const teams = Object.entries(script.sections)
+    .filter(([k]) => /^team\d+$/.test(k.toLowerCase()))
+    .flatMap(([k, list]) => list.map((s) => ({
+      num: Number(k.replace(/^\D+/, "")),
+      allyteam: s["allyteam"] !== undefined ? Number(s["allyteam"]) : undefined,
+      teamleader: s["teamleader"] !== undefined ? Number(s["teamleader"]) : undefined,
+    })));
   return {
     players: players.sort((a, b) => a.key.localeCompare(b.key)),
     allyteams,
+    teams,
     mapName: opt(game["mapname"]),
     gameType: opt(game["gametype"]),
     modoptions: script.sections["modoptions"]?.[0],

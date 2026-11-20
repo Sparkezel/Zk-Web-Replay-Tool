@@ -58,6 +58,29 @@ test("viewer decoder recovers unit tracks from a packed artifact", async () => {
   assert.equal(artifact.proj.paths[0].cls, 3);
 });
 
+test("startbox parser reads ROST lua startboxes, tolerant of sci notation", () => {
+  const boxes = ZkrReplay.parseStartboxes([
+    { startboxes: "return { [0]={x1=0.1,z1=0.2,x2=0.9,z2=0.4}, [1]={x1=1e-1,z1=2e-1,x2=9e-1,z2=4e-1} };" },
+    {},
+  ]);
+  assert.equal(boxes.length, 2);
+  assert.equal(boxes[0]!.length, 2);
+  assert.equal(boxes[0]![0]!.x1, 0.1);
+  assert.equal(boxes[0]![0]!.z2, 0.4);
+  assert.equal(boxes[0]![1]!.x2, 0.9);
+  assert.equal(boxes[1]!.length, 0);
+});
+
+test("feed falls back to ids and team numbers without ROST/UDEF data", async () => {
+  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.feedData.length, 1);
+  assert.equal(model.feedData[0]!.txt, "Unit #2 destroyed — killed by Unit #1 (Team 1)");
+  assert.equal(model.winnerLabel, "Team 1");
+  assert.deepEqual(model.startboxes, []);
+});
+
 test("viewer decoder accepts Node-packed buffers (roundtrip parity)", () => {
   const snap = syntheticSnapshot();
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
