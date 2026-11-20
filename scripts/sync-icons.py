@@ -23,6 +23,18 @@ import sys
 import zlib
 from pathlib import Path
 
+# IconTypes the game resolves through LuaUI/Configs/icontypes.lua to a different
+# image, or whose own file is absent from game data. Keys are iconTypes emitted
+# in UDEF; values are the file stem to use instead.
+ICON_ALIASES = {
+    "advradar": "radar",        # same radar icon, drawn larger (size 2.5 vs 2)
+    "ampharty": "torparty",     # icontypes.lua maps ampharty -> torparty.png
+    "commander1": "armcommander",
+    "commander2": "armcommander",
+    "commander3": "armcommander",
+    "walkerlrarty": "walkerarty",  # walkerlrarty.dds is not shipped by the game
+}
+
 
 def read_zkr_udef(data: bytes):
     if data[:3] != b"ZKR":
@@ -67,18 +79,19 @@ def main() -> None:
     used, missing = [], []
     for icon_type in icon_types:
         target = out_dir / f"{icon_type}.png"
-        png = game_dir / "icons" / f"{icon_type}.png"
-        dds = game_dir / "icons" / f"{icon_type}.dds"
-        unitpic = game_dir / "unitpics" / f"{icon_type}.png"
+        resolution = ICON_ALIASES.get(icon_type, icon_type)
+        png = game_dir / "icons" / f"{resolution}.png"
+        dds = game_dir / "icons" / f"{resolution}.dds"
+        unitpic = game_dir / "unitpics" / f"{resolution}.png"
         if png.exists():
             shutil.copyfile(png, target)
-            used.append(f"{icon_type}.png")
+            used.append(f"{icon_type}.png" + (" (alias)" if resolution != icon_type else ""))
         elif dds.exists():
             Image.open(dds).save(target)
-            used.append(f"{icon_type}.png (from dds)")
+            used.append(f"{icon_type}.png (from dds{', alias' if resolution != icon_type else ''})")
         elif unitpic.exists():
             shutil.copyfile(unitpic, target)
-            used.append(f"{icon_type}.png (unitpics)")
+            used.append(f"{icon_type}.png (unitpics{', alias' if resolution != icon_type else ''})")
         else:
             missing.append(icon_type)
 
