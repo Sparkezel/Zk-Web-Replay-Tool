@@ -301,10 +301,11 @@ function buildArtifactModel(artifact){
   var R=mulberry(2539874);
   var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
   var units=m.units.map(function(u){
+    var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
-      kind:u.kind,icon:u.icon,
+      kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd}}};});
   var projectiles=m.projectiles.map(function(p){
     return {born:p.born,impact:p.end,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
@@ -403,8 +404,10 @@ function draw(model,tm){
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
     cx.globalAlpha=1;
-    /* health ring: outline only, green (full) -> orange (60%) -> deep red (0) */
-    if(pos.hp!==undefined&&pos.hp<0.999){
+    /* health ring: shown only when the unit has actually lost hp below its
+       own peak (hurt), and its build is finished; green (full) -> orange
+       (60%) -> deep red (0) */
+    if(pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
       cx.strokeStyle=ZkrReplay.hpColor(pos.hp);
       cx.lineWidth=1.4;
       cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke();

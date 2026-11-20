@@ -496,8 +496,11 @@
 
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
+      let hpMax = 0;
+      for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
       return {
         id: u.unitID, defID: u.defID,
+        hpMax: hpMax > 0 ? hpMax : undefined,
         team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
         metalCost: info ? (info.metalCost ?? -1) : -1,
         kind: info && info.canMove === false ? "str" : undefined,

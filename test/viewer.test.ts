@@ -157,6 +157,20 @@ test("viewer decoder accepts Node-packed buffers (roundtrip parity)", () => {
   assert.ok(secs.find((s) => s.id === "PROJ"));
 });
 
+test("health ring baseline: units carry hpMax and only true damage shows the ring", async () => {
+  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const hurt = model.units.find((u) => u.id === 1)!;
+  const full = model.units.find((u) => u.id === 2)!;
+  assert.ok(hurt.hpMax !== undefined, "tracked unit must expose hpMax");
+  assert.ok(hurt.hpMax! - hurt.track[hurt.track.length - 1]!.hp > 0.002,
+    "unit 1 ends below its peak, so the ring would draw");
+  assert.equal(full.hpMax!, 1);
+  assert.ok(full.hpMax! - full.track[0]!.hp <= 0.002,
+    "unit 2 sits at its peak, so the ring stays hidden");
+});
+
 test("viewer model recovers winner, gameover and interpolated positions", async () => {
   const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
