@@ -83,6 +83,18 @@
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
 
+  /* ---- in-game chat ---- */
+  .chat{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto;font-size:12.5px}
+  .chat li{padding:4px 12px;border-bottom:1px solid #30373b;color:#d7dde1}
+  .chat li time{float:right;font-variant-numeric:tabular-nums;color:#5b666d;font-size:11px}
+  .chat li .dest{color:#5b666d;font-size:11px}
+  .chat li.c-all b{color:#eef1f3;font-weight:600}
+  .chat li.c-spec b,.chat li.c-host b{color:#8a949b;font-weight:500}
+  .chat li.c-spec,.chat li.c-host{color:#9aa2a8}
+  .chat li.c-team0 b,.chat li.c-team0 .dest{color:#45e054;font-weight:600}
+  .chat li.c-team1 b,.chat li.c-team1 .dest{color:#ff453a;font-weight:600}
+  .chat li.c-whisper b{color:#c99ef0;font-weight:600}
+
   /* ---- economy sparkline ---- */
   .eco{display:flex;gap:14px;align-items:center}
   .eco canvas{flex:1;height:56px;background:#14181a;border:1px solid var(--line);border-radius:4px}
@@ -142,6 +154,12 @@
           <span class="speed" id="speeds"></span>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
+      </div>
+
+      <!-- ====== in-game chat ====== -->
+      <div class="panel">
+        <h2>In-game chat</h2>
+        <ul class="chat" id="chat"></ul>
       </div>
 
       <!-- ====== battle result info ====== -->
@@ -229,20 +247,16 @@
 <script src="replay.js"></script>
 <script>
 /* ================= page model ================= */
-/* 16 blue-green hues + 16 red-orange hues; even allyteams take the blue-green
-   ramp, odd the red-orange; the index inside the ramp is floor(team/2) so every
-   team up to 32 gets a distinct colour on its own side of the map */
-var TEAL16=[],WARM16=[];
-for(var _pc=0;_pc<16;_pc++){TEAL16.push("hsl("+Math.round(152+3.4*_pc)+",62%,46%)");WARM16.push("hsl("+Math.round(8+3.3*_pc)+",72%,52%)");}
-var T_COLORS = [TEAL16[0], WARM16[0], TEAL16[3], WARM16[3]];
+/* palettes live in replay.js now: 16 blue-green hues for even allyteams,
+   16 red-orange for odd; each team gets the ramp slot of its position among
+   the teams of its own allyteam, so sides never share colours */
+var T_COLORS = [ZkrReplay.TEAL16[0], ZkrReplay.WARM16[0], ZkrReplay.TEAL16[3], ZkrReplay.WARM16[3]];
 var MODEL = null;
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function fmt(s){var m=(s/60)|0;var ss=(s|0)%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
-function teamColor(t){
-  if(t===null||t===undefined||t<0)return "#9aa4aa";
-  var ramp=(t%2===0)?TEAL16:WARM16;
-  return ramp[Math.floor(t/2)%16];
-}
+function teamColor(t){return ZkrReplay.teamColor(t,MODEL&&MODEL.teamMeta)}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;")}
 
 /* ---------- synthetic preview (fallback when battle.zkr is absent) ---------- */
 function buildSyntheticModel(){
@@ -275,7 +289,7 @@ function buildSyntheticModel(){
   for(var s=0;s<=1516;s+=15){var f=s/1516;
     ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
   return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
-    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,
+    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],
     startboxes:[[{x1:.04,z1:.3,x2:.2,z2:.7}],[{x1:.8,z1:.3,x2:.96,z2:.7}]]};
 }
 
@@ -301,7 +315,8 @@ function buildArtifactModel(artifact){
   if(teams.length===0)teams=[0];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
-    teamNames:m.teamNames,startboxes:m.startboxes,teams:teams,
+    teamNames:m.teamNames,teamMeta:m.teamMeta,startboxes:m.startboxes,teams:teams,
+    chatData:m.chatData||[],
     END:m.END||1516,synthetic:false,
     links:m.links,
     meta:{map:m.mapName,game:m.gameVersion,engine:m.engine}};
@@ -314,19 +329,24 @@ function draw(model,tm){
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
   model.blobs.forEach(function(b){cx.fillStyle="#20262a";
     cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
-  /* startboxes come from the demo startscript (ROST section), faded out
-     linearly between sim-second 0 and 30 */
+  /* startboxes: real ones come from the demo startscript (ROST section),
+     filled polygons — allyteam 0 green, the rest red — fading out linearly
+     between sim-second 0 and 30; games without startboxes draw none */
   var sbs=model.startboxes||[];
   if(sbs.length){
     var sbAlpha=1-Math.min(tm/ZkrReplay.STARTBOX_FADE_SEC,1);
     if(sbAlpha>0){
       cx.lineWidth=1.5;
       for(var ai=0;ai<sbs.length;ai++){
-        cx.strokeStyle=teamColor(ai);cx.globalAlpha=sbAlpha*0.6;
+        var fillCol=ai===0?"52,199,73":"235,70,54";
+        cx.fillStyle="rgba("+fillCol+","+(0.20*sbAlpha).toFixed(3)+")";
+        cx.strokeStyle="rgba("+fillCol+","+(0.85*sbAlpha).toFixed(3)+")";
         (sbs[ai]||[]).forEach(function(b){
-          cx.strokeRect(b.x1*W,b.z1*H,(b.x2-b.x1)*W,(b.z2-b.z1)*H);});
+          cx.beginPath();cx.moveTo(b.x1*W,b.z1*H);cx.lineTo(b.x2*W,b.z1*H);
+          cx.lineTo(b.x2*W,b.z2*H);cx.lineTo(b.x1*W,b.z2*H);cx.closePath();
+          cx.fill();cx.stroke();});
       }
-      cx.globalAlpha=1;cx.lineWidth=1;
+      cx.lineWidth=1;
     }
   }
   if(model.links){
@@ -390,6 +410,19 @@ function renderFeed(model,tm){
   var first=el.firstChild;if(first)el.scrollTop=0;
 }
 
+/* in-game chat up to current time; entries: {tm,name,kind,ally,txt} */
+function renderChat(model,tm){
+  var el=document.getElementById("chat");var html="";
+  for(var i=model.chatData.length-1;i>=0;i--){var e=model.chatData[i];
+    if(e.tm>tm)continue;
+    var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper":"autohost";
+    var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
+    html+='<li class="'+cls+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: '+esc(e.txt)+'<time>'+fmt(e.tm)+"</time></li>";
+    if(html.length>6000)break;}
+  el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
+  var first=el.firstChild;if(first)el.scrollTop=0;
+}
+
 /* economy chart up to tm; artifact ecoPts: [{team,pts:[[s,val]..]}], synthetic: [[s,t1,t2]] */
 var ec=document.getElementById("eco"),ex=ec.getContext("2d");
 function drawEco(model,tm){
@@ -424,7 +457,7 @@ speeds.forEach(function(s){var b=document.createElement("button");
 var pb=document.getElementById("playBtn");
 pb.onclick=function(){if(!MODEL)return;playing=!playing;if(t>=MODEL.END)t=0;pb.textContent=playing?"\u23f8 Pause":"\u25b6 Play";};
 document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
-function drawFrame(){if(!MODEL)return;fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);drawEco(MODEL,t);}
+function drawFrame(){if(!MODEL)return;fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
 var last=performance.now();
 function loop(now){var dt=(now-last)/1000;last=now;
   if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
