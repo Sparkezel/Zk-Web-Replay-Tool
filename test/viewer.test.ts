@@ -78,7 +78,29 @@ test("feed falls back to ids and team numbers without ROST/UDEF data", async () 
   assert.equal(model.feedData.length, 1);
   assert.equal(model.feedData[0]!.txt, "Unit #2 destroyed — killed by Unit #1 (Team 1)");
   assert.equal(model.winnerLabel, "Team 1");
-  assert.deepEqual(model.startboxes, []);
+  assert.deepEqual(model.startPolys, []);
+});
+
+test("STBX engine polygons override startscript rects in the model", async () => {
+  const snap = syntheticSnapshot();
+  snap.startboxes = {
+    allyBox: [[0, 1], [1, 0]],
+    boxes: new Map([
+      [0, [[[0.86, 0.34], [0.96, 0.34], [0.96, 0.66], [0.86, 0.66]]]],
+      [1, [[[0.04, 0.34], [0.12, 0.34], [0.12, 0.6], [0.04, 0.6]]]],
+    ]),
+  };
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.startPolys.length, 2);
+  assert.equal(model.startPolys[0]![0]![0]![0]!, 0.04);
+  assert.equal(model.startPolys[1]![0]![0]![0]!, 0.86);
+  /* without STBX, rects from the startscript become polygons */
+  const snap2 = syntheticSnapshot();
+  const zkr2 = buildZkrFromResim(snap2, { projectiles: "heavy" });
+  const model2 = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr2))));
+  assert.deepEqual(model2.startPolys, []);
 });
 
 test("startbox parser handles bundled modoptions blobs and positional boxes", () => {

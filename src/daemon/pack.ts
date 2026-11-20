@@ -216,6 +216,21 @@ function jsonSection(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
 }
 
+/**
+ * Startboxes as loaded by the engine (from the map's mapconfig/map_startboxes.lua
+ * or the game's LuaRules/Configs/StartBoxes/<map>.lua, read via the start_boxes
+ * gadget's rules params). Polygons are already normalized 0..1 by the widget.
+ */
+function encodeStartboxes(snap: SnapshotData): Uint8Array | null {
+  const sb = snap.startboxes;
+  if (!sb || (sb.boxes.size === 0 && sb.allyBox.length === 0)) return null;
+  return jsonSection({
+    schema: 1,
+    boxes: [...sb.boxes.entries()].map(([id, polys]) => ({ id, polys })),
+    ally: sb.allyBox,
+  });
+}
+
 function encodeUnitDefs(snap: SnapshotData): Uint8Array {
   const rows = [...snap.unitDefs.values()]
     .sort((a, b) => a.defID - b.defID)
@@ -291,6 +306,14 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
     { id: SECTION.PROJECTILES, version: 1, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
     { id: SECTION.LINKS, version: 1, payload: encodeLinks(snap), codec },
   );
+  const startboxPayload = encodeStartboxes(snap);
+  if (startboxPayload) {
+    secs.splice(
+      1,
+      0,
+      { id: SECTION.STARTBOX, version: 1, payload: startboxPayload, codec },
+    );
+  }
   if (opts.demo) {
     secs.push(
       { id: SECTION.CHAT, version: 1, payload: buildChatSection(opts.demo), codec },

@@ -279,6 +279,7 @@
       sections,
       meta: json("META"),
       roster: json("ROST"),
+      startboxesData: json("STBX"),
       unitDefs: json("UDEF"),
       weaponDefs: json("WDEF"),
       chat: json("CHAT"),
@@ -389,6 +390,30 @@
       });
     }
 
+    /* startboxes: engine-loaded polygons (STBX section, read from the map/game
+       config via the start_boxes gadget's rules params) win over the startscript
+       modoptions rects; per allyteam, list of polygons of [x, z] sums in 0..1 */
+    const startPolys = [];
+    const sbd = artifact.startboxesData;
+    if (sbd && Array.isArray(sbd.boxes) && sbd.boxes.length > 0) {
+      const boxById = new Map(sbd.boxes.map((b) => [b.id, b.polys || []]));
+      const perAlly = new Map();
+      for (const [ally, boxID] of (sbd.ally || [])) {
+        const polys = boxById.get(boxID);
+        if (polys) perAlly.set(ally, polys);
+      }
+      if (perAlly.size) {
+        const maxAlly = Math.max(...perAlly.keys());
+        for (let a = 0; a <= maxAlly; a++) startPolys.push(perAlly.get(a) || []);
+      }
+    } else {
+      for (const rects of parseStartboxes(
+        artifact.roster ? artifact.roster.allyteams : [],
+        artifact.roster ? artifact.roster.modoptions : null)) {
+        startPolys.push(rects.map((r) => [[r.x1, r.z1], [r.x2, r.z1], [r.x2, r.z2], [r.x1, r.z2]]));
+      }
+    }
+
     /* in-game chat: [frame, from, dest, text] rows; dest semantics per the
        engine's ChatMessage.h: 252 = allies, 253 = spectators, 254 = everyone,
        < playerNum = whisper; from 255 = autohost. SPRINGIE relay lines are
@@ -465,9 +490,7 @@
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
       winner, winnerLabel,
-      startboxes: parseStartboxes(
-        artifact.roster ? artifact.roster.allyteams : [],
-        artifact.roster ? artifact.roster.modoptions : null),
+      startPolys,
       teamNames, teamMeta, chatData,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",

@@ -290,7 +290,7 @@ function buildSyntheticModel(){
     ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
   return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
     winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],
-    startboxes:[[{x1:.04,z1:.3,x2:.2,z2:.7}],[{x1:.8,z1:.3,x2:.96,z2:.7}]]};
+    startPolys:[[[[.04,.3],[.2,.3],[.2,.7],[.04,.7]]],[[[.8,.3],[.96,.3],[.96,.7],[.8,.7]]]]};
 }
 
 /* ---------- artifact model (battle.zkr) ---------- */
@@ -315,7 +315,7 @@ function buildArtifactModel(artifact){
   if(teams.length===0)teams=[0];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
-    teamNames:m.teamNames,teamMeta:m.teamMeta,startboxes:m.startboxes,teams:teams,
+    teamNames:m.teamNames,teamMeta:m.teamMeta,startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
     END:m.END||1516,synthetic:false,
     links:m.links,
@@ -329,10 +329,10 @@ function draw(model,tm){
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
   model.blobs.forEach(function(b){cx.fillStyle="#20262a";
     cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
-  /* startboxes: real ones come from the demo startscript (ROST section),
-     filled polygons — allyteam 0 green, the rest red — fading out linearly
-     between sim-second 0 and 30; games without startboxes draw none */
-  var sbs=model.startboxes||[];
+  /* startboxes: engine-loaded polygons (start_boxes gadget → STBX section),
+     falling back to startscript rects; filled polygons — allyteam 0 green,
+     the rest red — fading out linearly between sim-second 0 and 30 */
+  var sbs=model.startPolys||[];
   if(sbs.length){
     var sbAlpha=1-Math.min(tm/ZkrReplay.STARTBOX_FADE_SEC,1);
     if(sbAlpha>0){
@@ -341,10 +341,13 @@ function draw(model,tm){
         var fillCol=ai===0?"52,199,73":"235,70,54";
         cx.fillStyle="rgba("+fillCol+","+(0.20*sbAlpha).toFixed(3)+")";
         cx.strokeStyle="rgba("+fillCol+","+(0.85*sbAlpha).toFixed(3)+")";
-        (sbs[ai]||[]).forEach(function(b){
-          cx.beginPath();cx.moveTo(b.x1*W,b.z1*H);cx.lineTo(b.x2*W,b.z1*H);
-          cx.lineTo(b.x2*W,b.z2*H);cx.lineTo(b.x1*W,b.z2*H);cx.closePath();
-          cx.fill();cx.stroke();});
+        var polys=sbs[ai]||[];
+        for(var pi=0;pi<polys.length;pi++){
+          var poly=polys[pi];if(!poly||poly.length<3)continue;
+          cx.beginPath();cx.moveTo(poly[0][0]*W,poly[0][1]*H);
+          for(var vi=1;vi<poly.length;vi++)cx.lineTo(poly[vi][0]*W,poly[vi][1]*H);
+          cx.closePath();cx.fill();cx.stroke();
+        }
       }
       cx.lineWidth=1;
     }
