@@ -1,38 +1,34 @@
-# Handoff — map-backdrop bug RESOLVED + PR #5 merge plan
+# Handoff — replay playback bug RESOLVED (page ghost-crash), PR in flight
 
-_Created 2026-11-21 evening, branch `vibe/view-fixes-followup-c67cdf`, head `c91bf02` (revert of TEMP diagnostics)._
+_Created 2026-11-21 late evening. Map-backdrop bug: closed (PR #5, merged)._
 
-## State of the repo
+## The playback bug — root cause and fix (this session)
 
-- Repo: Sparkezel/Zk-Web-Replay-Tool. Draft **PR #5** `vibe/view-fixes-followup-c67cdf`, now ahead of its remote head by:
-  - `c88a54b` mapimage: packed .sd7/.sdz map archive support via 7-Zip (the Otago fix)
-  - `c91bf02` Revert of TEMP viewer diagnostics `d2ab3ab` (agreed pre-merge step — done)
-- 33/33 local tests (`npm test`, includes 5 new mapimage tests; sd7/sdz round-trip tests skip cleanly where no 7-Zip exists, run for real here).
-- `package.json` + `package-lock.json` have unrelated local modifications (a stray `node` dependency, predates this work) — **not committed, not pushed**. Deal with separately (probably `git checkout -- package*.json`).
-- `mockup/battle.zkr` + `mockup/map.png` remain gitignored, regenerated on the user's machine.
+**Symptom**: pressing Play never starts the replay; seeking showed up to two units at a time (sometimes dying), past 1/3 only a single "fencer wreckage" dot.
 
-## Map backdrop bug — root cause and fix (closed)
+**Root cause**: `mockup/index.html`'s `draw()` ghost-unit branch (merged with PR #5's wrecks feature) reads `u.track.length` on the **page-built** unit objects — but `buildArtifactModel()` maps units to objects that carry only a `posAt` closure and never copy `track`. Result: `TypeError: Cannot read properties of undefined (reading 'length')` inside the first `draw()` — which kills the `requestAnimationFrame(loop)` chain permanently:
+- Play button toggles `playing` but nothing advances (loop dead) → "start doesn't work"
+- every seek re-runs `draw()`: canvas cleared, units drawn in id order **until the first alive unit**, then throw → only the first couple of drawn units visible, later seeks leave one dot
+- the synthetic fallback was equally broken (its alive units have no `track` either)
 
-- **Root cause** (none of the earlier hypotheses): `findMapFile` only scanned for *loose* `.smf` files. A typical ZK install has hundreds of packed `.sd7` (7-Zip) map archives and almost no loose `.smf` files. `otago_1.4.sd7` was the battle's map; all 11 loose `.smf` files were unrelated maps (Vittra included), so `want="otago"` scored 0 everywhere and the first-found `.smf` (Vittra3.smf) won. The startscript parser (`mapname=Otago 1.4;`) and dist freshness were both fine all along.
-- **Fix**: `findMapSource()` scores loose `.smf` **and** `.sd7`/`.sdz` archives by normalised-name overlap (ties: loose `.smf` wins, then closest key length — `Otago 1.4` beats `Otago Redux 1.4`). `extractMapImageFromArchive()` streams the archive's (single) `.smf` via 7z (`ZKR_7Z` env → Program Files → PATH), decodes the minimap with the existing DXT1 path. Warnings added for missing 7-Zip. Note: the inner `.smf` name can share nothing with the display name — `otago_1.4.sd7` ships `maps\lavamountains.smf` — so a lone entry is always taken.
-- **Verified end-to-end** (no-resim run against the real staged data):
-  `map backdrop extracted: map.png (512x512) from otago_1.4.sd7 [sd7] (startscript mapName="Otago 1.4")`.
-- After the next full daemon run, hard-refresh the browser (Ctrl+Shift+R); http-server defaults to an hour of cache. Consider `http-server -c-1` while iterating.
+The 33 JS/TS tests stayed green because they test `mockup/replay.js` — the page's `buildArtifactModel`+`draw` pipeline was never executed anywhere. The artifact itself is healthy (1,399 units, EVNT 1400 spawns/1113 deaths/gameover, END 25:17, verified by decoding with the viewer code headlessly).
 
-## Still open
+**Fix** (branch `vibe/viewer-page-crash-fix`):
+- `buildArtifactModel` now copies `track` into the page unit objects
+- the ghost branch guards `u.track&&` first (synthetic units have none — normal draw path)
+- `test/viewer-page.test.ts` (NEW): runs the page's inline script headlessly (stub DOM/canvas/fetch), presses Play, drives 600 rAF frames and a timeline sweep — asserts real canvas drawing and no exceptions, for both the artifact and the synthetic-fallback paths. Without the html fix both tests fail; with it the suite is 35/35.
+- `scripts/inspect-zkr.mjs` + `scripts/sim-viewer.mjs` (NEW): artifact dumping + full headless page sim — the debug tools that found this bug in minutes.
 
-1. `[zkr-probe]` console block **never captured** — the earlier "only 1 commander, playback stalls at frame 5" report is still unconfirmed. With map + artifacts healthy on two resim runs, the stale-dist/cache stack remains the leading theory, but don't patch viewer decode paths without this evidence.
-2. Backlog issues #6–#10: gh-pages deployment, version bump, stale-branch cleanup, icon-sync docs.
-3. Optional hardening (not done): daemon warns loudly when `mapName` is missing from the startscript; mockup README note re `-c-1`.
+**IMPORTANT for viewing after pulling the fix**: http-server serves index.html/replay.js with `max-age=3600` — hard-refresh (Ctrl+Shift+R) after updating, or run the server with `-c-1`.
 
-## Agreed merge sequence (from here)
+## Still open (unchanged)
 
-1. Push the branch (fix + revert commits) → PR #5 CI goes green.
-2. Mark PR #5 ready for review → merge.
-3. Delete stale remote branches (backlog #7), open a fresh `vibe/...` branch off `main` for #6 gh-pages, #9 version bump, #10 icon-sync docs.
+1. Backlog issues #6–#10: gh-pages deployment, version bump, stale-branch cleanup, icon-sync docs.
+2. `package.json` has a stray `"node": "^27.0.0-alpha"` dependency (local modification, uncommitted) that shadows PATH `node` via `node_modules/.bin/node` — the system node is **v16.16.0**, which cannot run `npm test` (needs ≥20). Decide: either commit the dep deliberately with a comment, or drop it and install Node ≥ 20 properly.
+3. Optional hardening: daemon warns loudly when `mapName` is missing from the startscript; mockup README note re `-c-1`.
+4. Only the first two teams' units are counted in the cnt1/cnt2 chips (7-team battles undercount; cosmetic).
 
 ## Environment notes
 
-- Use the `gh` CLI (authenticated) for all GitHub operations; never create new repositories; `battle.zkr`/`map.png` artifacts are never committed.
-- 7-Zip present at `C:\Program Files\7-Zip\7z.exe` on the user's machine (also found via PATH or `ZKR_7Z`).
-- ZK game install (data root used for staging): `D:\je\zbad steam\steamapps\common\Zero-K`.
+- `node_modules/node/bin/node.exe` = Node 27 alpha (works) — use `./node_modules/node/bin/node.exe` for scripts; `node` on PATH is v16.
+- Battle data: `Demo/…Otago 1.4….sdfz`, staged data in `.zkr-work/` (junction to `D:\je\zbad steam\steamapps\common\Zero-K`), viewer served by http-server on **localhost:8081** (the 8080 Embedthis server is unrelated). Artifacts stay gitignored.

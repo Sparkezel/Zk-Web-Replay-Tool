@@ -304,6 +304,7 @@ function buildArtifactModel(artifact){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
+      track:u.track,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd}}};});
   var projectiles=m.projectiles.map(function(p){
@@ -387,8 +388,9 @@ function draw(model,tm){
     var alpha=1;
     /* ghost units: vanished from tracking without a death event before the
        battle ended (wrecks / missing kills) — drawn transparent, or hidden
-       with the "wrecks" toggle; under-construction units fade in */
-    if(u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
+       with the "wrecks" toggle; under-construction units fade in
+       (synthetic-preview units carry no track — the guard keeps them drawn) */
+    if(u.track&&u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
       if(!document.getElementById("wrecks").checked)return;
       alpha=0.45;
     }else if(pos.bd!==undefined&&pos.bd<1){
