@@ -144,10 +144,11 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   } else {
     const mapPng = path.join(path.dirname(artifactPath), "map.png");
     const dims = extractMapImage(smfPath, mapPng);
+    const nameKey = JSON.stringify(demo.roster.mapName ?? null);
     if (dims !== null) {
-      log.info(`map backdrop extracted: ${mapPng} (${dims.w}x${dims.h}) from ${path.basename(smfPath)}`);
+      log.info(`map backdrop extracted: ${mapPng} (${dims.w}x${dims.h}) from ${path.basename(smfPath)} (startscript mapName=${nameKey})`);
     } else {
-      log.warn(`map minimap extraction failed for ${smfPath}; viewer keeps the plain backdrop`);
+      log.warn(`map minimap extraction failed for ${smfPath} (startscript mapName=${nameKey}); viewer keeps the plain backdrop`);
     }
   }
 
