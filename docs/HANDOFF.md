@@ -1,43 +1,38 @@
-# Handoff — map-backdrop bug + PR #5 status
+# Handoff — map-backdrop bug RESOLVED + PR #5 merge plan
 
-_Created 2026-11-21, branch `vibe/view-fixes-followup-c67cdf`, head `9b1f966`._
+_Created 2026-11-21 evening, branch `vibe/view-fixes-followup-c67cdf`, head `c91bf02` (revert of TEMP diagnostics)._
 
 ## State of the repo
 
-- Repo: Sparkezel/Zk-Web-Replay-Tool. Open draft **PR #5** `vibe/view-fixes-followup-c67cdf`, head **`9b1f966`** (verified pushed; CI green on ubuntu+windows; 28/28 local tests).
-- PR #5 contains:
-  - team-palette ramps + lightness zigzag (e12070e)
-  - player names in feed, startboxes, dds icon fixes
-  - **`findMapFile(roots, mapName)` name-overlap picker (dfb9561)**
-  - **TEMP console diagnostics on artifact load (d2ab3ab) — to be reverted before merge**
-  - **daemon logs parsed `mapName` on the map-extraction line (9b1f966)**
-- Backlog (issues #6–#10): gh-pages deployment, version bump, stale-branch cleanup, icon-sync docs.
-- Stack: TS daemon (`src/daemon/*.ts` → `tsc` → `dist/`, no runtime deps, node ≥ 20), plain-JS viewer (`mockup/replay.js` + inline script in `mockup/index.html`), `npm test` = `tsc && node --test test/*.test.ts`. `mockup/battle.zkr` + `mockup/map.png` are **gitignored** — generated on the user's Windows machine, never committed.
+- Repo: Sparkezel/Zk-Web-Replay-Tool. Draft **PR #5** `vibe/view-fixes-followup-c67cdf`, now ahead of its remote head by:
+  - `c88a54b` mapimage: packed .sd7/.sdz map archive support via 7-Zip (the Otago fix)
+  - `c91bf02` Revert of TEMP viewer diagnostics `d2ab3ab` (agreed pre-merge step — done)
+- 33/33 local tests (`npm test`, includes 5 new mapimage tests; sd7/sdz round-trip tests skip cleanly where no 7-Zip exists, run for real here).
+- `package.json` + `package-lock.json` have unrelated local modifications (a stray `node` dependency, predates this work) — **not committed, not pushed**. Deal with separately (probably `git checkout -- package*.json`).
+- `mockup/battle.zkr` + `mockup/map.png` remain gitignored, regenerated on the user's machine.
 
-## Active bug: map backdrop is still Vittra for an Otago battle
+## Map backdrop bug — root cause and fix (closed)
 
-**Symptom**: daemon logs
-`map backdrop extracted: mockup\map.png (512x512) from Vittra3.smf`
-on every re-run, even after pulling `dfb9561`. Reference battle zero-k.info/Battles/Detail/2539874, expected map `otago_1.4.sd7`.
+- **Root cause** (none of the earlier hypotheses): `findMapFile` only scanned for *loose* `.smf` files. A typical ZK install has hundreds of packed `.sd7` (7-Zip) map archives and almost no loose `.smf` files. `otago_1.4.sd7` was the battle's map; all 11 loose `.smf` files were unrelated maps (Vittra included), so `want="otago"` scored 0 everywhere and the first-found `.smf` (Vittra3.smf) won. The startscript parser (`mapname=Otago 1.4;`) and dist freshness were both fine all along.
+- **Fix**: `findMapSource()` scores loose `.smf` **and** `.sd7`/`.sdz` archives by normalised-name overlap (ties: loose `.smf` wins, then closest key length — `Otago 1.4` beats `Otago Redux 1.4`). `extractMapImageFromArchive()` streams the archive's (single) `.smf` via 7z (`ZKR_7Z` env → Program Files → PATH), decodes the minimap with the existing DXT1 path. Warnings added for missing 7-Zip. Note: the inner `.smf` name can share nothing with the display name — `otago_1.4.sd7` ships `maps\lavamountains.smf` — so a lone entry is always taken.
+- **Verified end-to-end** (no-resim run against the real staged data):
+  `map backdrop extracted: map.png (512x512) from otago_1.4.sd7 [sd7] (startscript mapName="Otago 1.4")`.
+- After the next full daemon run, hard-refresh the browser (Ctrl+Shift+R); http-server defaults to an hour of cache. Consider `http-server -c-1` while iterating.
 
-**Beautiful part of the evidence**: the resim itself is fully healthy — two runs (`zkrLines=42767` and `42900`, both `phase=over`, engine exited code=0, artifacts ~1.80–1.81 MB, map reached frame 45628/46388 of 50424 because the game ended there). Artifact truncation is **ruled out** as the cause of earlier viewer symptoms.
+## Still open
 
-**Hypotheses, ranked**:
+1. `[zkr-probe]` console block **never captured** — the earlier "only 1 commander, playback stalls at frame 5" report is still unconfirmed. With map + artifacts healthy on two resim runs, the stale-dist/cache stack remains the leading theory, but don't patch viewer decode paths without this evidence.
+2. Backlog issues #6–#10: gh-pages deployment, version bump, stale-branch cleanup, icon-sync docs.
+3. Optional hardening (not done): daemon warns loudly when `mapName` is missing from the startscript; mockup README note re `-c-1`.
 
-1. **`demo.roster.mapName` is `undefined`/wrong-prefixed for this real startscript** (the parser test only asserts a synthetic fixture returning `"Otago 1.4"`). If `undefined` → `want = ""` → every `keyOverlap` score = 0 → *first .smf found wins* → Vittra (first in filesystem order). If the real name is path- or archive-prefixed (e.g. `Maps/Otago 1.4` or `otago_1.4.sd7`), the key computed on the startscript name may share no common prefix with the on-disk `.smf` key → same fallback. **The new `mapName=...` field on the extraction log line decides this in one run.**
-2. **`dist/` not rebuilt** after pulling `dfb9561` — the old compiled `findMapFile(roots)` silently ignores the second argument. Distinguish by grepping `dist/daemon/mapimage.js` for `smfKey`/`keyOverlap` and comparing dist mtimes to pull time.
-3. **Browser cache red herring**: http-server serves with `Cache: 3600`; Firefox keeps `index.html`, `replay.js` and `map.png` for up to an hour — a stale Vittra `map.png` can persist *even after a correct extraction*. Hard-refresh (Ctrl+Shift+R) or serve with `http-server -c-1`.
+## Agreed merge sequence (from here)
 
-## Next steps (in order)
-
-1. User machine: `git pull` → `npm run build` → re-run daemon → read the extraction line: `startscript mapName=("...")`.
-2. If `null`/unexpected → fix `src/demo/startscript.ts` mapName parsing against the **real** generated startscript (check the actual `mapname` key the battle's script writes — sections/keys may differ in case from the fixture).
-3. If a real name but still Vittra → adjust `smfKey`/`keyOverlap` (e.g. strip a `Maps/`-style path or `.sd7`/`.otm` suffix before keying; add a regression test with the real string).
-4. Hard-refresh the browser, capture the **`[zkr-probe]` console block** from `mockup/index.html` (raw bytes, section table, POS unit/firstFrame stats, MODEL END, visible@0s/@5s) — still never received; needed to close the earlier "only 1 commander, playback stalls at frame 5" report (believed to be the stale-dist/cache stack, but unconfirmed).
-5. Agreed merge sequence: revert TEMP diagnostics commit `d2ab3ab` → mark PR #5 ready for review → merge → delete stale remote branches (backlog #7) → open a fresh `vibe/...` branch off `main` for #6 gh-pages, #9 version bump, #10 icon-sync docs.
-6. Optional hardening: daemon warns loudly when `mapName` is missing from the startscript; note `-c-1` (cache-off) http-server flag in the mockup README so iterative daemon runs are visible without hard-refresh.
+1. Push the branch (fix + revert commits) → PR #5 CI goes green.
+2. Mark PR #5 ready for review → merge.
+3. Delete stale remote branches (backlog #7), open a fresh `vibe/...` branch off `main` for #6 gh-pages, #9 version bump, #10 icon-sync docs.
 
 ## Environment notes
 
 - Use the `gh` CLI (authenticated) for all GitHub operations; never create new repositories; `battle.zkr`/`map.png` artifacts are never committed.
-- Have **not** seen the user's `[zkr-probe]` output; do **not** patch `trackAt`/palette/POS decode paths without that evidence — viewer code is test-green and the two resim runs produced complete artifacts.
+- 7-Zip present at `C:\Program Files\7-Zip\7z.exe` on the user's machine (also found via PATH or `ZKR_7Z`).
+- ZK game install (data root used for staging): `D:\je\zbad steam\steamapps\common\Zero-K`.
