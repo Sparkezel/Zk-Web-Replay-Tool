@@ -532,37 +532,11 @@ function loadArtifact(url){
     if(!res.ok)throw new Error("battle.zkr not found ("+res.status+")");
     return res.arrayBuffer();
   }).then(function(buf){
-    console.log("[zkr-probe] battle.zkr raw bytes:",buf.byteLength);
     return ZkrReplay.parse(new Uint8Array(buf));
   });
 }
 
-/* TEMP diagnostics: dump artifact ingestion stats to the console so a
-   broken simulation capture (short POS, spawn-frame offset, dropped units)
-   can be told apart from a viewer regression. Remove once resolved. */
-function probeArtifact(a){
-  var m=ZkrReplay.artifactToModel(a);
-  var posUnits=(a.pos?a.pos.units:[]);
-  var firsts=posUnits.map(function(u){return u.firstFrame}).sort(function(x,y){return x-y});
-  var sampleCounts=posUnits.map(function(u){return u.samples.length});
-  var totalSamples=sampleCounts.reduce(function(s,n){return s+n},0);
-  var empty=m.units.filter(function(u){return u.track.length===0}).length;
-  var evnts=(a.evnt?a.evnt.records:[]);
-  var kinds={};evnts.forEach(function(r){kinds[r.kind]=(kinds[r.kind]||0)+1});
-  var visAt=function(sec){return m.units.filter(function(u){return u.track.length&&u.track[0].t<=sec}).length};
-  var med=firsts.length?firsts[firsts.length>>1]:"-";
-  console.log("[zkr-probe] sections:",a.sections.map(function(s){return s.id+"("+s.uncompressedSize+"B)"}).join(" "));
-  console.log("[zkr-probe] POS units:",posUnits.length,"emptyTracks:",empty,"totalSamples:",totalSamples,"pos.maxFrame:",a.pos?a.pos.maxFrame:-1);
-  console.log("[zkr-probe] POS firstFrame min/median/max:",firsts.length?firsts[0]:"-","/",med,"/",firsts.length?firsts[firsts.length-1]:"-");
-  console.log("[zkr-probe] EVNT records:",evnts.length,"kinds:",JSON.stringify(kinds),"maxFrame:",a.evnt?a.evnt.maxFrame:-1);
-  console.log("[zkr-probe] PROJ paths:",a.proj?a.proj.paths.length:0,"maxFrame:",a.proj?a.proj.maxFrame:-1,"| LINK:",a.link?a.link.links.length:0,"maxFrame:",a.link?a.link.maxFrame:-1);
-  console.log("[zkr-probe] META map:",a.meta&&a.meta.map&&a.meta.map.name,"gameTime:",a.meta&&a.meta.gameTime);
-  console.log("[zkr-probe] MODEL units:",m.units.length,"END:",m.END,"visible@0s:",visAt(0.001),"visible@5s:",visAt(5));
-  return m;
-}
-
 function showArtifact(a){
-  probeArtifact(a);
   var model=buildArtifactModel(a);
   installModel(model);
   var badge=document.querySelector(".head .badge.win");
@@ -571,7 +545,7 @@ function showArtifact(a){
 }
 
 loadArtifact("battle.zkr").then(function(a){
-  var m=probeArtifact(a);
+  var m=ZkrReplay.artifactToModel(a);
   if(!m.hasUnits){
     installModel(buildSyntheticModel());
     document.getElementById("simState").textContent="battle.zkr has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
