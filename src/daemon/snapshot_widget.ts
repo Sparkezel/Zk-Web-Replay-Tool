@@ -74,7 +74,8 @@ local function maybeUdef(defID)
   local d = UnitDefs[defID]
   if d == nil then return end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
-    ',"hp":' .. num(d.health) .. '}')
+    ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"}')
 end
 
 local function maybeWdef(defID)
@@ -150,6 +151,7 @@ elseif projMode == "beams" then keepProjClass = { [1] = true }
 elseif projMode == "all" then keepProjClass = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true } end
 
 function widget:GameFrame(frame)
+  maybeSendStartboxes()
   -- press /speedup every probe frame while the engine's wanted factor is below
   -- target; supplements the GameStart burst in case those presses raced server
   -- boot or got dropped. Stops pressing once wanted >= target (idempotent).
@@ -202,6 +204,56 @@ function widget:GameStart()
   for i = 1, presses do
     Spring.SendCommands("speedup")
   end
+  maybeSendStartboxes()
+end
+
+-- startboxes: the ZK start_boxes gadget loads them from the map/game config
+-- (mapconfig/map_startboxes.lua or LuaRules/Configs/StartBoxes/<map>.lua) and
+-- exposes them as game-rules params; vertices are always elmos. Per-allyteam
+-- assignment (start_box_id team param) is set in that gadget's Initialize,
+-- so it is already final by GameStart.
+local sbxSent = false
+local function numOr0(v) local n = tonumber(v) if n == nil then return 0 end return n end
+
+function maybeSendStartboxes()
+  if sbxSent then return end
+  local boxCount = numOr0(Spring.GetGameRulesParam("startbox_max_n"))
+  if boxCount <= 0 then
+    if Spring.GetGameFrame() > 300 then sbxSent = true end
+    return
+  end
+  local mapX = numOr0(Game.mapSizeX)
+  local mapZ = numOr0(Game.mapSizeZ)
+  if mapX <= 0 or mapZ <= 0 then return end
+  local boxes = {}
+  for id = 0, boxCount do
+    local polyCount = numOr0(Spring.GetGameRulesParam("startbox_n_" .. id))
+    if polyCount > 0 then
+      local polys = {}
+      for i = 1, polyCount do
+        local verts = {}
+        local vcount = numOr0(Spring.GetGameRulesParam("startbox_polygon_" .. id .. "_" .. i))
+        for j = 1, vcount do
+          local vx = numOr0(Spring.GetGameRulesParam("startbox_polygon_x_" .. id .. "_" .. i .. "_" .. j)) / mapX
+          local vz = numOr0(Spring.GetGameRulesParam("startbox_polygon_z_" .. id .. "_" .. i .. "_" .. j)) / mapZ
+          verts[#verts + 1] = '[' .. string.format("%.4f,%.4f", vx, vz) .. ']'
+        end
+        polys[#polys + 1] = '[' .. table.concat(verts, ',') .. ']'
+      end
+      boxes[#boxes + 1] = '"' .. id .. '":[' .. table.concat(polys, ',') .. ']'
+    end
+  end
+  local mapping = {}
+  local atList = Spring.GetAllyTeamList() or {}
+  for k = 1, #atList do
+    local teams = Spring.GetTeamList(atList[k]) or {}
+    if #teams > 0 then
+      local boxID = Spring.GetTeamRulesParam(teams[1], "start_box_id")
+      if boxID ~= nil then mapping[#mapping + 1] = '"' .. atList[k] .. '":' .. boxID end
+    end
+  end
+  emit('{"t":"sbx","b":{' .. table.concat(boxes, ',') .. '},"m":{' .. table.concat(mapping, ',') .. '}}')
+  sbxSent = true
 end
 
 function widget:GameOver(winningAllyTeams)

@@ -25,6 +25,179 @@
   const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
+  const STARTBOX_FADE_SEC = 30;
+
+  /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
+     green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
+     dark red -> orange -> dark brown -> light brown. Lightness zigzags so
+     teammates stay visually separable (16 hard steps 3° apart were not); the
+     family split keeps friend/foe readable at a glance. */
+  const ALLY_STOPS = [
+    [[130, 88, 62], [146, 76, 38], [163, 80, 56], [184, 76, 38], [206, 82, 52]],
+    [[4, 88, 55], [12, 82, 38], [24, 88, 48], [36, 70, 32], [46, 66, 46], [28, 32, 62]],
+  ];
+  function rampColor(ally, f) {
+    const stops = ALLY_STOPS[ally % 2];
+    const pos = f * (stops.length - 1);
+    const k = Math.min(Math.floor(pos), stops.length - 2);
+    const t = pos - k;
+    const c = [0, 1, 2].map((j) => Math.round(stops[k][j] + (stops[k + 1][j] - stops[k][j]) * t));
+    return "hsl(" + c[0] + "," + c[1] + "%," + c[2] + "%)";
+  }
+  const ALLY16 = ALLY_STOPS.map((_, ally) => []);
+  for (let ally = 0; ally < ALLY_STOPS.length; ally++) {
+    for (let i = 0; i < 16; i++) ALLY16[ally].push(rampColor(ally, i / 15));
+  }
+  const TEAL16 = ALLY16[0], WARM16 = ALLY16[1];
+  function teamColor(t, teamMeta) {
+    if (t === null || t === undefined || t < 0) return "#9aa4aa";
+    const m = teamMeta && teamMeta[t];
+    if (m) return rampColor(m.ally, m.n > 1 ? m.idx / (m.n - 1) : 0);
+    const ramp = (t % 2 === 0) ? TEAL16 : WARM16;
+    return ramp[Math.floor(t / 2) % 16];
+  }
+
+  /* health ring colour: vibrant green at full health, orange at 60%,
+     deep bright red at 0% (piecewise-linear hue so 60% lands exactly on
+     orange instead of drifting through yellow-green) */
+  function hpColor(hp) {
+    if (hp === null || hp === undefined || !isFinite(hp)) return "#9aa4aa";
+    let hue;
+    if (hp >= 0.6) hue = 32 + (135 - 32) * ((hp - 0.6) / 0.4);
+    else hue = 5 + (32 - 5) * Math.max(0, hp) / 0.6;
+    const light = hp >= 0.6 ? 47 : 55 - 10 * hp / 0.6;
+    return "hsl(" + Math.round(hue) + ",95%," + Math.round(light) + "%)";
+  }
+
+  /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
+   *  {x1, z1, x2, z2}. Returns null unless all four corners parse. */
+  function parseBoxBody(body) {
+    const box = {};
+    const keyRe = /([xyz]\d)\s*=\s*(-?[\d.]+(?:[eE][+-]?\d+)?)/g;
+    let km, keyed = false;
+    while ((km = keyRe.exec(body)) !== null) { box[km[1]] = parseFloat(km[2]); keyed = true; }
+    if (!keyed) {
+      const nums = (body.match(/-?[\d.]+(?:[eE][+-]?\d+)?/g) || []).map(Number).filter(Number.isFinite);
+      if (nums.length >= 4) { box.x1 = nums[0]; box.z1 = nums[1]; box.x2 = nums[2]; box.z2 = nums[3]; }
+    }
+    if (box.x1 === undefined || box.z1 === undefined || box.x2 === undefined || box.z2 === undefined) return null;
+    return box;
+  }
+
+  /**
+   * Parse a Lua startbox blob (`return { ... }`, numbers may be scientific
+   * notation). Handles both layouts seen in Zero-K data:
+   *   per-allyteam:  `{ [0]={x1=..,z1=..,x2=..,z2=..}, [1]={..} }`
+   *   bundled:       `{ [allyIdx]={ [0]={x1=..,z1=..,x2=..,z2=..}, .. } }`
+   * Returns Map allyteamIndex -> [boxes] with corners normalized 0..1.
+   */
+  function parseStartboxesBlob(blob) {
+    const out = new Map();
+    const s = String(blob || "").replace(/^\s*return\s*/, "");
+    let depth = 0, i = 0;
+    const lastKey = [];
+    while (i < s.length) {
+      const c = s[i];
+      if (c === "{") { depth++; i++; continue; }
+      if (c === "}") { depth--; i++; continue; }
+      const bm = /^\[\s*(\d+)\s*\]\s*=/.exec(s.slice(i));
+      if (bm) { lastKey[depth] = parseInt(bm[1], 10); i += bm[0].length; continue; }
+      const sm = /^[\s;]+/.exec(s.slice(i));
+      if (sm) { i += sm[0].length; continue; }
+      const close = s.indexOf("}", i);
+      const open = s.indexOf("{", i);
+      if (c !== "" && close > i && (open === -1 || open > close)) {
+        const box = parseBoxBody(s.slice(i, close));
+        if (box) {
+          /* leaf depth differs by layout: bundled blobs have the allyteam key
+             one level further out, so fall back to the inner key */
+          const ally = (depth >= 2 && lastKey[depth - 2] !== undefined)
+            ? lastKey[depth - 2]
+            : lastKey[depth - 1];
+          if (ally !== undefined && ally >= 0) {
+            if (!out.has(ally)) out.set(ally, []);
+            out.get(ally).push(box);
+          }
+        }
+        i = close;
+        continue;
+      }
+      i++;
+    }
+    return out;
+  }
+
+  /**
+   * Startboxes per allyteam, from the ROST section: allyteams[].startboxes
+   * blobs first, otherwise the bundled modoptions.startboxes blob. Returns
+   * one array of {x1,z1,x2,z2} per allyteam (empty arrays when a side — or
+   * the whole game — has no startboxes).
+   */
+  function parseStartboxes(allyteams, modoptions) {
+    const perAlly = [];
+    const blobs = (allyteams || []).map((at) => at && at.startboxes).filter(Boolean);
+    if (blobs.length === 0 && modoptions && String(modoptions.startboxes || "").indexOf("{") !== -1) {
+      const parsed = parseStartboxesBlob(modoptions.startboxes);
+      if (parsed.size > 0) {
+        const maxAlly = Math.max(...parsed.keys());
+        for (let a = 0; a <= maxAlly; a++) perAlly.push(parsed.get(a) || []);
+      }
+      return perAlly;
+    }
+    for (const at of (allyteams || [])) {
+      const parsed = parseStartboxesBlob((at && at.startboxes) || "");
+      const all = [];
+      for (const arr of parsed.values()) all.push(...arr);
+      perAlly.push(all);
+    }
+    return perAlly;
+  }
+
+  /* unit-icon support: the page calls setUnitIconBase("icons/") once, then
+     iconFor(iconType) returns a lazily-loaded Image (or null when no base is
+     configured). Rendering falls back to a coloured circle until the PNG is
+     loaded, and permanently when it fails. */
+  let iconBase = "";
+  const iconCache = new Map();
+  function setUnitIconBase(url) {
+    iconBase = String(url || "").replace(/\/?$/, "/");
+  }
+  function iconFor(iconType) {
+    if (!iconBase || !iconType || typeof Image === "undefined") return null;
+    if (!iconCache.has(iconType)) {
+      const im = new Image();
+      im.src = iconBase + encodeURIComponent(iconType) + ".png";
+      iconCache.set(iconType, im);
+    }
+    return iconCache.get(iconType);
+  }
+
+  /* Recolour a unit icon into the owning player's colour. Spring unit icons
+     are white/greyscale with alpha, so a multiply tint preserves the shape
+     while taking the team hue. Results are cached offscreen per (src, colour). */
+  const tintCache = new Map();
+  function tintIcon(img, color) {
+    if (!img || !img.complete || !img.naturalWidth || !color) return null;
+    const key = (img.src || "") + "|" + color;
+    if (!tintCache.has(key)) {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const g = c.getContext("2d");
+      g.drawImage(img, 0, 0);
+      /* the dds art is mid-grey (avg ~50%); raise its luminance floor first
+         or the multiply below turns icons nearly invisible on dark maps */
+      g.globalCompositeOperation = "lighten";
+      g.fillStyle = "#b4b4b4";
+      g.fillRect(0, 0, c.width, c.height);
+      g.globalCompositeOperation = "multiply";
+      g.fillStyle = color;
+      g.fillRect(0, 0, c.width, c.height);
+      g.globalCompositeOperation = "destination-in";
+      g.drawImage(img, 0, 0);
+      tintCache.set(key, c);
+    }
+    return tintCache.get(key);
+  }
 
   async function inflateSection(codec, payload) {
     if (codec === 0) return payload;
@@ -158,6 +331,7 @@
       sections,
       meta: json("META"),
       roster: json("ROST"),
+      startboxesData: json("STBX"),
       unitDefs: json("UDEF"),
       weaponDefs: json("WDEF"),
       chat: json("CHAT"),
@@ -194,30 +368,155 @@
     }
 
     const udef = new Map();
-    for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) udef.set(row[0], { name: row[1], metalCost: row[2], health: row[3] });
+    for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) {
+      udef.set(row[0], {
+        name: row[1], metalCost: row[2], health: row[3],
+        canMove: row[4] === 1 ? true : row[4] === 0 ? false : undefined,
+        iconType: row[5] || undefined,
+        humanName: row[6] || undefined,
+      });
+    }
     const wdef = new Map();
     for (const w of (artifact.weaponDefs ? artifact.weaponDefs.weapons : [])) wdef.set(w.id, w);
+
+    /* team number -> player name(s), from the ROST section players;
+       team -> allyteam mapping comes from the ROST teams list when present */
+    const rosterPlayers = (artifact.roster && artifact.roster.players) || [];
+    const teamNames = {};
+    for (const p of rosterPlayers) {
+      if (p.spectator || p.team === undefined || p.team < 0 || !p.name) continue;
+      (teamNames[p.team] = teamNames[p.team] || []).push(p.name);
+    }
+    for (const tm of Object.keys(teamNames)) teamNames[tm] = teamNames[tm].join(" / ");
+    const teamAllyteam = new Map();
+    for (const t of ((artifact.roster && artifact.roster.teams) || [])) {
+      if (t.num !== undefined && t.num >= 0) teamAllyteam.set(t.num, t.allyteam);
+    }
+    const defLabel = (unitID, fallback) => {
+      if (unitID === undefined || unitID < 0) return null;
+      const d = defByUnit.get(unitID);
+      const info = d !== undefined ? udef.get(d) : null;
+      if (!info) return fallback;
+      return info.humanName || info.name || fallback;
+    };
+    const teamLabel = (team) => {
+      const names = team !== undefined && team >= 0 ? teamNames[team] : null;
+      return names || "Team " + (team + 1);
+    };
 
     const feedData = [];
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
+      const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
+      const killerName = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
       feedData.push({
         tm: toSec(r.frame), cls: "death",
-        txt: "Unit #" + r.unitID + " destroyed" +
-             (r.int1 >= 0 ? " — killed by unit #" + r.int1 : "") +
-             (r.int2 >= 0 ? " (Team " + (r.int2 + 1) + ")" : ""),
+        txt: unitName + " destroyed" +
+             (killerName ? " — killed by " + killerName : "") +
+             (r.int2 >= 0 ? " (" + teamLabel(r.int2) + ")" : ""),
       });
     }
     feedData.sort((a, b) => a.tm - b.tm);
 
-    const units = (artifact.pos ? artifact.pos.units : []).map((u) => ({
-      id: u.unitID, defID: u.defID,
-      team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
-      metalCost: udef.has(u.defID) ? (udef.get(u.defID).metalCost ?? -1) : -1,
-      born: toSec(u.firstFrame),
-      died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-      track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp })),
-    }));
+    /* victory text: prefer the player names of the winning allyteam */
+    let winnerLabel = null;
+    if (winner !== null && winner !== undefined) {
+      const winners = rosterPlayers.filter((p) => {
+        if (p.spectator || p.team === undefined || p.team < 0) return false;
+        return teamAllyteam.get(p.team) === winner;
+      }).map((p) => p.name).filter(Boolean);
+      winnerLabel = winners.length > 0 ? winners.join(" / ") : "Team " + (winner + 1);
+    }
+
+    /* team -> colour key: distinct ramp index per team within its own
+       allyteam so same-side players share the hue family but never a colour */
+    const teamsByAlly = {};
+    for (const [num, ally] of teamAllyteam) {
+      if (ally === undefined || ally < 0) continue;
+      (teamsByAlly[ally] = teamsByAlly[ally] || []).push(num);
+    }
+    const teamMeta = {};
+    for (const ally of Object.keys(teamsByAlly)) {
+      const list = teamsByAlly[ally].sort((a, b) => a - b);
+      list.forEach((tn, idx) => {
+        teamMeta[tn] = { ally: Number(ally), idx, n: list.length };
+      });
+    }
+
+    /* startboxes: engine-loaded polygons (STBX section, read from the map/game
+       config via the start_boxes gadget's rules params) win over the startscript
+       modoptions rects; per allyteam, list of polygons of [x, z] sums in 0..1 */
+    const startPolys = [];
+    const sbd = artifact.startboxesData;
+    if (sbd && Array.isArray(sbd.boxes) && sbd.boxes.length > 0) {
+      const boxById = new Map(sbd.boxes.map((b) => [b.id, b.polys || []]));
+      const perAlly = new Map();
+      for (const [ally, boxID] of (sbd.ally || [])) {
+        const polys = boxById.get(boxID);
+        if (polys) perAlly.set(ally, polys);
+      }
+      if (perAlly.size) {
+        const maxAlly = Math.max(...perAlly.keys());
+        for (let a = 0; a <= maxAlly; a++) startPolys.push(perAlly.get(a) || []);
+      }
+    } else {
+      for (const rects of parseStartboxes(
+        artifact.roster ? artifact.roster.allyteams : [],
+        artifact.roster ? artifact.roster.modoptions : null)) {
+        startPolys.push(rects.map((r) => [[r.x1, r.z1], [r.x2, r.z1], [r.x2, r.z2], [r.x1, r.z2]]));
+      }
+    }
+
+    /* in-game chat: [frame, from, dest, text] rows; dest semantics per the
+       engine's ChatMessage.h: 252 = allies, 253 = spectators, 254 = everyone,
+       < playerNum = whisper; from 255 = autohost. SPRINGIE relay lines are
+       autohost noise and are dropped. */
+    const TO_ALLIES = 252, TO_SPECTATORS = 253, TO_EVERYONE = 254, SERVER_PLAYER = 255;
+    const playerNameByNum = new Map();
+    const playerAllyByNum = new Map();
+    for (const p of rosterPlayers) {
+      const m = /^(?:.*\/)?player(\d+)$/.exec(p.script || "");
+      if (!m) continue;
+      const n = Number(m[1]);
+      if (p.name && !playerNameByNum.has(n)) playerNameByNum.set(n, p.name);
+      if (!playerAllyByNum.has(n) && p.team !== undefined && p.team >= 0) {
+        playerAllyByNum.set(n, teamAllyteam.get(p.team));
+      }
+    }
+    const chatData = [];
+    for (const row of (artifact.chat || [])) {
+      const frame = row[0], from = row[1], dest = row[2], text = String(row[3] || "");
+      if (text.startsWith("SPRINGIE:")) continue;
+      const name = from === SERVER_PLAYER ? "autohost" : (playerNameByNum.get(from) || "Player " + from);
+      let kind = "all", ally = null, to = null;
+      if (dest === TO_ALLIES) { kind = "team"; ally = playerAllyByNum.get(from); }
+      else if (dest === TO_SPECTATORS) kind = "spec";
+      else if (dest === TO_EVERYONE) kind = "all";
+      else if (from === SERVER_PLAYER) kind = "host";
+      else if (typeof dest === "number" && dest >= 0 && dest < 32) {
+        kind = "whisper";
+        to = playerNameByNum.get(dest) || ("Player " + dest);
+      }
+      chatData.push({ tm: toSec(frame), name, kind, ally, to, txt: text });
+    }
+    chatData.sort((a, b) => a.tm - b.tm);
+
+    const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
+      const info = udef.get(u.defID);
+      let hpMax = 0;
+      for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
+      return {
+        id: u.unitID, defID: u.defID,
+        hpMax: hpMax > 0 ? hpMax : undefined,
+        team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
+        metalCost: info ? (info.metalCost ?? -1) : -1,
+        kind: info && info.canMove === false ? "str" : undefined,
+        icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
+        born: toSec(u.firstFrame),
+        died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
+        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build })),
+      };
+    });
 
     const projectiles = (artifact.proj ? artifact.proj.paths : []).map((p) => ({
       proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
@@ -249,7 +548,9 @@
       fps: FPS,
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
-      winner,
+      winner, winnerLabel,
+      startPolys,
+      teamNames, teamMeta, chatData,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -299,5 +600,10 @@
     };
   }
 
-  global.ZkrReplay = { parse, artifactToModel, trackAt, pathAt, FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME };
+  global.ZkrReplay = {
+    parse, artifactToModel, trackAt, pathAt,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
+    teamColor, hpColor, TEAL16, WARM16,
+    FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

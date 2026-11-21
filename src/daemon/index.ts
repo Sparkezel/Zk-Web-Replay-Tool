@@ -22,6 +22,7 @@ import { buildZkrFromDemo } from "../zkr/build.js";
 import { demoUrl } from "../config/urls.js";
 import { downloadFile, provisionEngine, headlessBinaryPath, consoleLogger, type Logger } from "./provision.js";
 import { stageDataDir } from "./stage.js";
+import { extractMapImage, extractMapImageFromArchive, findMapSource, findSevenZip } from "./mapimage.js";
 import { newSnapshot, type SnapshotData } from "./events.js";
 import { loadDemoFile, runHeadlessCapture, writeStartscript } from "./run.js";
 import { buildZkrFromResim, type PackOptions } from "./pack.js";
@@ -134,6 +135,30 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
     : buildZkrFromDemo(demo);
   writeFileSync(artifactPath, zkr);
   log.info(`artifact written: ${artifactPath} (${zkr.byteLength} bytes, resim=${resimulated})`);
+
+  // map backdrop: every .smf embeds its own minimap; decode it for the viewer.
+  // packed .sd7/.sdz map archives count too — a typical install has few loose
+  // .smf files but hundreds of archives (their .smf is only inside).
+  const searchRoots = [path.join(root, "data", "maps"), path.join(root, "maps")];
+  const src = findMapSource(searchRoots, demo.roster.mapName);
+  if (src === null) {
+    log.warn("no map file (.smf/.sd7/.sdz) in the staged data; viewer keeps the plain backdrop (--data-root enables map extraction)");
+  } else {
+    const mapPng = path.join(path.dirname(artifactPath), "map.png");
+    const dims = src.kind === "smf"
+      ? extractMapImage(src.path, mapPng)
+      : extractMapImageFromArchive(src.path, mapPng, { mapName: demo.roster.mapName ?? undefined });
+    const nameKey = JSON.stringify(demo.roster.mapName ?? null);
+    if (dims !== null) {
+      log.info(`map backdrop extracted: ${mapPng} (${dims.w}x${dims.h}) from ${path.basename(src.path)} [${src.kind}] (startscript mapName=${nameKey})`);
+    } else if (src.kind === "smf") {
+      log.warn(`map minimap extraction failed for ${src.path} (startscript mapName=${nameKey}); viewer keeps the plain backdrop`);
+    } else if (findSevenZip() === null) {
+      log.warn(`matched packed map ${path.basename(src.path)} [${src.kind}] but no 7-Zip found to extract it (startscript mapName=${nameKey}); install 7-Zip or set ZKR_7Z; viewer keeps the plain backdrop`);
+    } else {
+      log.warn(`map minimap extraction failed from ${path.basename(src.path)} [${src.kind}] (startscript mapName=${nameKey}); viewer keeps the plain backdrop`);
+    }
+  }
 
   return {
     battleID,

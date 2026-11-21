@@ -27,6 +27,12 @@ export interface UnitDefInfo {
   name: string;
   metalCost?: number;
   health?: number;
+  /** UnitDefs.canMove — false marks structures (fixed-size render) */
+  canMove?: boolean;
+  /** UnitDefs.iconType — unit icon key for the viewer */
+  iconType?: string;
+  /** UnitDefs.humanName — display name for the viewer (e.g. cloakraid → Glaive) */
+  humanName?: string;
 }
 
 export interface PosSample {
@@ -79,6 +85,13 @@ export interface LinkRecord {
   lampZ?: number | undefined;
 }
 
+export interface StartboxData {
+  /** allyteam -> box id assignments (box ids key into boxes) */
+  allyBox: Array<[number, number]>;
+  /** box id -> polygons (each polygon an array of [x, z] normalized 0..1) */
+  boxes: Map<number, number[][][]>;
+}
+
 export interface SnapshotData {
   meta: { mapW?: number; mapH?: number; engine?: string; gameVersion?: string };
   units: Map<number, UnitTrack>;
@@ -88,6 +101,7 @@ export interface SnapshotData {
   unitDefs: Map<number, UnitDefInfo>;
   weaponDefs: Map<number, WeaponDefInfo>;
   gameOvers: Array<{ frame: number; winners: number[] }>;
+  startboxes?: StartboxData;
 }
 
 export function newSnapshot(): SnapshotData {
@@ -157,6 +171,9 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         name: String(ev["n"] ?? ""),
         metalCost: ev["m"] !== undefined ? num(ev["m"]) : undefined,
         health: ev["hp"] !== undefined ? num(ev["hp"]) : undefined,
+        canMove: ev["mv"] !== undefined ? num(ev["mv"]) === 1 : undefined,
+        iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
+        humanName: typeof ev["hn"] === "string" && ev["hn"] !== "" ? ev["hn"] : undefined,
       });
       return;
     }
@@ -265,6 +282,30 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
     case "gameover": {
       const winners = Array.isArray(ev["winners"]) ? (ev["winners"] as unknown[]).map((w) => num(w)) : [];
       snap.gameOvers.push({ frame: num(ev["f"], 0), winners });
+      return;
+    }
+    case "sbx": {
+      if (!snap.startboxes) snap.startboxes = { allyBox: [], boxes: new Map() };
+      const data = snap.startboxes;
+      if (ev["b"] && typeof ev["b"] === "object") {
+        for (const [boxIDRaw, polysRaw] of Object.entries(ev["b"] as Record<string, unknown>)) {
+          const boxID = Number(boxIDRaw);
+          if (!Number.isFinite(boxID) || !Array.isArray(polysRaw)) continue;
+          const polys = (polysRaw as unknown[])
+            .filter((p): p is Array<Array<number>> => Array.isArray(p))
+            .map((p) => p.map((v) => [num(v[0]), num(v[1])]));
+          data.boxes.set(boxID, polys);
+        }
+      }
+      if (ev["m"] && typeof ev["m"] === "object") {
+        for (const [allyRaw, boxIDRaw] of Object.entries(ev["m"] as Record<string, unknown>)) {
+          const ally = Number(allyRaw), boxID = num(boxIDRaw, -1);
+          if (!Number.isFinite(ally) || ally < 0 || boxID < 0) continue;
+          const existing = data.allyBox.find(([a]) => a === ally);
+          if (existing) existing[1] = boxID;
+          else data.allyBox.push([ally, boxID]);
+        }
+      }
       return;
     }
     default:
