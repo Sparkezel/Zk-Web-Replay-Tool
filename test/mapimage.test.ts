@@ -5,10 +5,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
-import { decodeDxt1, encodePng, extractMapImage, findMapFile } from "../dist/index.js";
+import { decodeDxt1, encodePng, extractMapImage, extractMapImageFromArchive, findMapSource, findSevenZip } from "../dist/index.js";
 
 test("DXT1 decoder expands a solid block and respects the 4-colour palette", () => {
   const c0 = 0, c1 = 0xffff;             // c0 > c1? no: 0 < 65535 -> 4-colour mode with lerp
@@ -93,18 +94,19 @@ test("extractMapImage walks the mip chain and writes the requested size", () => 
   assert.deepEqual([...raw.subarray(lastBlockY, lastBlockY + 3)], [0, 0, 255]); // bottom-right
 });
 
-test("findMapFile locates the first .smf in nested roots", () => {
+test("findMapSource locates the first .smf in nested roots", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zkr-find-"));
   const deep = path.join(dir, "maps", "sub");
   mkdirSync(deep, { recursive: true });
-  assert.equal(findMapFile([path.join(dir, "missing"), dir]), null);
+  assert.equal(findMapSource([path.join(dir, "missing"), dir]), null);
   writeFileSync(path.join(deep, "deadsea.smf"), Buffer.alloc(0));
-  const found = findMapFile([path.join(dir, "missing"), dir]);
+  const found = findMapSource([path.join(dir, "missing"), dir]);
   assert.ok(found);
-  assert.ok(found.endsWith("deadsea.smf"));
+  assert.ok(found.path.endsWith("deadsea.smf"));
+  assert.equal(found.kind, "smf");
 });
 
-test("findMapFile prefers the .smf matching the battle's map name", () => {
+test("findMapSource prefers the .smf matching the battle's map name", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "zkr-mapname-"));
   const maps = path.join(dir, "maps");
   mkdirSync(maps, { recursive: true });
@@ -113,12 +115,52 @@ test("findMapFile prefers the .smf matching the battle's map name", () => {
   const deep = path.join(maps, "Otago 1.4");
   mkdirSync(deep, { recursive: true });
   writeFileSync(path.join(deep, "otago_v04.smf"), Buffer.alloc(0));
-  const found = findMapFile([maps], "Otago 1.4");
+  const found = findMapSource([maps], "Otago 1.4");
   assert.ok(found, "battle map must be found");
-  assert.ok(found.endsWith("otago_v04.smf"), `got ${found}`);
+  assert.ok(found.path.endsWith("otago_v04.smf"), `got ${found.path}`);
   // no match: fall back to the first .smf so extraction still works
-  const fb = findMapFile([maps], "Shielded Canyon");
+  const fb = findMapSource([maps], "Shielded Canyon");
   assert.ok(fb);
+  assert.equal(fb.kind, "smf");
+});
+
+test("findMapSource matches a packed .sd7 when no loose .smf exists (Otago/Vittra regression)", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-archive-"));
+  const maps = path.join(dir, "maps");
+  mkdirSync(path.join(maps, "vittra3", "maps"), { recursive: true });
+  // exactly the on-disk situation that shipped Vittra in place of Otago:
+  // an unrelated loose .smf, and the battle's map only as a packed archive
+  writeFileSync(path.join(maps, "vittra3", "maps", "Vittra3.smf"), Buffer.alloc(0));
+  writeFileSync(path.join(maps, "otago_1.4.sd7"), Buffer.alloc(0));
+  const found = findMapSource([maps], "Otago 1.4");
+  assert.ok(found, "packed battle map must be found");
+  assert.equal(found.kind, "sd7");
+  assert.ok(found.path.endsWith("otago_1.4.sd7"), `got ${found.path}`);
+  assert.ok(found.score > 0, "the archive must win by name overlap, not fallback");
+});
+
+test("findMapSource prefers the exact-named archive over a same-prefix variant", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-variant-"));
+  const maps = path.join(dir, "maps");
+  mkdirSync(maps, { recursive: true });
+  // the real install situation: both score 5 on "otago"; the closer-length
+  // key ("otago" over "otagoredux") must win, else Otago Redux is extracted
+  writeFileSync(path.join(maps, "Otago Redux 1.4.sd7"), Buffer.alloc(0));
+  writeFileSync(path.join(maps, "otago_1.4.sd7"), Buffer.alloc(0));
+  const found = findMapSource([maps], "Otago 1.4");
+  assert.ok(found);
+  assert.ok(found.path.endsWith("otago_1.4.sd7"), `got ${found.path}`);
+});
+
+test("findMapSource prefers a loose .smf over an equally-named archive", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-loose-"));
+  const maps = path.join(dir, "maps");
+  mkdirSync(maps, { recursive: true });
+  writeFileSync(path.join(maps, "coastal_v2.sd7"), Buffer.alloc(0));
+  writeFileSync(path.join(maps, "coastal_v2.smf"), Buffer.alloc(0));
+  const found = findMapSource([maps], "Coastal V2");
+  assert.ok(found);
+  assert.equal(found.kind, "smf", "a loose .smf needs no extraction tool");
 });
 
 test("extractMapImage rejects non-SMF input", () => {
@@ -126,4 +168,43 @@ test("extractMapImage rejects non-SMF input", () => {
   const f = path.join(dir, "bad.smf");
   writeFileSync(f, "not a map at all");
   assert.equal(extractMapImage(f, path.join(dir, "x.png")), null);
+});
+
+test("extractMapImageFromArchive returns null when the 7z binary is missing", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-no7z-"));
+  writeFileSync(path.join(dir, "otago_1.4.sd7"), Buffer.alloc(0));
+  const dims = extractMapImageFromArchive(
+    path.join(dir, "otago_1.4.sd7"),
+    path.join(dir, "map.png"),
+    { sevenZip: path.join(dir, "definitely-missing-7z.exe") },
+  );
+  assert.equal(dims, null);
+});
+
+test("extractMapImageFromArchive extracts from a packed .sd7/.sdz (needs 7-Zip)", (t) => {
+  const bin = findSevenZip();
+  if (bin === null) return t.skip("7-Zip not installed in this environment");
+
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-sd7-"));
+  writeFileSync(path.join(dir, "sidetest.smf"), syntheticSmf(0xf800, 0x001f));
+  const run = (args: string[]) => {
+    const r = spawnSync(bin, args, { cwd: dir, windowsHide: true });
+    assert.equal(r.status, 0, `7z ${args.join(" ")} failed`);
+  };
+  run(["a", "-t7z", "packed.sd7", "sidetest.smf"]);
+  run(["a", "-tzip", "packed.sdz", "sidetest.smf"]);
+
+  for (const archive of ["packed.sd7", "packed.sdz"]) {
+    const out = path.join(dir, `${archive}.png`);
+    const dims = extractMapImageFromArchive(path.join(dir, archive), out, {
+      sevenZip: bin,
+      // the display name deliberately shares nothing with the inner file
+      // name — extraction must still take the lone .smf entry
+      mapName: "Completely Different Map Name",
+    });
+    assert.ok(dims, `extraction from ${archive} failed`);
+    assert.equal(dims.w, 512);
+    assert.equal(dims.h, 512);
+    assert.ok(existsSync(out));
+  }
 });

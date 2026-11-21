@@ -5,6 +5,7 @@
  * artifact for the viewer's background.
  */
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import * as path from "node:path";
 import { deflateSync } from "node:zlib";
 
@@ -121,16 +122,40 @@ function keyOverlap(a: string, b: string): number {
   return n;
 }
 
+/** Where a battle's map data lives: a loose .smf file, or a packed Spring
+ *  archive (.sd7 = 7-Zip, .sdz = zip) containing the .smf at some inner path. */
+export type MapSourceKind = "smf" | "sd7" | "sdz";
+export interface MapSource {
+  /** filesystem path of the .smf, or of the archive that contains it */
+  path: string;
+  kind: MapSourceKind;
+  /** normalised-name overlap with the battle's map name (0 = no match) */
+  score: number;
+  /** length of the normalised archive/smf key (tie-break, not for display) */
+  keyLen: number;
+}
+
 /**
- * Locate the best .smf under the given roots (the staged maps dir).
+ * Locate the best map source under the given roots (the staged maps dir):
+ * loose .smf files and packed .sd7/.sdz map archives alike — a typical ZK
+ * install holds hundreds of archives and few (or zero) loose .smf files.
  * `mapName` (from the startscript, e.g. "Otago 1.4") biases selection: the
- * file with the highest normalised-name overlap wins (requires a 4-letter
- * common prefix so unrelated maps never win); same overlap falls back to
- * the first .smf found, so extraction still works without a map name.
+ * entry with the highest normalised-name overlap wins; ties prefer a loose
+ * .smf (no extraction tool needed) and then the key closest to the map name
+ * in length ("Otago 1.4" beats "Otago Redux 1.4" on the same prefix). Still
+ * nothing? The first entry found wins, so extraction works without a match.
  */
-export function findMapFile(roots: string[], mapName?: string): string | null {
+export function findMapSource(roots: string[], mapName?: string): MapSource | null {
   const want = mapName !== undefined ? smfKey(mapName) : "";
-  let best: { p: string; score: number } | null = null;
+  let best: MapSource | null = null;
+  const beats = (c: MapSource): boolean => {
+    if (best === null) return true;
+    if (c.score !== best.score) return c.score > best.score;
+    if ((c.kind === "smf") !== (best.kind === "smf")) return c.kind === "smf";
+    if (want.length === 0) return false; // no map name: keep first-found
+    // same score, same class: closer key length wins (see doc comment)
+    return Math.abs(c.keyLen - want.length) < Math.abs(best.keyLen - want.length);
+  };
   for (const root of roots) {
     if (!existsSync(root)) continue;
     const stack = [root];
@@ -139,26 +164,35 @@ export function findMapFile(roots: string[], mapName?: string): string | null {
       let entries;
       try { entries = readdirSync(dir, { withFileTypes: true }); } catch { continue; }
       for (const e of entries) {
-        const p = path.join(dir, e.name);
+        const lower = e.name.toLowerCase();
         if (e.isDirectory()) {
-          stack.push(p);
+          stack.push(path.join(dir, e.name));
           continue;
         }
-        if (!e.name.toLowerCase().endsWith(".smf")) continue;
-        const score = keyOverlap(smfKey(e.name.slice(0, -4)), want);
-        if (best === null || score > best.score) best = { p, score };
+        const ext = lower.endsWith(".smf") ? ".smf"
+          : lower.endsWith(".sd7") ? ".sd7"
+          : lower.endsWith(".sdz") ? ".sdz"
+          : null;
+        if (ext === null) continue;
+        const key = smfKey(e.name.slice(0, -ext.length));
+        const cand: MapSource = {
+          path: path.join(dir, e.name),
+          kind: ext.slice(1) as MapSourceKind,
+          score: keyOverlap(key, want),
+          keyLen: key.length,
+        };
+        if (beats(cand)) best = cand;
       }
     }
   }
-  return best === null ? null : best.p;
+  return best;
 }
 
 /**
  * Extract the embedded minimap as a PNG of at most maxDim pixels wide.
  * Returns the written image dimensions, or null when no usable map data.
  */
-export function extractMapImage(smfPath: string, outPngPath: string, maxDim = 512): { w: number; h: number } | null {
-  const buf = readFileSync(smfPath);
+export function extractMapImageFromBuffer(buf: Buffer, outPngPath: string, maxDim = 512): { w: number; h: number } | null {
   const hdr = readSmfHeader(buf);
   if (hdr === null) return null;
   let offset = hdr.minimapPtr;
@@ -171,4 +205,72 @@ export function extractMapImage(smfPath: string, outPngPath: string, maxDim = 51
   const rgba = decodeDxt1(buf.subarray(offset, offset + DXT1_BYTES(dim)), dim, dim);
   writeFileSync(outPngPath, encodePng(dim, dim, rgba));
   return { w: dim, h: dim };
+}
+
+/** Loose-.smf variant of {@link extractMapImageFromBuffer}. */
+export function extractMapImage(smfPath: string, outPngPath: string, maxDim = 512): { w: number; h: number } | null {
+  return extractMapImageFromBuffer(readFileSync(smfPath), outPngPath, maxDim);
+}
+
+/* ------------------------------------------------------------------ */
+/* Packed .sd7 (7-Zip) / .sdz (zip) map archives                       */
+
+const SEVENZIP_FALLBACKS = [
+  process.env.ZKR_7Z,
+  "C:\\Program Files\\7-Zip\\7z.exe",
+  "C:\\Program Files (x86)\\7-Zip\\7z.exe",
+];
+
+/** Absolute path of a usable 7z binary, or null when none is installed. */
+export function findSevenZip(): string | null {
+  for (const p of SEVENZIP_FALLBACKS) {
+    if (p !== undefined && p !== "" && existsSync(p)) return p;
+  }
+  // PATH lookup (common on Linux: p7zip/nomacs packages it as `7z`/`7za`)
+  const probe = spawnSync("7z", [], { timeout: 5000, windowsHide: true });
+  return probe.error === undefined ? "7z" : null;
+}
+
+/** List the inner .smf entry paths inside a packed Spring archive. */
+export function sevenZipSmfEntries(archivePath: string, bin: string): string[] | null {
+  const res = spawnSync(bin, ["l", "-slt", archivePath], { maxBuffer: 16 << 20, windowsHide: true });
+  if (res.error !== undefined || res.status !== 0 || res.stdout === undefined) return null;
+  return [...res.stdout.toString("utf8").matchAll(/^Path = (.+)$/gm)]
+    .map((m) => m[1]!)
+    .filter((p) => p.toLowerCase().endsWith(".smf"));
+}
+
+/**
+ * Extract the minimap from a packed .sd7/.sdz map archive to outPngPath.
+ * The inner .smf name often does not match the map's display name at all
+ * ("Otago 1.4" ships `maps/lavamountains.smf`), so best name-overlap wins
+ * and a lone .smf entry is always taken. Returns the written image
+ * dimensions, or null when 7-Zip is unavailable, the archive holds no
+ * .smf, or the .smf has no usable minimap.
+ */
+export function extractMapImageFromArchive(
+  archivePath: string,
+  outPngPath: string,
+  opts: { maxDim?: number; mapName?: string; sevenZip?: string } = {},
+): { w: number; h: number } | null {
+  const bin = opts.sevenZip ?? findSevenZip();
+  if (bin === null) return null;
+  const entries = sevenZipSmfEntries(archivePath, bin);
+  if (entries === null || entries.length === 0) return null;
+  // pick the entry to stream: name-overlap score, then first listed
+  const want = opts.mapName !== undefined ? smfKey(opts.mapName) : "";
+  let best = entries[0]!;
+  let bestScore = -1;
+  for (const e of entries) {
+    const base = e.replace(/\\/g, "/").split("/").pop()!;
+    const score = keyOverlap(smfKey(base.slice(0, -4)), want);
+    if (score > bestScore) {
+      best = e;
+      bestScore = score;
+    }
+  }
+  // stream the single entry to stdout without touching the disk
+  const ex = spawnSync(bin, ["e", "-so", archivePath, best], { maxBuffer: 512 << 20, windowsHide: true });
+  if (ex.error !== undefined || ex.status !== 0 || ex.stdout === undefined || ex.stdout.length === 0) return null;
+  return extractMapImageFromBuffer(ex.stdout, outPngPath, opts.maxDim);
 }
