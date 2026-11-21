@@ -52,6 +52,7 @@ export const SECTION = {
   EVENTS: "EVNT",
   PROJECTILES: "PROJ",
   LINKS: "LINK",
+  STARTBOX: "STBX",
   CHAT: "CHAT",
   MAPDRAW: "DRAW",
   MACRO: "MACR",

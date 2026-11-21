@@ -26,4 +26,5 @@ export { provisionEngine, downloadFile, extractZip, headlessBinaryPath } from ".
 export { loadDemoFile, runHeadlessCapture, writeStartscript } from "./daemon/run.js";
 export { resimBattle, parseArgs, injectWidget } from "./daemon/index.js";
 export type { ResimJob, ResimResult } from "./daemon/index.js";
+export { decodeDxt1, encodePng, findMapFile, extractMapImage } from "./daemon/mapimage.js";
 export { SNAPSHOT_WIDGET_LUA, SNAPSHOT_WIDGET_NAME } from "./daemon/snapshot_widget.js";

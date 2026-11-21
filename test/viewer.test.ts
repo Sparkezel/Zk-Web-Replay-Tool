@@ -58,6 +58,96 @@ test("viewer decoder recovers unit tracks from a packed artifact", async () => {
   assert.equal(artifact.proj.paths[0].cls, 3);
 });
 
+test("startbox parser reads ROST lua startboxes, tolerant of sci notation", () => {
+  const boxes = ZkrReplay.parseStartboxes([
+    { startboxes: "return { [0]={x1=0.1,z1=0.2,x2=0.9,z2=0.4}, [1]={x1=1e-1,z1=2e-1,x2=9e-1,z2=4e-1} };" },
+    {},
+  ]);
+  assert.equal(boxes.length, 2);
+  assert.equal(boxes[0]!.length, 2);
+  assert.equal(boxes[0]![0]!.x1, 0.1);
+  assert.equal(boxes[0]![0]!.z2, 0.4);
+  assert.equal(boxes[0]![1]!.x2, 0.9);
+  assert.equal(boxes[1]!.length, 0);
+});
+
+test("feed falls back to ids and team numbers without ROST/UDEF data", async () => {
+  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.feedData.length, 1);
+  assert.equal(model.feedData[0]!.txt, "Unit #2 destroyed — killed by Unit #1 (Team 1)");
+  assert.equal(model.winnerLabel, "Team 1");
+  assert.deepEqual(model.startPolys, []);
+});
+
+test("STBX engine polygons override startscript rects in the model", async () => {
+  const snap = syntheticSnapshot();
+  snap.startboxes = {
+    allyBox: [[0, 1], [1, 0]],
+    boxes: new Map([
+      [0, [[[0.86, 0.34], [0.96, 0.34], [0.96, 0.66], [0.86, 0.66]]]],
+      [1, [[[0.04, 0.34], [0.12, 0.34], [0.12, 0.6], [0.04, 0.6]]]],
+    ]),
+  };
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.startPolys.length, 2);
+  assert.equal(model.startPolys[0]![0]![0]![0]!, 0.04);
+  assert.equal(model.startPolys[1]![0]![0]![0]!, 0.86);
+  /* without STBX, rects from the startscript become polygons */
+  const snap2 = syntheticSnapshot();
+  const zkr2 = buildZkrFromResim(snap2, { projectiles: "heavy" });
+  const model2 = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr2))));
+  assert.deepEqual(model2.startPolys, []);
+});
+
+test("startbox parser handles bundled modoptions blobs and positional boxes", () => {
+  const boxes = ZkrReplay.parseStartboxes([], {
+    startboxes: "return { [0]={ [0]={0.1,0.2,0.3,0.4} }; [1]={ [0]={1e-1,5e-1,7e-1,8e-1} }; };",
+  });
+  assert.equal(boxes.length, 2);
+  assert.deepEqual(boxes[0], [{ x1: 0.1, z1: 0.2, x2: 0.3, z2: 0.4 }]);
+  assert.deepEqual(boxes[1], [{ x1: 0.1, z1: 0.5, x2: 0.7, z2: 0.8 }]);
+  /* empty blob (game without startboxes) -> nothing drawn */
+  assert.deepEqual(ZkrReplay.parseStartboxes([], { startboxes: "return { }" }), []);
+});
+
+test("team colours key off allyteam teams, feed/chat use human names", () => {
+  const artifact = {
+    roster: {
+      players: [
+        { name: "A", team: 0, spectator: false, script: "player0" },
+        { name: "B", team: 1, spectator: false, script: "player1" },
+      ],
+      teams: [{ num: 0, allyteam: 0 }, { num: 1, allyteam: 1 }],
+    },
+    unitDefs: { units: [[5, "cloakraid", 65, 230, 1, "kbotraider", "Glaive"]] },
+    evnt: { records: [
+      { kind: "spawn", frame: 6, unitID: 10, int1: 5, int2: 0, int3: -1 },
+      { kind: "death", frame: 90, unitID: 10, int1: -1, int2: 1, int3: -1 },
+    ] },
+    chat: [
+      [30, 0, 254, "hello all"],
+      [60, 0, 252, "hello team"],
+      [90, 1, 253, "hello specs"],
+      [120, 0, 1, "psst"],
+      [150, 255, 254, "SPRINGIE:READY:A"],
+    ],
+  };
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.feedData[0]!.txt, "Glaive destroyed (B)");
+  assert.equal(model.teamMeta[0]!.ally, 0);
+  assert.equal(model.teamMeta[1]!.ally, 1);
+  assert.notEqual(ZkrReplay.teamColor(0, model.teamMeta), ZkrReplay.teamColor(1, model.teamMeta));
+  const chat = model.chatData;
+  assert.deepEqual(chat.map((c) => c.kind), ["all", "team", "spec", "whisper"]);
+  assert.equal(chat[0]!.name, "A");
+  assert.equal(chat[3]!.name, "A");
+  assert.deepEqual(chat.map((c) => c.txt).includes("SPRINGIE:READY:A"), false);
+});
+
 test("viewer decoder accepts Node-packed buffers (roundtrip parity)", () => {
   const snap = syntheticSnapshot();
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
@@ -65,6 +155,20 @@ test("viewer decoder accepts Node-packed buffers (roundtrip parity)", () => {
   assert.ok(secs.find((s) => s.id === "POS "));
   assert.ok(secs.find((s) => s.id === "EVNT"));
   assert.ok(secs.find((s) => s.id === "PROJ"));
+});
+
+test("health ring baseline: units carry hpMax and only true damage shows the ring", async () => {
+  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const hurt = model.units.find((u) => u.id === 1)!;
+  const full = model.units.find((u) => u.id === 2)!;
+  assert.ok(hurt.hpMax !== undefined, "tracked unit must expose hpMax");
+  assert.ok(hurt.hpMax! - hurt.track[hurt.track.length - 1]!.hp > 0.002,
+    "unit 1 ends below its peak, so the ring would draw");
+  assert.equal(full.hpMax!, 1);
+  assert.ok(full.hpMax! - full.track[0]!.hp <= 0.002,
+    "unit 2 sits at its peak, so the ring stays hidden");
 });
 
 test("viewer model recovers winner, gameover and interpolated positions", async () => {
@@ -82,4 +186,39 @@ test("viewer model recovers winner, gameover and interpolated positions", async 
   const mid = ZkrReplay.trackAt(u1.track, 7 / 30);
   assert.ok(Math.abs(mid!.x - 1124.5 / 16384) < 0.001);
   assert.ok(Math.abs(mid!.hp - 0.8) < 0.02);
+});
+
+test("allyteam palettes: green->cyan->blue vs red->orange->brown, lightness-aware separation", () => {
+  /* allyteam 0 walks green -> cyan -> blue, allyteam 1 red -> orange -> brown;
+     lightness zigzags so every teammate pair stays separable (dE not hue-only) */
+  const c0 = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 0, n: 4 } })!;
+  const c3 = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 3, n: 4 } })!;
+  assert.match(c0, /hsl\(\d+,\d+%,\d+%\)/);
+  assert.notEqual(c0, c3);
+  // across the ramp lightness must vary (not a fixed-lightness hue strip),
+  // and no stop may approach black ("bright ... but not so dark")
+  const lights = [0, 3, 6, 9, 12, 15].map((i) =>
+    Number(ZkrReplay.TEAL16[i]!.match(/hsl\(\d+,\d+%,(\d+)%\)/)![1]));
+  assert.ok(Math.max(...lights) - Math.min(...lights) >= 15, "lightness zigzags on the teal ramp");
+  assert.ok(Math.min(...lights) >= 30, "teal ramp never gets near-black");
+  const warmLights = [0, 3, 6, 9, 12, 15].map((i) =>
+    Number(ZkrReplay.WARM16[i]!.match(/hsl\(\d+,\d+%,(\d+)%\)/)![1]));
+  assert.ok(Math.max(...warmLights) - Math.min(...warmLights) >= 15, "lightness zigzags on the warm ramp");
+  assert.ok(Math.min(...warmLights) >= 25, "warm ramp never gets near-black");
+  // two teammates of the same allyteam share the hue family but differ in colour
+  const a = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 0, n: 3 } })!;
+  const b = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 1, n: 3 } })!;
+  const c = ZkrReplay.teamColor(0, { 0: { ally: 0, idx: 2, n: 3 } })!;
+  assert.notEqual(a, b); assert.notEqual(b, c); assert.notEqual(a, c);
+});
+
+test("hp ring colour follows the green->orange->red gradient", () => {
+  const c = (hp: number) => ZkrReplay.hpColor(hp);
+  assert.match(c(1)!, /hsl\(135,/);   // full health: vibrant green
+  assert.match(c(0.6)!, /hsl\(32,/);  // 60%: orange
+  assert.match(c(0)!, /hsl\(5,/);     // 0%: deep bright red
+  const a = Number(c(0.8)!.match(/hsl\((\d+)/)![1]);
+  const b = Number(c(0.7)!.match(/hsl\((\d+)/)![1]);
+  assert.ok(a > b, "hue decreases as hp drops");
+  assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
 });

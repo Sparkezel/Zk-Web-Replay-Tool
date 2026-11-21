@@ -8,7 +8,7 @@
   :root{
     --bg:#1b1f22; --panel:#24292d; --panel2:#2c3236; --line:#3a4145;
     --txt:#cfd6da; --dim:#8a949b; --accent:#6ab840; --accent2:#4e941f;
-    --t1:#8bd34f; --t2:#e05a4e; --gold:#d9b545;
+    --t1:hsl(152,62%,46%); --t2:hsl(8,72%,52%); --gold:#d9b545;
   }
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
@@ -83,6 +83,19 @@
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
 
+  /* ---- in-game chat ---- */
+  .chat{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto;font-size:12.5px}
+  .chat li{padding:4px 12px;border-bottom:1px solid #30373b;color:#d7dde1}
+  .chat li time{float:right;font-variant-numeric:tabular-nums;color:#5b666d;font-size:11px}
+  .chat li .dest{color:#5b666d;font-size:11px}
+  .chat li b{color:#d7dde1;font-weight:600}
+  .chat li .txt{color:#d7dde1}
+  .chat li.c-all .txt{color:#eef1f3}
+  .chat li.c-spec .txt,.chat li.c-host .txt{color:#8a949b}
+  .chat li.c-team0 .txt{color:#45e054}
+  .chat li.c-team1 .txt{color:#ff453a}
+  .chat li.c-whisper .txt{color:#c99ef0;font-style:italic}
+
   /* ---- economy sparkline ---- */
   .eco{display:flex;gap:14px;align-items:center}
   .eco canvas{flex:1;height:56px;background:#14181a;border:1px solid var(--line);border-radius:4px}
@@ -127,8 +140,8 @@
           <canvas id="replay" width="1180" height="460"></canvas>
           <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
           <div class="overlay-tr">
-            <div><span class="dot" style="background:var(--t1)"></span>Team 1 · <span id="cnt1">0</span> units</div>
-            <div><span class="dot" style="background:var(--t2)"></span>Team 2 · <span id="cnt2">0</span> units</div>
+            <div><span class="dot" style="background:var(--t1)"></span><span id="t1label">Team 1</span> · <span id="cnt1">0</span> units</div>
+            <div><span class="dot" style="background:var(--t2)"></span><span id="t2label">Team 2</span> · <span id="cnt2">0</span> units</div>
           </div>
           <div class="victory" id="victory">
             <div class="big">Team 1 wins</div>
@@ -140,8 +153,15 @@
           <span class="clock" id="clock">00:00 / 25:16</span>
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
           <span class="speed" id="speeds"></span>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wrecks" checked> wrecks</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
+      </div>
+
+      <!-- ====== in-game chat ====== -->
+      <div class="panel">
+        <h2>In-game chat</h2>
+        <ul class="chat" id="chat"></ul>
       </div>
 
       <!-- ====== battle result info ====== -->
@@ -229,11 +249,16 @@
 <script src="replay.js"></script>
 <script>
 /* ================= page model ================= */
-var T_COLORS = ["#8bd34f", "#e05a4e", "#4aa3e8", "#d9b545"];
+/* palettes live in replay.js now: 16 blue-green hues for even allyteams,
+   16 red-orange for odd; each team gets the ramp slot of its position among
+   the teams of its own allyteam, so sides never share colours */
+var T_COLORS = [ZkrReplay.TEAL16[0], ZkrReplay.WARM16[0], ZkrReplay.TEAL16[3], ZkrReplay.WARM16[3]];
 var MODEL = null;
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function fmt(s){var m=(s/60)|0;var ss=(s|0)%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
-function teamColor(t){return T_COLORS[((t%T_COLORS.length)+T_COLORS.length)%T_COLORS.length]}
+function teamColor(t){return ZkrReplay.teamColor(t,MODEL&&MODEL.teamMeta)}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;")}
 
 /* ---------- synthetic preview (fallback when battle.zkr is absent) ---------- */
 function buildSyntheticModel(){
@@ -266,7 +291,8 @@ function buildSyntheticModel(){
   for(var s=0;s<=1516;s+=15){var f=s/1516;
     ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
   return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
-    winner:1,teams:[1,2],synthetic:true};
+    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],
+    startPolys:[[[[.04,.3],[.2,.3],[.2,.7],[.04,.7]]],[[[.8,.3],[.96,.3],[.96,.7],[.8,.7]]]]};
 }
 
 /* ---------- artifact model (battle.zkr) ---------- */
@@ -275,9 +301,11 @@ function buildArtifactModel(artifact){
   var R=mulberry(2539874);
   var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
   var units=m.units.map(function(u){
+    var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
+      kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd}}};});
   var projectiles=m.projectiles.map(function(p){
     return {born:p.born,impact:p.end,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
@@ -289,7 +317,9 @@ function buildArtifactModel(artifact){
   var teams=Object.keys(tset).map(Number).sort(function(a,b){return a-b});
   if(teams.length===0)teams=[0];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
-    ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,teams:teams,
+    ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
+    teamNames:m.teamNames,teamMeta:m.teamMeta,startPolys:m.startPolys,teams:teams,
+    chatData:m.chatData||[],
     END:m.END||1516,synthetic:false,
     links:m.links,
     meta:{map:m.mapName,game:m.gameVersion,engine:m.engine}};
@@ -297,13 +327,42 @@ function buildArtifactModel(artifact){
 
 /* ================= renderer ================= */
 var cv=document.getElementById("replay"),cx=cv.getContext("2d");
+/* map backdrop written by the daemon (extracted from the .smf's embedded
+   minimap); plain background + blobs while it is unavailable */
+var mapImg=new Image();mapImg.src="map.png";
 function draw(model,tm){
   var W=cv.width,H=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
-  model.blobs.forEach(function(b){cx.fillStyle="#20262a";
-    cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
-  cx.strokeStyle="rgba(139,211,79,.6)";cx.strokeRect(W*.04,H*.3,W*.16,H*.4);
-  cx.strokeStyle="rgba(224,90,78,.6)";cx.strokeRect(W*.8,H*.3,W*.16,H*.4);
+  var hasMap=!model.synthetic&&mapImg.complete&&mapImg.naturalWidth>0;
+  if(!hasMap){
+    model.blobs.forEach(function(b){cx.fillStyle="#20262a";
+      cx.beginPath();cx.ellipse(b.x*W,b.y*H,b.r*H*3,b.r*H*2,0,0,7);cx.fill();});
+  }else{
+    cx.drawImage(mapImg,0,0,W,H);
+  }
+  /* startboxes: engine-loaded polygons (start_boxes gadget → STBX section),
+     falling back to startscript rects; filled polygons — allyteam 0 green,
+     the rest red — fading out linearly between sim-second 0 and 30 */
+  var sbs=model.startPolys||[];
+  if(sbs.length){
+    var sbAlpha=1-Math.min(tm/ZkrReplay.STARTBOX_FADE_SEC,1);
+    if(sbAlpha>0){
+      cx.lineWidth=1.5;
+      for(var ai=0;ai<sbs.length;ai++){
+        var fillCol=ai===0?"52,199,73":"235,70,54";
+        cx.fillStyle="rgba("+fillCol+","+(0.20*sbAlpha).toFixed(3)+")";
+        cx.strokeStyle="rgba("+fillCol+","+(0.85*sbAlpha).toFixed(3)+")";
+        var polys=sbs[ai]||[];
+        for(var pi=0;pi<polys.length;pi++){
+          var poly=polys[pi];if(!poly||poly.length<3)continue;
+          cx.beginPath();cx.moveTo(poly[0][0]*W,poly[0][1]*H);
+          for(var vi=1;vi<poly.length;vi++)cx.lineTo(poly[vi][0]*W,poly[vi][1]*H);
+          cx.closePath();cx.fill();cx.stroke();
+        }
+      }
+      cx.lineWidth=1;
+    }
+  }
   if(model.links){
     cx.setLineDash([6,4,2,4]);
     model.links.forEach(function(l){
@@ -323,11 +382,37 @@ function draw(model,tm){
     if(!pos)return;
     if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
     var x=pos.x*W,y=pos.y*H;
-    var r=u.kind?u.kind=="str"?5:u.kind=="sup"?4:3:
+    var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
-    cx.fillStyle=teamColor(u.t);
-    cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
-    if(pos.hp!==undefined&&pos.hp<0.999){cx.strokeStyle="rgba(217,181,69,.9)";cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke()}
+    var alpha=1;
+    /* ghost units: vanished from tracking without a death event before the
+       battle ended (wrecks / missing kills) — drawn transparent, or hidden
+       with the "wrecks" toggle; under-construction units fade in */
+    if(u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
+      if(!document.getElementById("wrecks").checked)return;
+      alpha=0.45;
+    }else if(pos.bd!==undefined&&pos.bd<1){
+      alpha=0.3+0.7*pos.bd;
+    }
+    cx.globalAlpha=alpha;
+    var img=u.icon?ZkrReplay.iconFor(u.icon):null;
+    var tinted=img?ZkrReplay.tintIcon(img,teamColor(u.t)):null;
+    if(tinted){
+      cx.drawImage(tinted,x-r,y-r,r*2,r*2);
+    }else{
+      cx.fillStyle=teamColor(u.t);
+      cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
+    }
+    cx.globalAlpha=1;
+    /* health ring: shown only when the unit has actually lost hp below its
+       own peak (hurt), and its build is finished; green (full) -> orange
+       (60%) -> deep red (0) */
+    if(pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
+      cx.strokeStyle=ZkrReplay.hpColor(pos.hp);
+      cx.lineWidth=1.4;
+      cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke();
+      cx.lineWidth=1;
+    }
   });
   model.projectiles.forEach(function(pr){
     var pos=pr.posAt(tm);
@@ -344,7 +429,7 @@ function draw(model,tm){
   document.getElementById("timeline").value=Math.min(tm,model.END);
   var vic=document.getElementById("victory");
   if(tm>=model.END){vic.classList.add("show");
-    document.querySelector("#victory .big").textContent=(model.winner!==null&&model.winner!==undefined)?("Team "+(model.winner+1)+" wins"):"Game over";
+    document.querySelector("#victory .big").textContent=model.winnerLabel?(model.winnerLabel+" wins"):"Game over";
     document.querySelector("#victory .sub").textContent="game time "+fmt(model.END);}
   else vic.classList.remove("show");
 }
@@ -357,6 +442,19 @@ function renderFeed(model,tm){
     html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
     if(html.length>4000)break;}
   el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
+  var first=el.firstChild;if(first)el.scrollTop=0;
+}
+
+/* in-game chat up to current time; entries: {tm,name,kind,ally,txt} */
+function renderChat(model,tm){
+  var el=document.getElementById("chat");var html="";
+  for(var i=model.chatData.length-1;i>=0;i--){var e=model.chatData[i];
+    if(e.tm>tm)continue;
+    var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper \u2192 "+(e.to||"?"):"autohost";
+    var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
+    html+='<li class="'+cls+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+fmt(e.tm)+"</time></li>";
+    if(html.length>6000)break;}
+  el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
   var first=el.firstChild;if(first)el.scrollTop=0;
 }
 
@@ -392,20 +490,41 @@ speeds.forEach(function(s){var b=document.createElement("button");
     [].forEach.call(sbox.children,function(c){c.classList.remove("on")});b.classList.add("on");};
   sbox.appendChild(b);});
 var pb=document.getElementById("playBtn");
-pb.onclick=function(){playing=!playing;if(t>=MODEL.END)t=0;pb.textContent=playing?"\u23f8 Pause":"\u25b6 Play";};
+pb.onclick=function(){if(!MODEL)return;playing=!playing;if(t>=MODEL.END)t=0;pb.textContent=playing?"\u23f8 Pause":"\u25b6 Play";};
 document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
-function drawFrame(){draw(MODEL,t);renderFeed(MODEL,t);drawEco(MODEL,t);}
+function drawFrame(){if(!MODEL)return;fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
 var last=performance.now();
 function loop(now){var dt=(now-last)/1000;last=now;
   if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
   drawFrame();requestAnimationFrame(loop);}
 
+/* canvas backing store follows the CSS box (DPR-aware) - drawing is fully
+   proportional on W/H, so circles stay circles at any panel width */
+function fitCanvas(){
+  var dpr=window.devicePixelRatio||1;
+  var w=cv.clientWidth,h=cv.clientHeight||460;
+  if(!w||!h)return;
+  w=Math.round(w*dpr);h=Math.round(h*dpr);
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+}
+window.addEventListener("resize",function(){drawFrame();});
+
+function teamLabelOf(model,team){
+  var n=model.teamNames&&model.teamNames[team];
+  return n?n:("Team "+(team+1));
+}
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
-  t=0;drawFrame();
+  var ts=model.teams||[];
+  if(ts.length>=1)document.getElementById("t1label").textContent=teamLabelOf(model,ts[0]);
+  if(ts.length>=2)document.getElementById("t2label").textContent=teamLabelOf(model,ts[1]);
+  ZkrReplay.setUnitIconBase("icons/");
+  t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
 }
+
+requestAnimationFrame(loop); /* start the animation loop */
 
 /* ================= artifact loading ================= */
 function loadArtifact(url){
@@ -413,17 +532,46 @@ function loadArtifact(url){
     if(!res.ok)throw new Error("battle.zkr not found ("+res.status+")");
     return res.arrayBuffer();
   }).then(function(buf){
+    console.log("[zkr-probe] battle.zkr raw bytes:",buf.byteLength);
     return ZkrReplay.parse(new Uint8Array(buf));
   });
 }
 
+/* TEMP diagnostics: dump artifact ingestion stats to the console so a
+   broken simulation capture (short POS, spawn-frame offset, dropped units)
+   can be told apart from a viewer regression. Remove once resolved. */
+function probeArtifact(a){
+  var m=ZkrReplay.artifactToModel(a);
+  var posUnits=(a.pos?a.pos.units:[]);
+  var firsts=posUnits.map(function(u){return u.firstFrame}).sort(function(x,y){return x-y});
+  var sampleCounts=posUnits.map(function(u){return u.samples.length});
+  var totalSamples=sampleCounts.reduce(function(s,n){return s+n},0);
+  var empty=m.units.filter(function(u){return u.track.length===0}).length;
+  var evnts=(a.evnt?a.evnt.records:[]);
+  var kinds={};evnts.forEach(function(r){kinds[r.kind]=(kinds[r.kind]||0)+1});
+  var visAt=function(sec){return m.units.filter(function(u){return u.track.length&&u.track[0].t<=sec}).length};
+  var med=firsts.length?firsts[firsts.length>>1]:"-";
+  console.log("[zkr-probe] sections:",a.sections.map(function(s){return s.id+"("+s.uncompressedSize+"B)"}).join(" "));
+  console.log("[zkr-probe] POS units:",posUnits.length,"emptyTracks:",empty,"totalSamples:",totalSamples,"pos.maxFrame:",a.pos?a.pos.maxFrame:-1);
+  console.log("[zkr-probe] POS firstFrame min/median/max:",firsts.length?firsts[0]:"-","/",med,"/",firsts.length?firsts[firsts.length-1]:"-");
+  console.log("[zkr-probe] EVNT records:",evnts.length,"kinds:",JSON.stringify(kinds),"maxFrame:",a.evnt?a.evnt.maxFrame:-1);
+  console.log("[zkr-probe] PROJ paths:",a.proj?a.proj.paths.length:0,"maxFrame:",a.proj?a.proj.maxFrame:-1,"| LINK:",a.link?a.link.links.length:0,"maxFrame:",a.link?a.link.maxFrame:-1);
+  console.log("[zkr-probe] META map:",a.meta&&a.meta.map&&a.meta.map.name,"gameTime:",a.meta&&a.meta.gameTime);
+  console.log("[zkr-probe] MODEL units:",m.units.length,"END:",m.END,"visible@0s:",visAt(0.001),"visible@5s:",visAt(5));
+  return m;
+}
+
 function showArtifact(a){
-  installModel(buildArtifactModel(a));
+  probeArtifact(a);
+  var model=buildArtifactModel(a);
+  installModel(model);
+  var badge=document.querySelector(".head .badge.win");
+  if(badge&&model.winnerLabel)badge.textContent="Winner: "+model.winnerLabel;
   document.getElementById("simState").textContent="artifact: ready \u00b7 "+a.sections.map(function(s){return s.id}).join(" \u00b7 ");
 }
 
 loadArtifact("battle.zkr").then(function(a){
-  var m=ZkrReplay.artifactToModel(a);
+  var m=probeArtifact(a);
   if(!m.hasUnits){
     installModel(buildSyntheticModel());
     document.getElementById("simState").textContent="battle.zkr has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
