@@ -177,10 +177,10 @@ export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset =
   const mapW = snap.meta.mapW ?? 0;
   const mapH = snap.meta.mapH ?? mapW;
   const w = new ByteWriter();
-  const kept = [...snap.projectiles.values()]
+  const kept = [...snap.projectiles.values(), ...(snap.closedProjectiles ?? [])]
     .filter((p) => presetRecords(preset, classifyProjectile(snap.weaponDefs.get(p.weaponDefID) ?? { defID: p.weaponDefID })))
     .filter((p) => p.samples.length > 0)
-    .sort((a, b) => a.proID - b.proID);
+    .sort((a, b) => a.proID - b.proID || a.samples[0]!.frame - b.samples[0]!.frame);
   w.u32(kept.length);
   for (const p of kept) {
     const cls = classifyProjectile(snap.weaponDefs.get(p.weaponDefID) ?? { defID: p.weaponDefID });

@@ -155,6 +155,8 @@
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
           <span class="speed" id="speeds"></span>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wrecks" checked> wrecks</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1" checked> healthv1</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2"> healthv2</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
       </div>
@@ -380,17 +382,34 @@ function draw(model,tm){
     cx.setLineDash([]);cx.globalAlpha=1;cx.lineWidth=1;
   }
   var n1=0,n2=0;
+  var wrecksOn=document.getElementById("wrecks").checked;
+  /* health style: v1 = green->red ring around hurt units (default); v2 =
+     damage-darkened team colour, no ring. If both toggles are on, v1 wins. */
+  var hpv1On=document.getElementById("hpv1").checked;
+  var hpv2On=!hpv1On&&document.getElementById("hpv2").checked;
   model.units.forEach(function(u){
-    var pos=u.posAt(tm);
-    if(!pos)return;
-    if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
-    var x=pos.x*W,y=pos.y*H;
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
-    /* area-cloak field (Iris etc.): light-blue circle scaled by the unit's
-       in-game cloak radius against the map's elmo size per axis — the mockup
-       canvas need not be square, and Radiohead^-1 maps are not either */
-    if(u.cr>0&&model.mapW>0&&model.mapH>0){
+    var pos=u.posAt(tm);
+    if(!pos){
+      /* real death (tracked death event): leave a subtle grey wreck marker
+         at the unit's last tracked position instead of vanishing into the
+         red-dot idle clutter; governed by the "wrecks" toggle */
+      if(wrecksOn&&u.died>0&&tm>=u.died&&u.track&&u.track.length){
+        var wk=u.track[u.track.length-1];
+        cx.globalAlpha=.28;cx.fillStyle="#767e84";
+        cx.beginPath();cx.arc(wk.x*W,wk.y*H,Math.max(2.2,r*.8),0,7);cx.fill();
+        cx.globalAlpha=1;
+      }
+      return;
+    }
+    if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
+    var x=pos.x*W,y=pos.y*H;
+    /* area-cloak field (Iris etc.): drawn ONLY while the field is actually
+       on — ZK area cloakers cloak themselves while the field runs, so the
+       unit's own cloaked bit is the field state; scaled per axis against the
+       map's elmo size */
+    if(u.cr>0&&pos.ck&&model.mapW>0&&model.mapH>0){
       var crW=u.cr/model.mapW*W,crH=u.cr/model.mapH*H;
       cx.fillStyle="rgba(110,190,255,.07)";
       cx.beginPath();cx.ellipse(x,y,crW,crH,0,0,7);cx.fill();
@@ -403,31 +422,45 @@ function draw(model,tm){
        with the "wrecks" toggle; under-construction units fade in
        (synthetic-preview units carry no track — the guard keeps them drawn) */
     if(u.track&&u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
-      if(!document.getElementById("wrecks").checked)return;
+      if(!wrecksOn)return;
       alpha=0.45;
     }else if(pos.bd!==undefined&&pos.bd<1){
       alpha=0.3+0.7*pos.bd;
     }
     cx.globalAlpha=alpha;
+    /* healthv2: the team colour itself darkens as the unit takes damage
+       (full hp = exact colour, nearly dead = 75% of each channel);
+       building units stay at full colour — their progress reads from the
+       yellow build bar below, not from their (growing) hp */
+    var col=teamColor(u.t);
+    if(hpv2On&&pos.hp!==undefined&&!(pos.bd!==undefined&&pos.bd<1)){
+      col=ZkrReplay.damageShade(col,pos.hp);
+    }
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
-    var tinted=img?ZkrReplay.tintIcon(img,teamColor(u.t)):null;
+    var tinted=img?ZkrReplay.tintIcon(img,col):null;
     if(tinted){
       cx.drawImage(tinted,x-r,y-r,r*2,r*2);
     }else{
-      cx.fillStyle=teamColor(u.t);
+      cx.fillStyle=col;
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
     cx.globalAlpha=1;
+    /* under construction: icon-width yellow build bar (3 px, black
+       background) instead of a from-zero health readout */
+    if(pos.bd!==undefined&&pos.bd<1){
+      cx.fillStyle="#000";cx.fillRect(x-r,y+r+2.5,r*2,3);
+      cx.fillStyle="#ffe14d";cx.fillRect(x-r,y+r+2.5,r*2*pos.bd,3);
+    }
     /* cloaked (own cloak or inside an Iris field): small cyan dot
        beneath the icon — non-intrusive, readable at any zoom */
     if(pos.ck){
       cx.fillStyle="#4be3ff";
       cx.beginPath();cx.arc(x,y+r+2.2,1.8,0,7);cx.fill();
     }
-    /* health ring: shown only when the unit has actually lost hp below its
-       own peak (hurt), and its build is finished; green (full) -> orange
+    /* health ring (v1): shown only when the unit has actually lost hp below
+       its own peak (hurt), and its build is finished; green (full) -> orange
        (60%) -> deep red (0) */
-    if(pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
+    if(hpv1On&&pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
       cx.strokeStyle=ZkrReplay.hpColor(pos.hp);
       cx.lineWidth=1.4;
       cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke();

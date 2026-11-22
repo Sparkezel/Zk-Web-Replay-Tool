@@ -203,3 +203,37 @@ test("page falls back to the synthetic preview when the artifact fetch fails", a
   // synthetic units carry no .track; the wrecks guard must keep them rendering
   assert.ok(state.raf.length > 0, "loop alive after synthetic fallback");
 });
+
+test("healthv2 shading + wreck markers draw without breaking the loop", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-page2-"));
+  const artifact = buildArtifact(dir);
+  const { byId, state } = await runPage(artifact);
+
+  // switch to damage-shading mode: ring hidden, tinted icons/circles shaded
+  byId("hpv1").checked = false;
+  byId("hpv2").checked = true;
+  const callsBefore = state.calls;
+  const tl = byId("timeline");
+  // 0 s (all alive) -> 30 s -> 55 s (past unit 3's tracked death at 50 s:
+  // its wreck marker branch runs) -> 80 s (near game end)
+  for (const t of [0, 30, 55, 80]) {
+    tl.value = t;
+    (tl.oninput as (e: unknown) => void).call(tl, { target: { value: t } });
+  }
+  assert.ok(state.calls > callsBefore, "draw continued in healthv2 mode");
+
+  // wrecks toggle off must also render cleanly (no wreck dots, ghosts hidden)
+  byId("wrecks").checked = false;
+  for (const t of [60, 90]) {
+    tl.value = t;
+    (tl.oninput as (e: unknown) => void).call(tl, { target: { value: t } });
+  }
+  assert.ok(state.calls > callsBefore, "draw continued with wrecks hidden");
+
+  // and v1+v2 both ticked (browsers allow it): v1 must win without throwing
+  byId("hpv1").checked = true;
+  byId("hpv2").checked = true;
+  tl.value = 55;
+  (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 55 } });
+  assert.ok(state.raf.length > 0, "rAF loop still alive");
+});

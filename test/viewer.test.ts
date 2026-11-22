@@ -351,3 +351,111 @@ test("parseDemoStream anchors at the STARTPLAYING with its countdown elapsed", (
   assert.equal(res.startPlayingFrame, Math.max(4799 + 120, 4918));
   assert.equal(res.chat.length, 1);
 });
+
+test("damageShade: full hp keeps the exact colour, dead keeps each channel at >= 75%", () => {
+  const col = "hsl(120, 100%, 50%)"; // pure green
+  assert.equal(ZkrReplay.damageShade(col, 1), "rgb(0,255,0)");
+  assert.equal(ZkrReplay.damageShade(col, 0), "rgb(0,191,0)"); // 0.75 * 255
+  const half = ZkrReplay.damageShade(col, 0.5); // k = 0.875
+  assert.equal(half, "rgb(0,223,0)");
+  // hp clamp + passthrough of unparseable colours / absent hp
+  assert.equal(ZkrReplay.damageShade(col, 5), "rgb(0,255,0)");
+  assert.equal(ZkrReplay.damageShade(col, -3), "rgb(0,191,0)");
+  assert.equal(ZkrReplay.damageShade("rgb(12,34,56)", 0), "rgb(12,34,56)");
+  assert.equal(ZkrReplay.damageShade(col, undefined), col);
+  // hex form (spectator grey) shades too
+  assert.equal(ZkrReplay.damageShade("#9aa4aa", 0), "rgb(116,123,128)");
+});
+
+test("damageShade matches hslToRgb scaled channels (random spot checks)", () => {
+  for (const hue of [4, 32, 130, 206, 342]) {
+    for (const l of [0.32, 0.55, 0.82]) {
+      const src = "hsl(" + hue + ",88%," + Math.round(l * 100) + "%)";
+      const hp = 0.37; // k = 0.8425
+      const got = ZkrReplay.damageShade(src, hp);
+      const expect = ZkrReplay.hslToRgb(hue, 0.88, l)
+        .map((v) => Math.round(v * (0.75 + 0.25 * hp)));
+      assert.equal(got, "rgb(" + expect.join(",") + ")");
+    }
+  }
+});
+
+test("terraform helper units never reach the model (units or feed)", async () => {
+  const snap = syntheticSnapshot();
+  // a terraunit: spawned, probed, and destroyed by unit 1
+  snap.unitDefs = new Map([
+    [10, { defID: 10, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
+    [77, { defID: 77, name: "terraunit", humanName: "Terraform", metalCost: 0, health: 10000, canMove: true, iconType: "" }],
+  ]);
+  snap.units.set(9, { unitID: 9, defID: 77, samples: [{ frame: 6, x: 100, z: 100, hp: 255, build: 255 }] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 9, int1: 77, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 9, int1: 1, int2: 0, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.pos.units.length, 3); // bytes still carry it (old artifacts)
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.ok(!model.units.some((u) => u.def === "terraunit"), "terraunit filtered from units");
+  assert.ok(!model.units.some((u) => u.id === 9), "terraunit track absent (not just renamed)");
+  assert.ok(model.units.some((u) => u.id === 1));
+  assert.ok(!model.feedData.some((f) => f.txt.includes("Terraform")), "no terraunit death in the feed");
+});
+
+test("recycled projectile IDs pack as two independent short flights", async () => {
+  const snap = syntheticSnapshot();
+  snap.closedProjectiles = [{
+    proID: 100, weaponDefID: 7, ownerTeam: 0,
+    samples: [
+      { frame: 6, x: 8192, z: 4096, y: 100 },
+      { frame: 12, x: 8196, z: 4100, y: 150 },
+      { frame: 18, x: 8200, z: 4104, y: 120 },
+    ],
+  }];
+  // same ID, ~2.7 min later: a completely unrelated missile
+  snap.projectiles.get(100)!.samples = [
+    { frame: 5000, x: 4096, z: 8192, y: 100 },
+    { frame: 5006, x: 4096, z: 8200, y: 150 },
+  ];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.proj.paths.length, 2);
+  const spans = artifact.proj.paths.map((p) => p.samples[p.samples.length - 1].frame - p.startFrame);
+  assert.ok(spans.every((s) => s <= 12), "each flight spans a handful of frames, not minutes: " + spans);
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.projectiles.length, 2);
+  assert.ok(model.projectiles[0].born !== model.projectiles[1].born);
+  // no sample jump inside either path (the old contamination marker)
+  for (const p of model.projectiles) {
+    for (let i = 1; i < p.path.length; i++) {
+      const dt = p.path[i].t - p.path[i - 1].t;
+      assert.ok(dt <= 0.6, "path step " + dt + "s exceeds one probe gap");
+    }
+  }
+});
+
+test("legacy artifacts: one contaminated proID path splits into two flights at model build", async () => {
+  const snap = syntheticSnapshot();
+  // exactly what the pre-fix ingest baked: two unrelated flights of the
+  // same recycled ID concatenated into a single track
+  snap.projectiles.get(100)!.samples = [
+    { frame: 6, x: 8192, z: 4096, y: 100 },
+    { frame: 12, x: 8196, z: 4100, y: 150 },
+    { frame: 5000, x: 4096, z: 8192, y: 100 },   // 166 s hole: ID reuse
+    { frame: 5006, x: 4096, z: 8200, y: 150 },
+  ];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.proj.paths.length, 1); // bytes are what they are
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.projectiles.length, 2, "split at the >1 s sample hole");
+  const [first, second] = model.projectiles;
+  assert.ok(Math.abs(first.end - 12 / 30) < 1e-6);
+  assert.ok(Math.abs(second.born - 5000 / 30) < 1e-6);
+  for (const p of model.projectiles) {
+    for (let i = 1; i < p.path.length; i++) {
+      assert.ok(p.path[i].t - p.path[i - 1].t <= 0.6, "no cross-map crawl steps");
+    }
+  }
+});

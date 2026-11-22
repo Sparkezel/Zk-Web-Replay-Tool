@@ -26,6 +26,9 @@
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
+  /* engine bookkeeping units (ZK's terraform helper) are not real units —
+     their hp is meaningless and they are never rendered or fed */
+  const EXCLUDED_UNIT_DEFS = new Set(["terraunit"]);
 
   /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
      green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
@@ -67,6 +70,47 @@
     else hue = 5 + (32 - 5) * Math.max(0, hp) / 0.6;
     const light = hp >= 0.6 ? 47 : 55 - 10 * hp / 0.6;
     return "hsl(" + Math.round(hue) + ",95%," + Math.round(light) + "%)";
+  }
+
+  /** hsl (0..360, 0..1, 0..1) -> [r, g, b] each 0..255 */
+  function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs(hp % 2 - 1));
+    let r = 0, g = 0, b = 0;
+    if (hp < 1) { r = c; g = x; }
+    else if (hp < 2) { r = x; g = c; }
+    else if (hp < 3) { g = c; b = x; }
+    else if (hp < 4) { g = x; b = c; }
+    else if (hp < 5) { r = x; b = c; }
+    else { r = c; b = x; }
+    const m = l - c / 2;
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  }
+
+  /** healthv2 damage shading: the unit's team colour IS its health bar —
+      full hp shows the exact team colour, damage darkens the colour vector
+      toward 75% (never below, so a nearly-dead unit still reads as its
+      team's hue, just darker). hp is 0..1; unparseable colours pass through
+      unchanged. Building units (hp growing from 0) are not "damaged" — the
+      caller passes 1 while bd < 1 so they stay at full colour. */
+  function damageShade(color, hp) {
+    if (hp === null || hp === undefined || !isFinite(hp)) return color;
+    const k = 0.75 + 0.25 * Math.max(0, Math.min(1, hp));
+    let rgb = null;
+    const s = String(color);
+    const m = /^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/.exec(s);
+    if (m) {
+      rgb = hslToRgb(Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100);
+    } else {
+      const hex = /^#([0-9a-f]{6})$/i.exec(s);
+      if (hex) {
+        rgb = [0, 1, 2].map((j) => parseInt(hex[1].slice(j * 2, j * 2 + 2), 16));
+      }
+    }
+    if (!rgb) return color;
+    return "rgb(" + rgb.map((v) => Math.round(v * k)).join(",") + ")";
   }
 
   /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
@@ -172,9 +216,10 @@
     return iconCache.get(iconType);
   }
 
-  /* Recolour a unit icon into the owning player's colour. Spring unit icons
-     are white/greyscale with alpha, so a multiply tint preserves the shape
-     while taking the team hue. Results are cached offscreen per (src, colour). */
+  /* Recolour a unit icon into the owning player's colour, exactly like the
+     game does: Spring icons are black linework on grey scale fills, and a
+     plain multiply keeps the black lines black while the grey interiors take
+     the team hue. Results are cached offscreen per (src, colour). */
   const tintCache = new Map();
   function tintIcon(img, color) {
     if (!img || !img.complete || !img.naturalWidth || !color) return null;
@@ -184,11 +229,6 @@
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       const g = c.getContext("2d");
       g.drawImage(img, 0, 0);
-      /* the dds art is mid-grey (avg ~50%); raise its luminance floor first
-         or the multiply below turns icons nearly invisible on dark maps */
-      g.globalCompositeOperation = "lighten";
-      g.fillStyle = "#b4b4b4";
-      g.fillRect(0, 0, c.width, c.height);
       g.globalCompositeOperation = "multiply";
       g.fillStyle = color;
       g.fillRect(0, 0, c.width, c.height);
@@ -450,6 +490,8 @@
     const feedData = [];
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
+      const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
+      if (deadDef && EXCLUDED_UNIT_DEFS.has((deadDef.name || "").toLowerCase())) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
       const killerName = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
       feedData.push({
@@ -550,6 +592,8 @@
       for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
       return {
         id: u.unitID, defID: u.defID,
+        name: info ? (info.humanName || info.name) : undefined,
+        def: info ? info.name : undefined,
         hpMax: hpMax > 0 ? hpMax : undefined,
         team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
         metalCost: info ? (info.metalCost ?? -1) : -1,
@@ -560,15 +604,35 @@
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build, ck: s.ck })),
       };
-    });
+    }).filter((u) => !u.def || !EXCLUDED_UNIT_DEFS.has(String(u.def).toLowerCase()));
 
-    const projectiles = (artifact.proj ? artifact.proj.paths : []).map((p) => ({
-      proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
-      weaponDefID: p.weaponDefID, team: p.team,
-      born: toSec(p.startFrame),
-      end: toSec(p.samples[p.samples.length - 1].frame),
-      path: p.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
-    }));
+    /* Spring recycles projectile IDs (u16 pools), so a byte-level "path" can
+       be several unrelated flights concatenated by an older ingest. Real
+       flights are probed every 6 frames — a >0.6 s hole in the sample
+       stream means the first projectile is long dead: split there, so
+       artifacts packed before the daemon-side fix render correctly too. */
+    const PROJ_REUSE_GAP_FRAMES = 18;
+    const projectiles = [];
+    for (const p of (artifact.proj ? artifact.proj.paths : [])) {
+      const mkPath = (seg) => ({
+        proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
+        weaponDefID: p.weaponDefID, team: p.team,
+        born: toSec(seg[0].frame),
+        end: toSec(seg[seg.length - 1].frame),
+        path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
+      });
+      if (!p.samples.length) continue;
+      let seg = [p.samples[0]];
+      for (let i = 1; i < p.samples.length; i++) {
+        const s = p.samples[i];
+        if (s.frame - seg[seg.length - 1].frame > PROJ_REUSE_GAP_FRAMES) {
+          projectiles.push(mkPath(seg));
+          seg = [];
+        }
+        seg.push(s);
+      }
+      projectiles.push(mkPath(seg));
+    }
 
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({
       djinnID: l.djinnID, lampID: l.lampID, team: l.team,
@@ -660,7 +724,8 @@
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
-    teamColor, hpColor, TEAL16, WARM16,
+    teamColor, hpColor, hslToRgb, damageShade, TEAL16, WARM16,
+    EXCLUDED_UNIT_DEFS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
   };
 })(typeof window !== "undefined" ? window : globalThis);

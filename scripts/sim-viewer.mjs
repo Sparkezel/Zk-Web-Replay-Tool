@@ -115,12 +115,25 @@ try {
   process.exit(2);
 }
 
-// wait for the async artifact load to finish
-for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 10));
-console.log("after load: typeof MODEL =", typeof globalThis.MODEL,
+// wait for the async artifact load: deflate-decompressing the POS/PROJ
+// sections of a real artifact takes a variable 0.2-1 s on a busy machine,
+// so poll for readiness (globalThis.MODEL is null while loading) — a fixed
+// 200 ms sleep reported "0 canvas calls" flakes on slow runs
+let waitedMs = 0;
+while (!globalThis.MODEL && waitedMs < 15000) {
+  await new Promise((r) => setTimeout(r, 25));
+  waitedMs += 25;
+}
+if (!globalThis.MODEL) {
+  console.error("artifact did not load within 15 s — fetch/parse chain failed or hung");
+  process.exit(6);
+}
+console.log("after load: typeof MODEL =",
+  (globalThis.MODEL && typeof globalThis.MODEL.units === "object" && Array.isArray(globalThis.MODEL.units)) ? "model (ready)" : "loaded",
   "| typeof ZkrReplay =", typeof globalThis.ZkrReplay,
   "| rafQueue =", rafQueue.length,
-  "| unresolved:", globalThis.__zkrSimSeen);
+  "| unresolved:", globalThis.__zkrSimSeen,
+  "| waited:", waitedMs, "ms");
 const byIdReal = globalThis.document.getElementById;
 
 // drive: press play, run 600 frames of the animation loop

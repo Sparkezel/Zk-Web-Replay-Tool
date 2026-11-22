@@ -44,6 +44,12 @@ local knownWeaponDefs = {}
 -- 5x, 0.5 below 10x, 1.0 beyond
 local targetSpeed = tonumber("__ZKR_SPEED_FACTOR__") or 1
 
+-- engine bookkeeping units (ZK terraform helper "terraunit") are invisible
+-- blobs created by terraform gadgets; tracking their hp/position is noise, so
+-- they never get spawn/death events or probe rows
+local excludedDefIDs = {}
+local excludedUnitIDs = {}
+
 local function emit(json)
   Spring.Echo("ZKR " .. json)
 end
@@ -126,10 +132,16 @@ local function maybeWdef(defID)
 end
 
 function widget:Initialize()
+  for defID = 1, #UnitDefs do
+    if UnitDefs[defID] ~= nil and UnitDefs[defID].name == "terraunit" then
+      excludedDefIDs[defID] = true
+    end
+  end
   emit('{"t":"meta","w":' .. num(Game.mapSizeX) .. ',"h":' .. num(Game.mapSizeZ) .. '}')
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
+  if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = true return end
   maybeUdef(unitDefID)
   local name = ""
   if unitDefID ~= nil and UnitDefs[unitDefID] ~= nil then name = UnitDefs[unitDefID].name or "" end
@@ -146,6 +158,7 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
+  if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
   if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
     ',"k":' .. (attackerID or -1) .. ',"kt":' .. (attackerTeam or -1) ..
@@ -201,16 +214,18 @@ function widget:GameFrame(frame)
   local rows = {}
   for i = 1, #units do
     local uid = units[i]
-    local x, y, z = Spring.GetUnitPosition(uid)
-    local hp, maxHp = Spring.GetUnitHealth(uid)
-    local build = select(5, Spring.GetUnitHealth(uid))
-    -- cloak state: 1 when the unit is cloaked right now (own cloak or inside
-    -- an Iris/Onion area field) — the viewer draws a cyan dot under it
-    local ck = false
-    if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
-    rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
-      "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
-      "," .. frac(build and 1 or nil) .. "," .. (ck and 1 or 0) .. "]"
+    if excludedUnitIDs[uid] ~= true then
+      local x, y, z = Spring.GetUnitPosition(uid)
+      local hp, maxHp = Spring.GetUnitHealth(uid)
+      local build = select(5, Spring.GetUnitHealth(uid))
+      -- cloak state: 1 when the unit is cloaked right now (own cloak or inside
+      -- an Iris/Onion area field) — the viewer draws a cyan dot under it
+      local ck = false
+      if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
+      rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
+        "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
+        "," .. frac(build and 1 or nil) .. "," .. (ck and 1 or 0) .. "]"
+    end
   end
   if #rows > 0 then
     emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')

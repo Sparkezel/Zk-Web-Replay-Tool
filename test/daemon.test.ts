@@ -40,6 +40,50 @@ test("ZKR line ingest builds snapshot state", () => {
   assert.equal(snap.events.length, 3);
 });
 
+test("ingest splits a projectile track when Spring recycles the proID", () => {
+  const snap = newSnapshot();
+  snap.meta.mapW = 16384;
+  snap.meta.mapH = 16384;
+  ingestLine(snap, 'ZKR {"t":"wdef","d":10,"n":"merlinrocket","w":"MissileLauncher","r":1000}');
+  // first flight, three probes 6 frames apart (widget cadence)
+  ingestLine(snap, 'ZKR {"t":"proj","f":12,"u":42,"d":10,"tm":0,"x":1000,"y":120,"z":2000}');
+  ingestLine(snap, 'ZKR {"t":"proj","f":18,"u":42,"d":10,"tm":0,"x":1100,"y":140,"z":2100}');
+  ingestLine(snap, 'ZKR {"t":"proj","f":24,"u":42,"d":10,"tm":0,"x":1200,"y":160,"z":2200}');
+  // >1 s later the same ID is a different missile: a concatenation would
+  // render an impossible cross-map "flight"
+  ingestLine(snap, 'ZKR {"t":"proj","f":5000,"u":42,"d":10,"tm":0,"x":8000,"y":100,"z":8000}');
+  ingestLine(snap, 'ZKR {"t":"proj","f":5006,"u":42,"d":10,"tm":0,"x":8100,"y":120,"z":8100}');
+  assert.equal(snap.projectiles.size, 1);
+  const active = snap.projectiles.get(42)!;
+  assert.equal(active.samples.length, 2);
+  assert.equal(active.samples[0]!.frame, 5000);
+  assert.equal(snap.closedProjectiles.length, 1);
+  assert.equal(snap.closedProjectiles[0]!.samples.length, 3);
+
+  // both flights survive the pack as independent paths
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy", demo: undefined });
+  const secs = readZkr(zkr);
+  const proj = secs.find((s) => s.id === SECTION.PROJECTILES)!;
+  const pay = proj.payload!;
+  const dv = new DataView(pay.buffer, pay.byteOffset, pay.byteLength);
+  assert.equal(dv.getUint32(0, true), 2);
+});
+
+test("ingest ignores terraunit spawns, probes and deaths", () => {
+  const snap = newSnapshot();
+  ingestLine(snap, 'ZKR {"t":"udef","d":77,"n":"terraunit","m":0,"hp":10000,"mv":1}');
+  ingestLine(snap, 'ZKR {"t":"spawn","f":100,"u":9,"d":77,"n":"terraunit","tm":0,"b":1}');
+  ingestLine(snap, 'ZKR {"t":"spawn","f":102,"u":10,"d":12,"n":"cloakjammer","tm":1,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":108,"p":[[9,100,100,1,1],[10,200,200,1,1]]}');
+  ingestLine(snap, 'ZKR {"t":"death","f":500,"u":9,"k":10,"kt":1,"w":-1}');
+  assert.ok(snap.ignoredUnits.has(9));
+  assert.equal(snap.units.size, 1);
+  assert.equal(snap.units.get(10)!.samples.length, 1);
+  // only the real unit's spawn survives as an event
+  assert.deepEqual(snap.events.map((e) => e.kind), ["spawn"]);
+  assert.equal(snap.events[0]!.unitID, 10);
+});
+
 test("artifact roundtrip: sections, POS quantization, EVNT records", () => {
   const snap = newSnapshot();
   snap.meta.mapW = 16384;
