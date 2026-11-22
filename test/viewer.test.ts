@@ -453,19 +453,19 @@ test("parseDemoStream anchors at the STARTPLAYING with its countdown elapsed", (
   assert.equal(res.chat.length, 1);
 });
 
-test("damageShade: full hp keeps the exact colour, dead keeps each channel at >= 75%", () => {
+test("damageShade: full hp keeps the exact colour, dead keeps each channel at 50%", () => {
   const col = "hsl(120, 100%, 50%)"; // pure green
   assert.equal(ZkrReplay.damageShade(col, 1), "rgb(0,255,0)");
-  assert.equal(ZkrReplay.damageShade(col, 0), "rgb(0,191,0)"); // 0.75 * 255
-  const half = ZkrReplay.damageShade(col, 0.5); // k = 0.875
-  assert.equal(half, "rgb(0,223,0)");
+  assert.equal(ZkrReplay.damageShade(col, 0), "rgb(0,128,0)"); // 0.5 * 255
+  const half = ZkrReplay.damageShade(col, 0.5); // k = 0.75
+  assert.equal(half, "rgb(0,191,0)");
   // hp clamp + passthrough of unparseable colours / absent hp
   assert.equal(ZkrReplay.damageShade(col, 5), "rgb(0,255,0)");
-  assert.equal(ZkrReplay.damageShade(col, -3), "rgb(0,191,0)");
+  assert.equal(ZkrReplay.damageShade(col, -3), "rgb(0,128,0)");
   assert.equal(ZkrReplay.damageShade("rgb(12,34,56)", 0), "rgb(12,34,56)");
   assert.equal(ZkrReplay.damageShade(col, undefined), col);
   // hex form (spectator grey) shades too
-  assert.equal(ZkrReplay.damageShade("#9aa4aa", 0), "rgb(116,123,128)");
+  assert.equal(ZkrReplay.damageShade("#9aa4aa", 0), "rgb(77,82,85)", "each channel at 50%");
 });
 
 test("damageShade quantizes hp to 16 steps (bounds the icon tint cache)", () => {
@@ -485,7 +485,7 @@ test("damageShade matches hslToRgb scaled channels (random spot checks)", () => 
       const hp = 0.37; // quantizes to 6/16
       const got = ZkrReplay.damageShade(src, hp);
       const expect = ZkrReplay.hslToRgb(hue, 0.88, l)
-        .map((v) => Math.round(v * (0.75 + 0.25 * 0.375)));
+        .map((v) => Math.round(v * (0.5 + 0.5 * 0.375)));
       assert.equal(got, "rgb(" + expect.join(",") + ")");
     }
   }

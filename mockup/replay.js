@@ -91,16 +91,16 @@
 
   /** healthv2 damage shading: the unit's team colour IS its health bar —
       full hp shows the exact team colour, damage darkens the colour vector
-      toward 75% (never below, so a nearly-dead unit still reads as its
-      team's hue, just darker). hp is 0..1, quantized to 16 steps: the tint
-      cache keys on the returned colour, and a shade per raw u8 hp level
+      toward 50% (never below, so a nearly-dead unit still reads as its
+      team's hue, just much darker). hp is 0..1, quantized to 16 steps: the
+      tint cache keys on the returned colour, and a shade per raw u8 hp level
       grew the icon cache to 12k offscreen canvases on a real sweep —
       17 reachable shades read identically and keep the cache bounded.
       Unparseable colours / absent hp pass through unchanged. */
   function damageShade(color, hp) {
     if (hp === null || hp === undefined || !isFinite(hp)) return color;
     const h = Math.round(Math.max(0, Math.min(1, hp)) * 16) / 16;
-    const k = 0.75 + 0.25 * h;
+    const k = 0.5 + 0.5 * h;
     let rgb = null;
     const s = String(color);
     const m = /^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/.exec(s);

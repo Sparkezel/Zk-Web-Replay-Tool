@@ -151,11 +151,11 @@
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
           <span class="speed" id="speeds"></span>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wrecks" checked> wrecks</label>
-          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wreckZones" checked> wrk zones</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wreckZones"> wrk zones</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="shields" checked> shields</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="cloaks" checked> cloaks</label>
-          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1" checked> healthv1</label>
-          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2"> healthv2</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1"> healthv1</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2" checked> healthv2</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
       </div>
@@ -429,7 +429,7 @@ function draw(model,tm){
   var wrecksOn=document.getElementById("wrecks").checked;
   var shieldsOn=document.getElementById("shields").checked;
   var cloaksOn=document.getElementById("cloaks").checked;
-  /* health style: v1 = green->red ring around hurt units (default); v2 =
+  /* health style: v1 = green->red ring around hurt units; v2 (default) =
      damage-darkened team colour, no ring. If both toggles are on, v1 wins. */
   var hpv1On=document.getElementById("hpv1").checked;
   var hpv2On=!hpv1On&&document.getElementById("hpv2").checked;
@@ -441,11 +441,12 @@ function draw(model,tm){
                  into ellipses). Artifacts without map dims (synthetic
      fixtures) still render at the 16384-elmo default scale. */
   var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
-  // wreck dots: alive wrecks only (features die when reclaimed), magenta;
+  // wreck dots: alive wrecks only (features die when reclaimed), magenta
+  // at half transparency to keep the field uncluttered;
   // (synthetic fallback models carry empty wreck lists)
   if(wrecksOn){
     cx.fillStyle="#ff44ff";
-    cx.globalAlpha=.85;
+    cx.globalAlpha=.5;
     (model.wrecks||[]).forEach(function(w){
       if(!(tm>=w.born&&(w.gone<0||tm<w.gone)))return;
       cx.beginPath();cx.arc(w.x*W,w.y*H,2.2,0,7);cx.fill();
@@ -535,7 +536,7 @@ function draw(model,tm){
     }
     cx.globalAlpha=alpha;
     /* healthv2: the team colour itself darkens as the unit takes damage
-       (full hp = exact colour, nearly dead = 75% of each channel);
+       (full hp = exact colour, nearly dead = 50% of each channel);
        building units stay at full colour — their progress reads from the
        yellow build bar below, not from their (growing) hp */
     var col=teamColor(u.t);
