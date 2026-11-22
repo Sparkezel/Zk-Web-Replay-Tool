@@ -141,10 +141,6 @@
         <div class="stage">
           <canvas id="replay" width="1180" height="460"></canvas>
           <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
-          <div class="overlay-tr">
-            <div><span class="dot" style="background:var(--t1)"></span><span id="t1label">Team 1</span> · <span id="cnt1">0</span> units</div>
-            <div><span class="dot" style="background:var(--t2)"></span><span id="t2label">Team 2</span> · <span id="cnt2">0</span> units</div>
-          </div>
           <div class="victory" id="victory">
             <div class="big">Team 1 wins</div>
             <div class="sub">allyTeam 0 · 25:16 game time</div>
@@ -163,6 +159,12 @@
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2"> healthv2</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
+      </div>
+
+      <!-- ====== units per player (live during playback) ====== -->
+      <div class="panel">
+        <h2>Units per player</h2>
+        <ul class="uc" id="unitCounts" style="margin:0;padding:2px 12px;list-style:none;font-size:12px;line-height:1.55"></ul>
       </div>
 
       <!-- ====== in-game chat ====== -->
@@ -216,17 +218,8 @@
         <h2>Teams</h2>
         <div class="bd" style="padding:0">
           <table class="team-table">
-            <tr><th></th><th>Player</th><th>ELO</th><th>Cmds</th></tr>
-            <tbody>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>SparkezelPL<span class="win-txt">✓</span></td><td>2622</td><td>1121</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>lostconnector<span class="win-txt">✓</span></td><td>2396</td><td>1159</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>CptSpackJarrow<span class="win-txt">✓</span></td><td>2140</td><td>670</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>WM1enjoyer<span class="win-txt">✓</span></td><td>—</td><td>1435</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>ninse</td><td>2608</td><td>772</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>Boetvaardig</td><td>—</td><td>566</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>hallohallo</td><td>—</td><td>889</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>kurikurin</td><td>—</td><td>1380</td></tr>
-            </tbody>
+            <tr><th></th><th>Player</th><th>ELO</th><th>Lvl</th><th>Cmds</th></tr>
+            <tbody id="teamRows"></tbody>
           </table>
           <div class="bd" style="padding:10px 12px">
             <div style="margin:0 0 6px;color:var(--dim);font-size:12px">Chance of victory — Team 1: 55.5% · Team 2: 44.5%</div>
@@ -368,7 +361,7 @@ function buildArtifactModel(artifact){
   var wrecks=m.wrecks||[];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
-    teamNames:m.teamNames,teamMeta:m.teamMeta,startPolys:m.startPolys,teams:teams,
+    teamNames:m.teamNames,teamMeta:m.teamMeta,players:m.players||[],startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
     wrecks:wrecks,
     wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
@@ -429,7 +422,7 @@ function draw(model,tm){
     });
     cx.setLineDash([]);cx.globalAlpha=1;cx.lineWidth=1;
   }
-  var n1=0,n2=0;
+  var teamCounts={};
   var wrecksOn=document.getElementById("wrecks").checked;
   var shieldsOn=document.getElementById("shields").checked;
   var cloaksOn=document.getElementById("cloaks").checked;
@@ -523,7 +516,7 @@ function draw(model,tm){
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
     var pos=u.posAt(tm);
     if(!pos)return;
-    if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
+    if(u.t!==undefined)teamCounts[u.t]=(teamCounts[u.t]||0)+1;
     var x=pos.x*W,y=pos.y*H;
     var alpha=1;
     /* ghost units: vanished from tracking without a death event before the
@@ -594,8 +587,7 @@ function draw(model,tm){
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
     cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
   });
-  document.getElementById("cnt1").textContent=n1;
-  document.getElementById("cnt2").textContent=n2;
+  renderUnitCounts(model,teamCounts,tm);
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
   document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
   document.getElementById("timeline").value=Math.min(tm,model.END);
@@ -688,13 +680,46 @@ function teamLabelOf(model,team){
   var n=model.teamNames&&model.teamNames[team];
   return n?n:("Team "+(team+1));
 }
+
+/* Teams table: real roster rows (name, elo/level from the demo startscript,
+   engine-reported command count from PSTAT) instead of the hardcoded mock
+   markup — everyone gets their ELO if the demo carries it */
+function renderTeams(model){
+  var el=document.getElementById("teamRows");
+  if(!el)return;
+  var html="";
+  (model.players||[]).forEach(function(p){
+    var winner=model.winner!==null&&model.winner!==undefined&&p.ally===model.winner;
+    html+='<tr'+(winner?' class="winner-row"':'')+'>'+
+      '<td><span class="dot" style="background:'+teamColor(p.team)+'"></span></td>'+
+      '<td>'+esc(p.name)+(p.clan?' <span style="color:var(--dim)">['+esc(p.clan)+']</span>':'')+(winner?'<span class="win-txt">✓</span>':'')+'</td>'+
+      '<td>'+(p.elo!==undefined?p.elo:'—')+'</td>'+
+      '<td>'+(p.level!==undefined?p.level:'—')+'</td>'+
+      '<td>'+(p.cmds!==undefined?p.cmds:'—')+'</td></tr>';
+  });
+  el.innerHTML=html;
+}
+
+/* live unit counts per player: every team that owns units gets a row
+   (terraform helper units are already excluded at model build), counted
+   from what is actually alive on the field at the current replay time */
+function renderUnitCounts(model,teamCounts,tm){
+  var el=document.getElementById("unitCounts");
+  if(!el)return;
+  var html="";
+  (model.teams||[]).forEach(function(t){
+    var cnt=teamCounts[t]||0;
+    html+='<li><span class="dot" style="background:'+teamColor(t)+'"></span>'+
+      esc(teamLabelOf(model,t))+' — <b>'+cnt+'</b> unit'+(cnt===1?'':'s')+'</li>';
+  });
+  el.innerHTML=html;
+}
+
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
-  var ts=model.teams||[];
-  if(ts.length>=1)document.getElementById("t1label").textContent=teamLabelOf(model,ts[0]);
-  if(ts.length>=2)document.getElementById("t2label").textContent=teamLabelOf(model,ts[1]);
+  renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
   t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
 }

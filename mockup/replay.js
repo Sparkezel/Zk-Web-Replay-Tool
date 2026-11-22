@@ -613,6 +613,33 @@
       });
     }
 
+    /* per-player roster rows for the Teams table: name, elo, level, clan
+       (all live in the demo startscript) plus the command count the engine
+       reports per playerNum in the PSTAT section — the old table was
+       hardcoded mock markup, which is why some players showed "—" */
+    const cmdsByPlayerNum = new Map();
+    for (const ps of (artifact.psta ?? [])) {
+      if (ps && ps.index !== undefined && ps.numCommands !== undefined) {
+        cmdsByPlayerNum.set(ps.index, ps.numCommands);
+      }
+    }
+    const players = [];
+    for (const p of rosterPlayers) {
+      if (p.spectator || p.team === undefined || p.team < 0 || !p.name) continue;
+      const nm = /^player(\d+)$/.exec(p.script || "");
+      players.push({
+        team: p.team,
+        name: p.name,
+        elo: p.elo,
+        level: p.level,
+        clan: p.clan || undefined,
+        country: p.countrycode || p.country || undefined,
+        ally: teamAllyteam.get(p.team),
+        cmds: nm ? cmdsByPlayerNum.get(Number(nm[1])) : undefined,
+      });
+    }
+    players.sort((a, b) => (a.ally ?? 99) - (b.ally ?? 99) || a.team - b.team);
+
     /* startboxes: engine-loaded polygons (STBX section, read from the map/game
        config via the start_boxes gadget's rules params) win over the startscript
        modoptions rects; per allyteam, list of polygons of [x, z] sums in 0..1 */
@@ -802,7 +829,7 @@
       wrecks,
       winner, winnerLabel,
       startPolys,
-      teamNames, teamMeta, chatData,
+      teamNames, teamMeta, players, chatData,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",

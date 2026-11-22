@@ -592,3 +592,48 @@ test("morph deaths read as morphed: same-team spawn on the same spot, no wreck",
   assert.ok(!model.feedData.some((f) => f.cls === "death" && f.txt.includes("Unit #2")),
     "the morph victim is not reported destroyed");
 });
+
+test("model.players carries every roster player's elo/level with command counts", () => {
+  // mirrors the real demo: 10 players, three spectators, each player their
+  // own team; the old hardcoded table dropped four players' elo
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 100, map: { name: "M", dims: [16384, 16384] } },
+    roster: {
+      players: [
+        { name: "Sarathos", elo: 2591, level: 93, spectator: true, script: "player0" },
+        { name: "Boetvaardig", elo: 2216, level: 79, team: 0, spectator: false, script: "player1" },
+        { name: "kurikurin", elo: 1515, level: 4, team: 1, spectator: false, script: "player2" },
+        { name: "hallohallo", elo: 2045, level: 71, team: 2, spectator: false, script: "player3" },
+        { name: "WM1enjoyer", elo: 1156, level: 31, team: 6, spectator: false, script: "player9", clan: "RSMC" },
+      ],
+      teams: [
+        { num: 0, allyteam: 0 }, { num: 1, allyteam: 0 },
+        { num: 2, allyteam: 0 }, { num: 6, allyteam: 1 },
+      ],
+      allyteams: [], modoptions: null,
+    },
+    psta: [
+      { index: 1, numCommands: 566 },
+      { index: 2, numCommands: 1380 },
+      { index: 3, numCommands: 889 },
+      { index: 9, numCommands: 1435 },
+    ],
+    unitDefs: { units: [] }, weaponDefs: null, chat: null, eco: null, link: null,
+    proj: null, evnt: { records: [], maxFrame: 0 },
+    pos: { units: [], maxFrame: 0 },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  assert.equal(model.players.length, 4, "spectators are not team-table players");
+  const byName = new Map(model.players.map((p: { name: string }) => [p.name, p]));
+  assert.equal(byName.get("Boetvaardig")!.elo, 2216);
+  assert.equal(byName.get("kurikurin")!.elo, 1515, "kurikurin's elo must not be '—' anymore");
+  assert.equal(byName.get("hallohallo")!.elo, 2045);
+  assert.equal(byName.get("WM1enjoyer")!.elo, 1156, "WM1enjoyer's elo must not be '—' anymore");
+  assert.equal(byName.get("WM1enjoyer")!.clan, "RSMC");
+  assert.equal(byName.get("kurikurin")!.cmds, 1380, "commands joined from PSTAT by playerNum");
+  assert.equal(byName.get("Boetvaardig")!.ally, 0);
+  assert.equal(byName.get("WM1enjoyer")!.ally, 1);
+  // sorted by allyteam then team: the first three rows are allyteam 0
+  assert.ok(model.players.findIndex((p: { name: string }) => p.name === "WM1enjoyer") === 3);
+});

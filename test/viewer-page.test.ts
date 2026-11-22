@@ -145,6 +145,13 @@ function extractInlineScript(): string {
   return m[1]!;
 }
 
+/** the old top-right unit counters (cnt1/cnt2 and their labels) must be
+ *  gone from the markup after the per-player panel replaced them */
+function teamConstantsAreGone(): boolean {
+  const html = readFileSync(path.join("mockup", "index.html"), "utf8");
+  return !/id="(cnt1|cnt2|t1label|t2label)"/.test(html);
+}
+
 /** Run the page script headlessly; drive the rAF loop and a timeline sweep. */
 async function runPage(serveFile: string | null): Promise<{ byId: (id: string) => El; state: SimState }> {
   const { byId, state } = installStubs(serveFile);
@@ -189,10 +196,14 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   const tl = byId("timeline");
   tl.value = 60;
   (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 60 } });
-  const counted = Number(byId("cnt1").textContent) + Number(byId("cnt2").textContent);
-  // alive unit 1 (team 0, cnt1), ghost unit 2 (team 0, cnt1) and unit 3's
-  // drawn state was cleared by the sweep — at least the two team-0 units count
-  assert.ok(counted >= 2, `visible counters must report units (got ${counted})`);
+  // per-player unit counts: teams are the two fixture players; team 0 has
+  // the alive unit 1 + the drawn ghost unit 2, team 1's unit 3 died at 50 s
+  const counts = byId("unitCounts").innerHTML;
+  assert.match(counts, /Team 1 — <b>\d+<\/b> unit/, "team-0 row present with a count");
+  assert.ok(counts.indexOf("Team 2") !== -1, "every team gets a row, not just the first two players");
+  const n0 = Number(/Team 1 — <b>(\d+)<\/b>/.exec(counts)?.[1] ?? "0");
+  assert.ok(n0 >= 2, `team-0 count includes alive+ghost units (got ${n0})`);
+  assert.ok(teamConstantsAreGone(), "the old two-corner counters no longer exist");
   assert.match(String(byId("clock").textContent), /01:00 \/ 01:30/, "clock follows the seek (END = 90s)");
 });
 
