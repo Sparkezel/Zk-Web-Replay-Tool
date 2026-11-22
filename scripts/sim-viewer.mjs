@@ -168,7 +168,9 @@ console.log("chip:", JSON.stringify(byIdReal("chip").textContent));
 try {
   timelineEl.value = 600;
   if (timelineEl.oninput) timelineEl.oninput.call(timelineEl, { target: { value: 600 } });
-  console.log("mid-game t=600s counters: cnt1=", byIdReal("cnt1").textContent, " cnt2=", byIdReal("cnt2").textContent, " frame=", byIdReal("frameInfo").textContent, " clock:", byIdReal("clock").textContent);
+  const ucRows = String(byIdReal("unitCounts").innerHTML || "").match(/— <b>(\d+)<\/b>/g) || [];
+  console.log("mid-game t=600s unit rows:", ucRows.length, ucRows.join(","), "| frame=", byIdReal("frameInfo").textContent, " clock:", byIdReal("clock").textContent,
+    "| team table rows:", String(byIdReal("teamRows").innerHTML || "").match(/<tr/g)?.length ?? 0);
 } catch (e) {
   console.error("MID-GAME SEEK THREW:", e.stack ?? e);
   process.exit(5);
