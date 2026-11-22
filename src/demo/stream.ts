@@ -58,6 +58,10 @@ export interface DemoStreamResult {
   pauses: PauseEvent[];
   teamEvents: TeamEvent[];
   playerStats: (PlayerStatistics & { playerNum: number; frame: number })[];
+  /** frame of the first STARTPLAYING netmsg — the play actually begins here
+   *  (ZK games record the lobby/pick phase first; everything before this
+   *  frame is pre-game). 0 when the demo has no explicit anchor. */
+  startPlayingFrame: number;
   /** final modGameTime seen in the stream */
   lastModGameTime: number;
 }
@@ -72,9 +76,11 @@ export function parseDemoStream(
     chunks: [], counts: {}, chat: [], mapDraws: [], playerNames: [],
     startPositions: [], gameOvers: [], playerLefts: [], pauses: [],
     teamEvents: [], playerStats: [], lastModGameTime: 0,
+    startPlayingFrame: 0,
   };
   const dv = new DataView(streamBuf.buffer, streamBuf.byteOffset, streamBuf.byteLength);
   const frameOf = (modGameTime: number) => Math.round(modGameTime * 30);
+  let startPlayingSeen = false;
   let pos = opts.startIndex ?? 0;
   const end = Math.min(pos + header.demoStreamSize, streamBuf.byteLength);
 
@@ -93,6 +99,22 @@ export function parseDemoStream(
     const frame = frameOf(modGameTime);
 
     switch (type) {
+      case NetMsg.StartPlaying: {
+        // [type][u32 countdown ms] — the epoch where the engine's sim clock
+        // (GameFrame 0) begins is the LATEST startplaying candidate: ZK
+        // first records a variant carrying a countdown (e.g. 4000 ms), then
+        // the final one with 0. Play-relative resim frames align to that
+        // epoch, so the anchor must be the max candidate, not the first event.
+        const countdownFrames = raw.length >= 5
+          ? Math.round(dvOf(raw).getUint32(1, true) * 30 / 1000)
+          : 0;
+        const candidate = frame + countdownFrames;
+        if (!startPlayingSeen || candidate > res.startPlayingFrame) {
+          res.startPlayingFrame = candidate;
+          startPlayingSeen = true;
+        }
+        break;
+      }
       case NetMsg.Chat: {
         // [type][size][from u8][dest u8][text\0]
         if (raw.length < 4) break;

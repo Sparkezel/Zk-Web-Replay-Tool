@@ -73,9 +73,44 @@ local function maybeUdef(defID)
   knownUnitDefs[defID] = true
   local d = UnitDefs[defID]
   if d == nil then return end
+  -- area cloaker detection (Iris, Onion, ...): the cloak field radius comes
+  -- either from a Cloaker-type weapon's range (engine-side cloaking) or from
+  -- the unitdef custom params (gadget-implemented area cloak, e.g. ZK's
+  -- Cloaker Shield); whichever carries a number wins
+  local cloakRadius = nil
+  local weapons = d.weapons or {}
+  for i = 1, #weapons do
+    local wd = WeaponDefs[weapons[i] ~= nil and (weapons[i].weaponDef or weapons[i][1]) or nil]
+    if wd ~= nil and wd.range ~= nil and wd.range > 0 then
+      local wtype = string.lower(wd.type or "")
+      if wtype:find("cloak", 1, true) then
+        cloakRadius = wd.range
+        break
+      end
+    end
+  end
+  if cloakRadius == nil then
+    -- ZK's area-cloak gadget carries the field radius as a dedicated param
+    -- (real def: area_cloak_radius = 350 alongside area_cloak_recloak_rate
+    -- = 800 etc - matching any "*cloak*" key is ambiguous, so match the
+    -- radius key exactly first, then *_cloak_radius suffixed keys)
+    local cp = d.customParams or d.customparams or {}
+    local radius = tonumber(cp["area_cloak_radius"]) or tonumber(cp.area_cloak_radius)
+    if radius == nil then
+      for k, v in pairs(cp) do
+        if type(v) == "string" and string.sub(string.lower(k), -13) == "_cloak_radius" then
+          local n = tonumber(v)
+          if n ~= nil and n >= 50 then radius = n break end
+        end
+      end
+    end
+    if radius ~= nil then cloakRadius = radius end
+  end
+  local cr = ""
+  if cloakRadius ~= nil then cr = ',"cr":' .. cloakRadius end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. '}')
 end
 
 local function maybeWdef(defID)
@@ -169,9 +204,13 @@ function widget:GameFrame(frame)
     local x, y, z = Spring.GetUnitPosition(uid)
     local hp, maxHp = Spring.GetUnitHealth(uid)
     local build = select(5, Spring.GetUnitHealth(uid))
+    -- cloak state: 1 when the unit is cloaked right now (own cloak or inside
+    -- an Iris/Onion area field) — the viewer draws a cyan dot under it
+    local ck = false
+    if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
     rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
       "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
-      "," .. frac(build and 1 or nil) .. "]"
+      "," .. frac(build and 1 or nil) .. "," .. (ck and 1 or 0) .. "]"
   end
   if #rows > 0 then
     emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')

@@ -55,6 +55,10 @@ export function buildMapDrawSection(demo: ParsedDemo): Uint8Array {
 export function buildMacroSection(demo: ParsedDemo): Uint8Array {
   const s = demo.stream;
   const out = {
+    /** game-start anchor: the first STARTPLAYING netmsg frame; everything
+     *  before it is lobby/pick phase (ZK teams games record minutes of it).
+     *  0 when the demo carries no anchor (play starts at the top). */
+    startPlayingFrame: s.startPlayingFrame,
     gameOvers: s.gameOvers.map((g) => ({ frame: g.frame, playerNum: g.playerNum, winners: g.winningAllyTeams })),
     playerLefts: s.playerLefts.map((p) => ({ frame: p.frame, playerNum: p.playerNum, bIntended: p.bIntended })),
     pauses: s.pauses.map((p) => ({ frame: p.frame, playerNum: p.playerNum, paused: p.paused })),
