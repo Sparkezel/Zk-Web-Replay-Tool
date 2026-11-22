@@ -355,6 +355,9 @@ function buildArtifactModel(artifact){
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       cls:u.cls||"combat",
+      /* build fraction at the last track sample: what was actually
+         invested when the unit died (nanoframe kills lost a fraction) */
+      bdEnd:u.track.length?u.track[u.track.length-1].bd:undefined,
       commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
       sr:u.shieldRadius||0,
@@ -378,7 +381,10 @@ function buildArtifactModel(artifact){
     if(u.died>0&&!u.morph){
       var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
       d.t.push(u.died);
-      d.v.push(u.metalValue>0?u.metalValue:0);
+      /* invested-at-death value: a killed nanoframe lost its build
+         fraction, not the full def cost (the real artifact's 33 cancels
+         counted 15k metal at full cost vs ~6.2k actually invested) */
+      d.v.push(u.metalValue>0?u.metalValue*(u.bdEnd===undefined?1:u.bdEnd):0);
     }
   });
   var losses={};
@@ -485,8 +491,6 @@ function draw(model,tm){
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot
   if(document.getElementById("wreckZones").checked){
-    cx.strokeStyle="rgba(255,68,255,.55)";
-    cx.fillStyle="rgba(255,68,255,.75)";
     cx.font="10px system-ui,sans-serif";
     cx.textAlign="center";
     (model.wreckZones||[]).forEach(function(z){
@@ -496,6 +500,10 @@ function draw(model,tm){
         if(tm>=wz.born&&(wz.gone<0||tm<wz.gone)){metal+=wz.metal;count++;}
       }
       if(count<3)return;
+      /* per-zone: the hull stroke must not inherit the label outline
+         settings left by the previous iteration's strokeText */
+      cx.strokeStyle="rgba(255,68,255,.55)";
+      cx.lineWidth=1;
       cx.beginPath();
       z.hull.forEach(function(h,i){i===0?cx.moveTo(h[0]*W,h[1]*H):cx.lineTo(h[0]*W,h[1]*H);});
       cx.closePath();cx.stroke();
@@ -508,6 +516,7 @@ function draw(model,tm){
       cx.fillText(label,z.cx*W,z.cy*H-4);
     });
     cx.textAlign="start";
+    cx.lineWidth=1;
   }
   // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
   // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
@@ -564,7 +573,10 @@ function draw(model,tm){
     if(u.t!==undefined){
       var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
       st.n++;
-      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalValue>0?u.metalValue:0);
+      /* value on the field counts what is invested: units still under
+         construction contribute their build fraction of full value */
+      var invested=(pos.bd!==undefined&&pos.bd<1)?pos.bd:1;
+      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalValue>0?u.metalValue:0)*invested;
     }
     var x=pos.x*W,y=pos.y*H;
     var alpha=1;

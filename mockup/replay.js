@@ -35,6 +35,16 @@
      their hp is meaningless and they are never rendered or fed */
   const EXCLUDED_UNIT_DEFS = new Set(["terraunit"]);
 
+  /** defs that must never reach the model, feed or pairing: the terraform
+   *  helper plus ZK's own invisible proxy units (fakeunit_los is the Scan
+   *  Sweep LoS provider spawned at y=10000 — it also poisons the morph
+   *  pairing, because a dying plane within 80 elmos of the spawn point
+   *  reads as "morphed into LOS Provider") */
+  function isExcludedDef(defName) {
+    const n = String(defName || "").toLowerCase();
+    return EXCLUDED_UNIT_DEFS.has(n) || n.indexOf("fakeunit") === 0;
+  }
+
   /** Coarse unit-value class for the per-player stats grid, from the UDEF
    *  iconType (Spring icons are reliable well past per-fallback heuristics):
    *  econ = production & storage (energy icons, mex, pylon), other = factories, pads,
@@ -511,64 +521,25 @@
     const teamByUnit = new Map();
     const defByUnit = new Map();
     const deathByUnit = new Map();
+    const killerByUnit = new Map();
     let winner = null;
     let endFrame = 0;
+    let gameOverFrame = -1;
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") { teamByUnit.set(r.unitID, r.int2); defByUnit.set(r.unitID, r.int1); }
-      else if (r.kind === "death") { deathByUnit.set(r.unitID, r.frame); endFrame = Math.max(endFrame, r.frame); }
-      else if (r.kind === "gameover") { winner = r.int1 >= 0 ? r.int1 : winner; endFrame = Math.max(endFrame, r.frame); }
+      else if (r.kind === "death") {
+        deathByUnit.set(r.unitID, r.frame);
+        killerByUnit.set(r.unitID, r.int1);
+        endFrame = Math.max(endFrame, r.frame);
+      }
+      else if (r.kind === "gameover") {
+        winner = r.int1 >= 0 ? r.int1 : winner;
+        endFrame = Math.max(endFrame, r.frame);
+        gameOverFrame = Math.max(gameOverFrame, r.frame);
+      }
     }
     if (defByUnit.size === 0) for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") defByUnit.set(r.unitID, r.int1);
-    }
-
-    /* ZK morphs destroy the old unit and spawn its target at the same spot
-       in the same frame; EVNT carries only death, so morphs read as
-       "destroyed" and would leave a wreck dot under the live morphed unit.
-       A REAL morph victim is always a complete unit (bd = 1) whose target
-       spawns complete within 0.4 s within 80 elmos; a nanoframe death is a
-       kill or the builder cancelling the frame, and a same-spot rebuild
-       starts at bd < 1 — neither pairs as a morph anymore. */
-    const morphIntoByUnit = new Map();
-    const parentOfUnit = new Map();
-    const lastBuildByUnit = new Map();
-    {
-      const dims0 = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
-      const mw = dims0 && dims0[0] > 0 ? dims0[0] : 16384;
-      const mh = dims0 && dims0[1] > 0 ? dims0[1] : mw;
-      const spawnsByTeam = {};
-      for (const u of (artifact.pos ? artifact.pos.units : [])) {
-        if (!u.samples.length) continue;
-        lastBuildByUnit.set(u.unitID, u.samples[u.samples.length - 1].build);
-        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
-        (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
-          unitID: u.unitID, t: toSec(u.firstFrame),
-          x: u.samples[0].x, y: u.samples[0].z,
-          b0: u.samples[0].build,
-        });
-      }
-      for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
-      for (const u of (artifact.pos ? artifact.pos.units : [])) {
-        if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
-        if ((lastBuildByUnit.get(u.unitID) ?? 1) < 0.99) continue;
-        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
-        const list = spawnsByTeam[team];
-        if (!list) continue;
-        const diedT = toSec(deathByUnit.get(u.unitID));
-        const last = u.samples[u.samples.length - 1];
-        for (const s of list) {
-          if (s.unitID === u.unitID) continue;
-          if (s.t < diedT - MORPH_PAIR_WINDOW_SEC) continue;
-          if (s.t > diedT + MORPH_PAIR_WINDOW_SEC) break;
-          if (s.b0 < 0.99) continue;
-          const dx = (s.x - last.x) * mw, dz = (s.y - last.z) * mh;
-          if (dx * dx + dz * dz <= 80 * 80) {
-            morphIntoByUnit.set(u.unitID, s.unitID);
-            parentOfUnit.set(s.unitID, u.unitID);
-            break;
-          }
-        }
-      }
     }
 
     const udef = new Map();
@@ -590,6 +561,69 @@
         shieldRadius: row.length > 8 && row[8] > 0 ? row[8] : undefined,
         shieldPower: row.length > 9 && row[9] > 0 ? row[9] : undefined,
       });
+    }
+    const defNameOfUnit = (unitID) => {
+      const d = defByUnit.get(unitID);
+      const info = d !== undefined ? udef.get(d) : null;
+      return info ? info.name : null;
+    };
+
+    /* ZK morphs destroy the old unit and spawn its target at the same spot
+       in the same frame; EVNT carries only death, so morphs read as
+       "destroyed" and would leave a wreck dot under the live morphed unit.
+       A REAL morph victim is a complete unit (bd = 1) which destroys ITSELF
+       — the engine records no killer — and whose target spawns complete
+       within 0.4 s within 80 elmos. A nanoframe death is a kill or the
+       builder cancelling the frame; a same-spot rebuild starts at bd < 1;
+       a death with an enemy killer attributed is a kill — none of them
+       pair as a morph. Excluded (terra/fakeunit) defs never enter either
+       side of the pairing. Cavem: unit_morph copies buildProgress to the
+       target (an unfinished unit CAN morph), so a shift-queued nanoframe
+       morph reads "cancelled" — not present in real data, accepted. */
+    const morphIntoByUnit = new Map();
+    const parentOfUnit = new Map();
+    const lastBuildByUnit = new Map();
+    {
+      const dims0 = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+      const mw = dims0 && dims0[0] > 0 ? dims0[0] : 16384;
+      const mh = dims0 && dims0[1] > 0 ? dims0[1] : mw;
+      const spawnsByTeam = {};
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length || isExcludedDef(defNameOfUnit(u.unitID))) continue;
+        lastBuildByUnit.set(u.unitID, u.samples[u.samples.length - 1].build);
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
+          unitID: u.unitID, t: toSec(u.firstFrame),
+          x: u.samples[0].x, y: u.samples[0].z,
+          b0: u.samples[0].build,
+        });
+      }
+      for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
+        if (isExcludedDef(defNameOfUnit(u.unitID))) continue;
+        if ((lastBuildByUnit.get(u.unitID) ?? 1) < 0.99) continue;
+        /* a morph victim destroys itself: a real kill (killer >= 0) is a
+           kill even when a same-spot spawn coincides within the window */
+        if ((killerByUnit.get(u.unitID) ?? -1) >= 0) continue;
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        const list = spawnsByTeam[team];
+        if (!list) continue;
+        const diedT = toSec(deathByUnit.get(u.unitID));
+        const last = u.samples[u.samples.length - 1];
+        for (const s of list) {
+          if (s.unitID === u.unitID) continue;
+          if (s.t < diedT - MORPH_PAIR_WINDOW_SEC) continue;
+          if (s.t > diedT + MORPH_PAIR_WINDOW_SEC) break;
+          if (s.b0 < 0.99) continue;
+          const dx = (s.x - last.x) * mw, dz = (s.y - last.z) * mh;
+          if (dx * dx + dz * dz <= 80 * 80) {
+            morphIntoByUnit.set(u.unitID, s.unitID);
+            parentOfUnit.set(s.unitID, u.unitID);
+            break;
+          }
+        }
+      }
     }
     const wdef = new Map();
     for (const w of (artifact.weaponDefs ? artifact.weaponDefs.weapons : [])) wdef.set(w.id, w);
@@ -629,7 +663,11 @@
       while (cur !== undefined && guard++ < 32) {
         const defID = defByUnit.get(cur);
         const info = defID !== undefined ? udef.get(defID) : null;
-        if (info && /_base$/.test(info.name || "") && info.humanName) return info.humanName;
+        /* profiles come from player-typed names ("Commander " has a
+           trailing space) — trim so the feed line has no dangling gap */
+        if (info && /_base$/.test(info.name || "") && info.humanName) {
+          return info.humanName.replace(/\s+$/, "") || null;
+        }
         cur = parentOfUnit.get(cur);
       }
       return null;
@@ -638,7 +676,7 @@
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
       const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
-      if (deadDef && EXCLUDED_UNIT_DEFS.has((deadDef.name || "").toLowerCase())) continue;
+      if (isExcludedDef(deadDef && deadDef.name)) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
       if (morphIntoByUnit.has(r.unitID)) {
         const childID = morphIntoByUnit.get(r.unitID);
@@ -667,10 +705,13 @@
         }
         continue;
       }
-      /* unfinished unit dying with no killer = the builder cancelled the
-         frame (enemy kills keep their killer); ZK leaves no corpse for
-         reclaimed nanoframes, so these suppressed a feed line before */
-      if ((lastBuildByUnit.get(r.unitID) ?? 1) < 0.99 && r.int1 < 0) {
+      /* unfinished unit dying before gameover with no killer = the builder
+         cancelled the frame (enemy kills keep their killer). After the
+         gameover frame the engine sweeps the field with killer-less
+         destroys — those are defeat cleanup, NOT cancels, and read
+         as plain destroyed */
+      if ((lastBuildByUnit.get(r.unitID) ?? 1) < 0.99 && r.int1 < 0 &&
+          (gameOverFrame < 0 || r.frame <= gameOverFrame)) {
         feedData.push({
           tm: toSec(r.frame), cls: "cancelled",
           txt: unitName + " was cancelled",
@@ -838,7 +879,7 @@
           sh: s.sh,
         })),
       };
-    }).filter((u) => !u.def || !EXCLUDED_UNIT_DEFS.has(String(u.def).toLowerCase()));
+    }).filter((u) => !isExcludedDef(u.def));
 
     /* Wreck features (recorded from the next resim on): Spring spawns a
        *_dead/*_heap feature where a unit died and destroys it when it is

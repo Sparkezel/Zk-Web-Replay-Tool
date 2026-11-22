@@ -32,7 +32,8 @@ function syntheticSnapshot() {
     events: [
       { kind: "spawn", frame: 6, unitID: 1, int1: 10, int2: 0, int3: -1 },
       { kind: "spawn", frame: 6, unitID: 2, int1: 11, int2: 1, int3: -1 },
-      { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 },
+      // a morph SELF-destructs its victim: no killer is attributed
+      { kind: "death", frame: 900, unitID: 2, int1: -1, int2: 0, int3: 42 },
     ],
     projectiles: new Map([
       [100, { proID: 100, weaponDefID: 7, projClass: 3, ownerTeam: 0, startFrame: 6,
@@ -72,7 +73,10 @@ test("startbox parser reads ROST lua startboxes, tolerant of sci notation", () =
 });
 
 test("feed falls back to ids and team numbers without ROST/UDEF data", async () => {
-  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const snap = syntheticSnapshot();
+  // the fixture's morph victim self-destructs; this test wants a KILL line
+  snap.events[2] = { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 };
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   const model = ZkrReplay.artifactToModel(artifact);
   assert.equal(model.feedData.length, 1);
@@ -601,6 +605,55 @@ test("morph deaths read as morphed: same-team spawn on the same spot, no wreck",
     "the genuine kill still reads destroyed");
   assert.ok(!model.feedData.some((f) => f.cls === "death" && f.txt.includes("Unit #2")),
     "the morph victim is not reported destroyed");
+});
+
+test("morph gates: kills never morph, fakeunit proxies excluded, post-gameover cleanup is no cancel", async () => {
+  const snap = syntheticSnapshot();
+  // unit 2's death keeps its ENEMY killer (unit 1) while a teammate
+  // completes at the same spot in the same frame - a kill, never a morph
+  snap.events[2] = { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 };
+  snap.units.set(3, { unitID: 3, defID: 12, samples: [
+    { frame: 900, x: 4096, z: 8192, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 3, int1: 12, int2: 1, int3: -1 });
+  // a killer-less complete death next to a fakeunit_los proxy spawn: the
+  // proxy is not a valid morph target (Scan Sweep LoS provider)
+  snap.unitDefs.set(13, { defID: 13, name: "fakeunit_los", metalCost: 5, health: 100, canMove: true, iconType: "none", humanName: "LOS Provider" });
+  snap.units.set(8, { unitID: 8, defID: 11, samples: [
+    { frame: 100, x: 6000, z: 6000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 8, int1: 11, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 8, int1: -1, int2: 1, int3: -1 });
+  snap.units.set(9, { unitID: 9, defID: 13, samples: [
+    { frame: 300, x: 6000, z: 6000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 300, unitID: 9, int1: 13, int2: 1, int3: -1 });
+  // a nanoframe dying killer-less AFTER the gameover frame (fixture gameover
+  // at 1500): defeat cleanup reads destroyed, not cancelled
+  snap.unitDefs.set(14, { defID: 14, name: "solarfake", metalCost: 70, health: 200, canMove: false, iconType: "energy_med", humanName: "Test Nanoframe" });
+  snap.units.set(10, { unitID: 10, defID: 14, samples: [
+    { frame: 1550, x: 2000, z: 4000, hp: 40, build: 60 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 1550, unitID: 10, int1: 14, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 1600, unitID: 10, int1: -1, int2: 0, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+  assert.ok(!model.units.find((x) => x.id === 2)!.morph,
+    "a killer-attributed death never pairs as a morph");
+  assert.ok(!model.feedData.some((f) => f.cls === "morph"), "no morph row despite the same-spot spawn");
+  assert.ok(model.feedData.some((f) => f.cls === "death" && f.txt.indexOf("Unit #2") !== -1),
+    "the kill still reads destroyed");
+  assert.ok(!model.units.some((x) => x.def === "fakeunit_los"),
+    "fakeunit_los units never reach the model");
+  assert.ok(!model.feedData.some((f) => f.txt.indexOf("LOS Provider") !== -1),
+    "no fakeunit feed noise");
+  assert.ok(!model.units.find((x) => x.id === 8)!.morph,
+    "a fakeunit child is not a morph target");
+  const cleanup = model.feedData.find((f) => f.txt.indexOf("Test Nanoframe") !== -1);
+  assert.ok(cleanup, "post-gameover destroy has a feed line");
+  assert.equal(cleanup!.cls, "death", "post-gameover cleanup reads destroyed, not cancelled");
+  assert.match(cleanup!.txt, /destroyed/);
 });
 
 test("commander morph reads chassis + level, cancelled nanoframes read cancelled", async () => {
