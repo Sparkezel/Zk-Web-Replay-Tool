@@ -257,6 +257,16 @@ test("POS v3 keeps true sample timing (probe gaps), cloak/field bits and shield 
   assert.equal(m.shieldRadius, 350, "UDEF v3 shield radius reaches the model");
   assert.equal(m.shieldPower, 3600);
   assert.deepEqual(m.track.map((t) => t.cs), [false, true, false]);
+  // C1 regression: probes are 6 frames apart, so nearly every rendered
+  // frame interpolates — the state bits must survive trackAt mid-sample
+  // (samples sit at 0.2/0.433/0.833 s; 0.3 is strictly between the first two)
+  const mid = ZkrReplay.trackAt(m.track, 0.3);
+  assert.ok(mid.sh !== undefined && Math.abs(mid.sh! - 1) < 0.01,
+    "shield charge survives interpolation (was dropped before the counter-review fix)");
+  assert.equal(mid.cf, true);
+  assert.equal(mid.cs, false);
+  const mid2 = ZkrReplay.trackAt(m.track, 0.5);
+  assert.equal(mid2.cs, true, "mid-way to sample 2 picks up the stalled bit");
 });
 
 test("shield colour lerp matches ZK's shieldGoodColor/shieldBadColor", () => {

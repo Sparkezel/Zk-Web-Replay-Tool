@@ -325,7 +325,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         kind: "wreck",
         frame: num(ev["f"], 0),
         unitID: num(ev["u"]),
-        int1: num(ev["m"]),
+        // missing/nil metal reads as 0 here (-1 would subtract from zone sums)
+        int1: num(ev["m"], 0),
         int2: num(ev["x"]),
         int3: num(ev["z"]),
       });

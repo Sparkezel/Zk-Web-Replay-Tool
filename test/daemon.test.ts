@@ -123,9 +123,13 @@ test("wreck features ingest into lifecycle events", () => {
   const snap = newSnapshot();
   ingestLine(snap, 'ZKR {"t":"wrk","f":900,"u":90001,"m":88.000,"x":3072,"z":6144}');
   ingestLine(snap, 'ZKR {"t":"uwrk","f":1500,"u":90001}');
+  // a wreck whose def has no metal (nil) must read 0, never -1 (it would
+  // subtract from the viewer's zone sums)
+  ingestLine(snap, 'ZKR {"t":"wrk","f":901,"u":90002,"x":4000,"z":1000}');
   assert.deepStrictEqual(snap.events, [
     { kind: "wreck", frame: 900, unitID: 90001, int1: 88, int2: 3072, int3: 6144 },
     { kind: "unwreck", frame: 1500, unitID: 90001, int1: -1, int2: -1, int3: -1 },
+    { kind: "wreck", frame: 901, unitID: 90002, int1: 0, int2: 4000, int3: 1000 },
   ]);
 });
 

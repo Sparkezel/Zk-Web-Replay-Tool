@@ -626,7 +626,7 @@
     const players = [];
     for (const p of rosterPlayers) {
       if (p.spectator || p.team === undefined || p.team < 0 || !p.name) continue;
-      const nm = /^player(\d+)$/.exec(p.script || "");
+      const nm = /^(?:.*\/)?player(\d+)$/.exec(p.script || "");
       players.push({
         team: p.team,
         name: p.name,
@@ -737,9 +737,13 @@
     /* Wreck features (recorded from the next resim on): Spring spawns a
        *_dead/*_heap feature where a unit died and destroys it when it is
        reclaimed, so reclaimed wreckage really disappears. The engine's own
-       metal value travels with the event. Older artifacts carry no wreck
-       features: fall back to death positions with ZK's 40% reclaim estimate
-       so the wreckage layer still renders. */
+       metal value travels with the event. Once ANY wreck feature is
+       recorded the layer shows exactly the field: ZK leaves no corpse for
+       DGun/disintegrator and nanoframe-reclaim deaths, and no dot for
+       those is correct in-game behavior, not a gap. Old artifacts without
+       feature events fall back to death positions at ZK's 40% reclaim
+       estimate (dyncomm wrecks are exactly cost*0.4; crushed *_heap-stage
+       wrecks would be 20%) so the layer still renders. */
     const dimsW = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
     const wmw = dimsW && dimsW[0] > 0 ? dimsW[0] : 16384;
     const wmh = dimsW && dimsW[1] > 0 ? dimsW[1] : wmw;
@@ -751,7 +755,7 @@
         wreckByFeature.set(r.unitID, {
           born: toSec(r.frame),
           x: r.int2 / wmw, y: r.int3 / wmh,
-          metal: r.int1, gone: -1,
+          metal: Math.max(0, r.int1), gone: -1,
         });
       } else if (r.kind === "unwreck") {
         const w = wreckByFeature.get(r.unitID);
@@ -866,6 +870,9 @@
       hp: near.hp,
       bd: near.bd,
       ck: near.ck,
+      cf: near.cf,
+      cs: near.cs,
+      sh: near.sh,
     };
   }
 

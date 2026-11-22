@@ -48,7 +48,6 @@
   .stage{position:relative;background:#101416}
   canvas#replay{display:block;width:100%;height:460px}
   .stage .overlay-tl{position:absolute;top:10px;left:12px;font-size:12px;color:#c4ccd1;text-shadow:0 1px 2px #000;background:rgba(0,0,0,.35);padding:4px 10px;border-radius:4px}
-  .stage .overlay-tr{position:absolute;top:10px;right:12px;display:flex;flex-direction:column;gap:4px;font-size:12px;text-shadow:0 1px 2px #000}
   .victory{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,10,.55);flex-direction:column;gap:6px}
   .victory.show{display:flex}
   .victory .big{font-size:26px;font-weight:800;letter-spacing:1px;color:var(--gold);text-shadow:0 2px 6px #000}
@@ -291,7 +290,8 @@ function buildSyntheticModel(){
   for(var s=0;s<=1516;s+=15){var f=s/1516;
     ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
   return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
-    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],
+    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],players:[],
+    wrecks:[],wreckZones:[],
     startPolys:[[[[.04,.3],[.2,.3],[.2,.7],[.04,.7]]],[[[.8,.3],[.96,.3],[.96,.7],[.8,.7]]]]};
 }
 
@@ -310,28 +310,31 @@ function convexHull(pts){
 }
 
 /* greedy clustering of wreck points: a wreck joins a cluster when it is
-   within 350 elmos of any existing member; hull + centroid per cluster.
-   The metal label is computed per draw (wreck lifetimes matter). */
+   within 300 elmos of the cluster's running CENTROID (member-to-member
+   chaining measured to merge battlefields into 400-wreck mega-polygons);
+   hull + centroid per cluster. The metal label is computed per draw
+   (wreck lifetimes matter). */
 function clusterWrecks(wrecks,mapW,mapH){
-  var R=350,clusters=[];
+  var R=300,clusters=[];
   for(var i=0;i<wrecks.length;i++){
-    var w=wrecks[i],best=null;
-    for(var c=0;c<clusters.length&&!best;c++){
+    var w=wrecks[i],best=null,bestD=1e9;
+    for(var c=0;c<clusters.length;c++){
       var cl=clusters[c];
-      for(var k=0;k<cl.pts.length;k++){
-        var dx=(w.x-cl.pts[k].x)*mapW,dz=(w.y-cl.pts[k].y)*mapH;
-        if(dx*dx+dz*dz<=R*R){best=cl;break;}
-      }
+      var dx=(w.x-cl.cx)*mapW,dz=(w.y-cl.cy)*mapH;
+      var d=dx*dx+dz*dz;
+      if(d<=R*R&&d<bestD){best=cl;bestD=d;}
     }
-    if(best)best.pts.push(w);else clusters.push({pts:[w]});
+    if(best){
+      var n=best.pts.length;
+      best.cx=(best.cx*n+w.x)/(n+1);best.cy=(best.cy*n+w.y)/(n+1);
+      best.pts.push(w);
+    }else clusters.push({pts:[w],cx:w.x,cy:w.y});
   }
   var zones=[];
   for(var z=0;z<clusters.length;z++){
     var pts=clusters[z].pts;
     if(pts.length<3)continue;
-    var cx=0,cy=0;
-    for(var q=0;q<pts.length;q++){cx+=pts[q].x;cy+=pts[q].y;}
-    zones.push({hull:convexHull(pts.map(function(p){return[p.x,p.y]})),cx:cx/pts.length,cy:cy/pts.length,wrecks:pts});
+    zones.push({hull:convexHull(pts.map(function(p){return[p.x,p.y]})),cx:clusters[z].cx,cy:clusters[z].cy,wrecks:pts});
   }
   return zones;
 }
@@ -435,80 +438,81 @@ function draw(model,tm){
      all of this renders BELOW every unit icon; radii use the single
      horizontal px/elmo scale so fields always stay circles (the canvas
      does not preserve the map aspect, per-axis scaling stretched them
-                 into ellipses) */
-  var pxPerElmo=model.mapW>0?W/model.mapW:0;
-  if(pxPerElmo>0){
-    // wreck dots: alive wrecks only (features die when reclaimed), magenta
-    if(wrecksOn){
-      cx.fillStyle="#ff44ff";
-      cx.globalAlpha=.85;
-      model.wrecks.forEach(function(w){
-        if(!(tm>=w.born&&(w.gone<0||tm<w.gone)))return;
-        cx.beginPath();cx.arc(w.x*W,w.y*H,2.2,0,7);cx.fill();
-      });
-      cx.globalAlpha=1;
-      // wreck zones: hull around clusters + live metal per spot
-      if(document.getElementById("wreckZones").checked){
-        cx.strokeStyle="rgba(255,68,255,.55)";
-        cx.fillStyle="rgba(255,68,255,.75)";
-        cx.font="10px system-ui,sans-serif";
-        cx.textAlign="center";
-        model.wreckZones.forEach(function(z){
-          var metal=0,count=0;
-          for(var i=0;i<z.wrecks.length;i++){
-            var w=z.wrecks[i];
-            if(tm>=w.born&&(w.gone<0||tm<w.gone)){metal+=w.metal;count++;}
-          }
-          if(count<3)return;
-          cx.beginPath();
-          z.hull.forEach(function(h,i){i===0?cx.moveTo(h[0]*W,h[1]*H):cx.lineTo(h[0]*W,h[1]*H);});
-          cx.closePath();cx.stroke();
-          cx.fillText((metal>=1000?(metal/1000).toFixed(1)+"k":Math.round(metal))+" metal",z.cx*W,z.cy*H-4);
-        });
-        cx.textAlign="start";
+                 into ellipses). Artifacts without map dims (synthetic
+     fixtures) still render at the 16384-elmo default scale. */
+  var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
+  // wreck dots: alive wrecks only (features die when reclaimed), magenta;
+  // (synthetic fallback models carry empty wreck lists)
+  if(wrecksOn){
+    cx.fillStyle="#ff44ff";
+    cx.globalAlpha=.85;
+    (model.wrecks||[]).forEach(function(w){
+      if(!(tm>=w.born&&(w.gone<0||tm<w.gone)))return;
+      cx.beginPath();cx.arc(w.x*W,w.y*H,2.2,0,7);cx.fill();
+    });
+    cx.globalAlpha=1;
+  }
+  // wreck zones: independent of the dots (metal spots are useful even with
+  // the dots hidden) - hull around each cluster + live metal per spot
+  if(document.getElementById("wreckZones").checked){
+    cx.strokeStyle="rgba(255,68,255,.55)";
+    cx.fillStyle="rgba(255,68,255,.75)";
+    cx.font="10px system-ui,sans-serif";
+    cx.textAlign="center";
+    (model.wreckZones||[]).forEach(function(z){
+      var metal=0,count=0;
+      for(var i=0;i<z.wrecks.length;i++){
+        var wz=z.wrecks[i];
+        if(tm>=wz.born&&(wz.gone<0||tm<wz.gone)){metal+=wz.metal;count++;}
       }
-    }
-    // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
-    // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
-    if(shieldsOn){
-      model.units.forEach(function(u){
-        if(u.sr<200)return;
-        var pos=u.posAt(tm);
-        if(!pos||pos.sh===undefined)return;
-        var rx=u.sr*pxPerElmo;
-        if(rx<3)return;
-        cx.fillStyle=ZkrReplay.shieldColor(pos.sh,.2);
-        cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
-        cx.strokeStyle=ZkrReplay.shieldColor(pos.sh,.5);cx.lineWidth=1;
-        cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
-      });
-    }
-    // cloak fields (iris/conjurer/etc.): only when the field actually runs —
-    // exact field bit on artifacts that record it, own-cloak fallback on
-    // older ones; a stalled field (unpowered) flashes red
-    if(cloaksOn){
-      var flash=(Math.sin(tm*5)+1)/2;
-      model.units.forEach(function(u){
-        if(u.cr<=0)return;
-        var pos=u.posAt(tm);
-        if(!pos)return;
-        var fieldOn,fieldStalled=false;
-        if(pos.cf!==undefined){fieldOn=pos.cf;fieldStalled=pos.cs;}
-        else fieldOn=pos.ck;
-        if(!fieldOn&&!fieldStalled)return;
-        var rx=u.cr*pxPerElmo;
-        if(rx<3)return;
-        var fill="rgba(110,190,255,.07)",stroke="rgba(110,190,255,.42)";
-        if(fieldStalled){
-          fill="rgba(255,80,80,"+(0.06+0.08*flash).toFixed(3)+")";
-          stroke="rgba(255,"+Math.round(60+120*flash)+",60,"+(0.35+0.3*flash).toFixed(3)+")";
-        }
-        cx.fillStyle=fill;
-        cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
-        cx.strokeStyle=stroke;cx.lineWidth=1;
-        cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
-      });
-    }
+      if(count<3)return;
+      cx.beginPath();
+      z.hull.forEach(function(h,i){i===0?cx.moveTo(h[0]*W,h[1]*H):cx.lineTo(h[0]*W,h[1]*H);});
+      cx.closePath();cx.stroke();
+      cx.fillText((metal>=1000?(metal/1000).toFixed(1)+"k":Math.round(metal))+" metal",z.cx*W,z.cy*H-4);
+    });
+    cx.textAlign="start";
+  }
+  // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
+  // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
+  if(shieldsOn){
+    model.units.forEach(function(u){
+      if(u.sr<200)return;
+      var pos=u.posAt(tm);
+      if(!pos||pos.sh===undefined)return;
+      var rx=u.sr*pxPerElmo;
+      if(rx<3)return;
+      cx.fillStyle=ZkrReplay.shieldColor(pos.sh,.2);
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
+      cx.strokeStyle=ZkrReplay.shieldColor(pos.sh,.5);cx.lineWidth=1;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
+    });
+  }
+  // cloak fields (iris/conjurer/etc.): only when the field actually runs —
+  // exact field bit on artifacts that record it, own-cloak fallback on
+  // older ones; a stalled field (unpowered) flashes red
+  if(cloaksOn){
+    var flash=(Math.sin(tm*5)+1)/2;
+    model.units.forEach(function(u){
+      if(u.cr<=0)return;
+      var pos=u.posAt(tm);
+      if(!pos)return;
+      var fieldOn,fieldStalled=false;
+      if(pos.cf!==undefined){fieldOn=pos.cf;fieldStalled=pos.cs;}
+      else fieldOn=pos.ck;
+      if(!fieldOn&&!fieldStalled)return;
+      var rx=u.cr*pxPerElmo;
+      if(rx<3)return;
+      var fill="rgba(110,190,255,.07)",stroke="rgba(110,190,255,.42)";
+      if(fieldStalled){
+        fill="rgba(255,80,80,"+(0.06+0.08*flash).toFixed(3)+")";
+        stroke="rgba(255,"+Math.round(60+120*flash)+",60,"+(0.35+0.3*flash).toFixed(3)+")";
+      }
+      cx.fillStyle=fill;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
+      cx.strokeStyle=stroke;cx.lineWidth=1;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
+    });
   }
 
   model.units.forEach(function(u){
