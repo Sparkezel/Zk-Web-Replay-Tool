@@ -246,7 +246,12 @@ export function parseArgs(argv: string[]): ResimJob {
       case "--timeout": job.timeoutSec = Math.max(1, Number(next()) | 0); break;
       case "--status-every-sec": job.statusEverySec = Math.max(0, Number(next()) | 0); break;
       case "--game-over-grace-sec": job.gameOverGraceSec = Math.max(0, Number(next()) | 0); break;
-      case "--stop-after-game-min": job.stopAfterGameMin = Math.max(1, Number(next()) | 0); break;
+      case "--stop-after-game-min": {
+        const v = Number(next());
+        if (!Number.isFinite(v) || v < 1) throw new Error("--stop-after-game-min expects a whole number of minutes >= 1");
+        job.stopAfterGameMin = v | 0;
+        break;
+      }
       default: throw new Error(`unknown flag ${a}`);
     }
   }

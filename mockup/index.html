@@ -149,11 +149,12 @@
         <h2>Animated Battle Replay</h2>
         <div class="stage">
           <canvas id="replay" width="1180" height="460"></canvas>
-          <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
           <div id="victory" class="victory">
             <div class="big">Team 1 wins</div>
             <div class="sub">allyTeam 0 · 25:16 game time</div>
           </div>
+          <!-- one overlay only: map name follows the loaded artifact; the
+             OLD static "Otago 1.4" duplicate painted stacked on top of this -->
           <div class="overlay-tl"><span id="ovMap">Otago 1.4</span> · <span id="frameInfo">frame 0</span></div>
         </div>
         <div class="controls">
@@ -734,12 +735,22 @@ function voteKindInfo(model,subject){
 function voteCards(model,tm){
   var out="";
   (model.votes||[]).forEach(function(v){
-    if(!(tm>=v.startTm&&(v.endTm<0||tm<v.endTm)))return;
+    /* endTm === null marks an unresolved poll; a resolved pre-game poll
+       (negative endTm, before STARTPLAYING) never pins a card in-game */
+    if(!(tm>=v.startTm&&(v.endTm===null||tm<v.endTm)))return;
     var info=voteKindInfo(model,v.subject);
     var pct=v.needed>0?Math.min(1,v.yes/v.needed):0;
-    var yes=[],no=[];
+    /* autohost counts a player's LAST cast only (recasts replace the
+       previous choice); show the same, not every raw cast */
+    var lastCast={};
     v.voters.forEach(function(x){
       if(x.tm>tm)return;
+      var prev=lastCast[x.from];
+      if(prev===undefined||x.tm>=prev.tm)lastCast[x.from]=x;
+    });
+    var yes=[],no=[];
+    Object.keys(lastCast).forEach(function(k){
+      var x=lastCast[k];
       var p=(model.players||[]).filter(function(pl){return pl.name===x.name;})[0];
       var col=p!==undefined?teamColor(p.team):"#cfd6da";
       (x.yes?yes:no).push('<span style="color:'+col+'">'+esc(x.name)+"</span>");
@@ -930,6 +941,9 @@ function renderUnitStats(model,live,tm){
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
+  /* switching artifacts drops the render-signature caches: the counts
+     alone must not decide that feed/chat look "unchanged" across replays */
+  ["feed","chat"].forEach(function(id){var el=document.getElementById(id);if(el)el._sig=null;});
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");

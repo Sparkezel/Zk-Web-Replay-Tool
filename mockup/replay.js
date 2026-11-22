@@ -542,6 +542,13 @@
     if (defByUnit.size === 0) for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") defByUnit.set(r.unitID, r.int1);
     }
+    /* tracks with no recorded spawn event — real units always get one, so a
+       spawn-less track is an engine-side helper (the terraform-era defID-0
+       crutches seen on the stress artifact); the units table drops them */
+    const spawnedUnitIds = new Set();
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind === "spawn") spawnedUnitIds.add(r.unitID);
+    }
 
     const udef = new Map();
     for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) {
@@ -867,7 +874,12 @@
           const y = /!y=(\d+)\/(\d+)/.exec(inner);
           const n = /!n=(\d+)\/(\d+)/.exec(inner);
           if (active === null || active.subject !== subject) {
-            active = { subject, yes: 0, no: 0, needed: 1, startTm: tm, endTm: -1, success: undefined, voters: [] };
+            /* a state line for a NEW subject supersedes any poll still
+               open: autohost runs one poll at a time, so an orphaned
+               endTm:null would pin its card forever — resolve it here
+               instead (success stays unknown) */
+            if (active) { active.endTm = tm; active.success = undefined; }
+            active = { subject, yes: 0, no: 0, needed: 1, startTm: tm, endTm: null, success: undefined, voters: [] };
             votes.push(active);
           }
           if (y) { active.yes = Number(y[1]); active.needed = Number(y[2]); }
@@ -887,6 +899,11 @@
 
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
+      /* defID unresolvable in UDEF AND no spawn event: engine-side helper
+         (terraform-era construction crutches — real units always spawn),
+         renders as a forever-alive ghost circle, so drop it like terraunit.
+         Kept when no UDEF section exists (lightweight fixtures). */
+      if (info === undefined && udef.size > 0 && !spawnedUnitIds.has(u.unitID)) return null;
       let hpMax = 0;
       for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
       const commLevel = commLevelOfDef(info ? info.name : undefined);
@@ -926,7 +943,7 @@
           sh: s.sh,
         })),
       };
-    }).filter((u) => !isExcludedDef(u.def));
+    }).filter((u) => u && !isExcludedDef(u.def));
 
     /* Wreck features (recorded from the next resim on): Spring spawns a
        *_dead/*_heap feature where a unit died and destroys it when it is
@@ -1008,12 +1025,13 @@
       ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toDemo(s.frame), s.metalProduced]) });
     }
 
-    /* resolved votes leave a line in the feed history */
+    /* resolved votes leave a line in the feed history; pre-game lobby polls
+       (endTm < 0, resolved before STARTPLAYING) leave no in-game line */
     for (const row of votes) {
-      if (row.endTm > 0) {
+      if (row.endTm !== null && row.endTm >= 0) {
         feedData.push({
           tm: row.endTm, cls: "vote",
-          txt: "Vote: " + row.subject + " — " + (row.success ? "passed" : "failed"),
+          txt: "Vote: " + row.subject + " — " + (row.success === undefined ? "ended" : row.success ? "passed" : "failed"),
         });
       }
     }

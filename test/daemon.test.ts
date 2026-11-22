@@ -189,10 +189,14 @@ test("pos quantizer clamps and maps across map size", () => {
 });
 
 test("CLI parses flags into a resim job", () => {
-  const job = parseArgs(["--demo", "x.sdfz", "--pos-rate", "4", "--projectiles", "heavy"]);
+  const job = parseArgs(["--demo", "x.sdfz", "--pos-rate", "4", "--projectiles", "heavy", "--stop-after-game-min", "10"]);
   assert.equal(job.demoPath, "x.sdfz");
   assert.equal(job.posRate, 4);
   assert.equal(job.projectiles, "heavy");
+  assert.equal(job.stopAfterGameMin, 10);
+  // NaN|0 would silently become a 1-minute run (resim.bat "testX" typo class)
+  assert.throws(() => parseArgs(["--stop-after-game-min", "abc"]));
+  assert.throws(() => parseArgs(["--stop-after-game-min", "0"]));
   assert.throws(() => parseArgs(["--projectiles", "none"]));
 });
 

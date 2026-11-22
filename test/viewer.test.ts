@@ -733,6 +733,13 @@ test("autohost polls parse into votes: counts, resolution, per-poll voter attrib
       [2400, 255, 254, "Poll: Resign team 2? [END:SUCCESS]"],
       [2500, 9, 255, "!vote 1"],        // after resolution: belongs to nothing
       [2700, 255, 254, "Team 2 resigned"],
+      // second poll: recasts, then superseded by a third poll mid-run
+      [2800, 255, 254, "Poll: Kick hallo hallo? [!y=0/2, !n=0/2]"],
+      [2900, 6, 254, "!vote 2"],
+      [2950, 6, 254, "!vote 1"],        // ninse recasts yes (ZK keeps the last cast)
+      [3000, 3, 254, "!vote 1"],        // hallohallo votes yes too
+      [3100, 255, 254, "Poll: Exit the game [!y=0/9, !n=0/9]"],   // supersedes
+      // third poll never resolves: stays endTm-null (unresolved), no feed line
     ],
     roster: {
       players: [
@@ -744,7 +751,7 @@ test("autohost polls parse into votes: counts, resolution, per-poll voter attrib
     metalSpots: { schema: 1, spots: [[2816, 2816, 2], [1000, 7777, 1.5]] },
   };
   const model = ZkrReplay.artifactToModel(artifact as never);
-  assert.equal(model.votes.length, 1, "one poll parsed");
+  assert.equal(model.votes.length, 3, "one poll per subject: resolved, superseded, unresolved");
   const v = model.votes[0]!;
   assert.equal(v.subject, "Resign team 2");
   assert.equal(v.yes, 3);
@@ -759,6 +766,25 @@ test("autohost polls parse into votes: counts, resolution, per-poll voter attrib
   assert.ok(!v.voters.some((x) => x.tm > v.endTm), "a vote after resolution never joins the poll");
   assert.ok(model.feedData.some((f) => f.cls === "vote" && /Resign team 2 — passed/.test(f.txt)),
     "resolved poll leaves a feed line");
+
+  // superseded poll: a new subject cutting in resolves the previous one,
+  // success unknown — neither "passed" nor "failed" lands in the feed
+  const v2 = model.votes[1]!;
+  assert.equal(v2.subject, "Kick hallo hallo");
+  assert.ok(Math.abs(v2.endTm! - 3100 / 30) < 1e-6, "superseded poll ends at the next poll's first state line");
+  assert.equal(v2.success, undefined);
+  assert.equal(v2.voters.length, 3, "recasts are ALL recorded raw; the card's last-cast rule is render-side");
+  assert.ok(model.feedData.some((f) => f.cls === "vote" && /Kick hallo hallo — ended/.test(f.txt)),
+    "superseded poll closes with an ENDED feed line, never passed/failed");
+
+  // unresolved poll: endTm null (NEVER a negative sentinel — pre-game polls
+  // resolve with genuinely negative times and would pin a card forever)
+  const v3 = model.votes[2]!;
+  assert.equal(v3.subject, "Exit the game");
+  assert.strictEqual(v3.endTm, null, "never-resolved poll keeps the null sentinel");
+  assert.ok(!model.feedData.some((f) => f.cls === "vote" && /Exit the game/.test(f.txt)),
+    "unresolved poll leaves no feed line");
+
   // metal spots normalize to map fractions
   assert.equal(model.metalSpots.length, 2);
   assert.ok(Math.abs(model.metalSpots[0]!.x - 0.2816) < 1e-6);
