@@ -135,6 +135,8 @@ export interface SnapshotData {
   unitDefs: Map<number, UnitDefInfo>;
   weaponDefs: Map<number, WeaponDefInfo>;
   gameOvers: Array<{ frame: number; winners: number[] }>;
+  /** map metal spots (from the mex placement gadget's game-rules params) */
+  metalSpots: Array<{ x: number; z: number; metal?: number }>;
   startboxes?: StartboxData;
 }
 
@@ -150,6 +152,7 @@ export function newSnapshot(): SnapshotData {
     unitDefs: new Map(),
     weaponDefs: new Map(),
     gameOvers: [],
+    metalSpots: [],
   };
 }
 
@@ -316,6 +319,17 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       const lampID = num(ev["lamp"]);
       const link = snap.links.get(lampID);
       if (link && link.closeFrame === undefined) link.closeFrame = num(ev["f"], 0);
+      return;
+    }
+    case "mesp": {
+      // map metal spot, from the mex placement gadget's game-rules params
+      // (mex_count/mex_x.../mex_z.../mex_metal... — the same source ZK's own
+      // api_mexspot_fetcher widget reads); emitted once at game start
+      snap.metalSpots.push({
+        x: num(ev["x"], 0),
+        z: num(ev["z"], 0),
+        metal: ev["m"] !== undefined && ev["m"] !== null ? num(ev["m"], 0) : undefined,
+      });
       return;
     }
     case "wrk": {

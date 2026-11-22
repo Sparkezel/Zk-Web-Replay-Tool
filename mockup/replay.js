@@ -484,6 +484,7 @@
       meta: json("META"),
       roster: json("ROST"),
       startboxesData: json("STBX"),
+      metalSpots: json("MESP"),
       unitDefs: json("UDEF"),
       weaponDefs: json("WDEF"),
       chat: json("CHAT"),
@@ -834,9 +835,55 @@
         kind = "whisper";
         to = playerNameByNum.get(dest) || ("Player " + dest);
       }
-      chatData.push({ tm: toDemo(frame), name, kind, ally, to, txt: text, pre: frame <= anchor });
+      chatData.push({ tm: toDemo(frame), name, kind, ally, to, txt: text, pre: frame <= anchor, from });
     }
     chatData.sort((a, b) => a.tm - b.tm);
+
+    /* Autohost relay votes: the poll state lives in the RELAYED chat, with
+       every change announced as a "Poll: <subject>? [!y=Y/T, !n=N/T]" line
+       and "[END:SUCCESS/FAILED]" at resolution; players cast with
+       "!vote 1" (yes) / "!vote 2" (no). Parsed here from the raw rows, so
+       no extra recording exists or is needed; one poll runs at a time, and
+       a vote only counts for the poll that was active when it was cast. */
+    const votes = [];
+    {
+      let active = null;
+      for (const row of (artifact.chat || [])) {
+        const text = String(row[3] || "");
+        const tm = toDemo(row[0]);
+        const pm = /^Poll: (.*?)(?: ?\[(.+)\])$/.exec(text);
+        if (pm) {
+          const subject = pm[1].replace(/\?+$/, "").trim();
+          const inner = pm[2];
+          const end = /^END:(SUCCESS|FAILED)/.exec(inner);
+          if (end) {
+            if (active && active.subject === subject) {
+              active.endTm = tm;
+              active.success = end[1] === "SUCCESS";
+              active = null;
+            }
+            continue;
+          }
+          const y = /!y=(\d+)\/(\d+)/.exec(inner);
+          const n = /!n=(\d+)\/(\d+)/.exec(inner);
+          if (active === null || active.subject !== subject) {
+            active = { subject, yes: 0, no: 0, needed: 1, startTm: tm, endTm: -1, success: undefined, voters: [] };
+            votes.push(active);
+          }
+          if (y) { active.yes = Number(y[1]); active.needed = Number(y[2]); }
+          if (n) { active.no = Number(n[1]); }
+          continue;
+        }
+        const vm = /^!vote\s+([12])$/.exec(text);
+        if (vm && active) {
+          active.voters.push({
+            tm, from: row[1],
+            name: playerNameByNum.get(row[1]) || ("Player " + row[1]),
+            yes: vm[1] === "1",
+          });
+        }
+      }
+    }
 
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
@@ -961,6 +1008,17 @@
       ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toDemo(s.frame), s.metalProduced]) });
     }
 
+    /* resolved votes leave a line in the feed history */
+    for (const row of votes) {
+      if (row.endTm > 0) {
+        feedData.push({
+          tm: row.endTm, cls: "vote",
+          txt: "Vote: " + row.subject + " — " + (row.success ? "passed" : "failed"),
+        });
+      }
+    }
+    feedData.sort((a, b) => a.tm - b.tm);
+
     const posEnd = artifact.pos ? artifact.pos.maxFrame : 0;
     const projEnd = artifact.proj ? artifact.proj.maxFrame : 0;
     const linkEnd = artifact.link ? artifact.link.maxFrame : 0;
@@ -970,6 +1028,14 @@
     // start, matching the resim's last sim frame / 30) - never shifted
     const metaEnd = artifact.meta && artifact.meta.gameTime ? artifact.meta.gameTime : 0;
     const dims = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+
+    /* map metal spots (MESP section, written by the widget from the ZK mex
+       gadget's rules params); elmos -> map fractions for canvas drawing */
+    const mespDimW = dims && dims[0] > 0 ? dims[0] : 16384;
+    const mespDimH = dims && dims[1] > 0 ? dims[1] : mespDimW;
+    const metalSpots = (artifact.metalSpots && Array.isArray(artifact.metalSpots.spots) ? artifact.metalSpots.spots : [])
+      .filter((s) => Array.isArray(s) && s.length >= 2 && isFinite(s[0]) && isFinite(s[1]))
+      .map((s) => ({ x: s[0] / mespDimW, y: s[1] / mespDimH, metal: s[2] > 0 ? s[2] : undefined }));
 
     return {
       fps: FPS,
@@ -981,6 +1047,7 @@
       winner, winnerLabel,
       startPolys,
       teamNames, teamMeta, players, chatData,
+      votes, metalSpots,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",

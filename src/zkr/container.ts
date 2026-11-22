@@ -53,6 +53,7 @@ export const SECTION = {
   PROJECTILES: "PROJ",
   LINKS: "LINK",
   STARTBOX: "STBX",
+  METALSPOT: "MESP",
   CHAT: "CHAT",
   MAPDRAW: "DRAW",
   MACRO: "MACR",

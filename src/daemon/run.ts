@@ -35,6 +35,9 @@ export interface RunOptions {
   statusEverySec?: number;
   /** kill the engine when zero ZKR lines were captured this many seconds after the sim started (default 120, 0 disables); a broken widget would otherwise waste the whole timeout */
   noZkrSec?: number;
+  /** truncated test run: stop the engine once the sim reaches this frame
+   *  and pack whatever was captured (partial artifact for early inspection) */
+  stopAfterFrame?: number;
   log?: Logger;
 }
 
@@ -48,6 +51,8 @@ export interface RunResult {
   simFrame: number;
   /** final phase of the run (booting/scan/starting/simulating/over) */
   phase: string;
+  /** the run was stopped by stopAfterFrame (truncated test run) */
+  stoppedEarly: boolean;
 }
 
 export function loadDemoFile(demoPath: string): ParsedDemo {
@@ -84,6 +89,11 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let simStartedAt = 0;
   let simFrame = 0;
   let phase = "booting";
+  let stoppedEarly = false;
+  // every ZKR line the ingest rejected, kept FULL (the console only shows
+  // the first 120 chars — the tail is what identifies the real problem);
+  // written to <logDir>/zkr-errors.txt when the run ends
+  const errorLines: string[] = [];
 
   const PHASE_RANK: Record<string, number> = { booting: 0, scan: 1, starting: 2, simulating: 3, over: 4 };
   const advance = (next: "scan" | "starting" | "simulating" | "over") => {
@@ -130,6 +140,12 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
         warnedGameOver = true;
         proc.kill("SIGKILL");
       }
+      // truncated test run: stop cleanly at the requested sim frame
+      if (!stoppedEarly && opts.stopAfterFrame !== undefined && simFrame >= opts.stopAfterFrame) {
+        stoppedEarly = true;
+        log.info(`--stop-after-frame reached (frame ${simFrame} >= ${opts.stopAfterFrame}); stopping engine and packing the partial snapshot`);
+        proc.kill("SIGKILL");
+      }
     }, 1000);
     const statusEveryMs = (opts.statusEverySec ?? 5) * 1000;
     let lastStatusAt = 0;
@@ -169,7 +185,10 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
         const res = ingestLine(snapshot, line);
         if (res.isZkr) {
           zkrLines++;
-          if (!res.ok) log.warn(`malformed ZKR line: ${line.slice(0, 120)}`);
+          if (!res.ok) {
+            errorLines.push(line);
+            log.warn(`malformed ZKR line: ${line.slice(0, 120)}`);
+          }
         }
         if (snapshot.gameOvers.length > 0) {
           advance("over");
@@ -190,16 +209,31 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       clearTimeout(timeout);
       clearInterval(watchdog);
       clearInterval(statusTimer);
-      log.info(`engine exited code=${code} timedOut=${timedOut} zkrLines=${zkrLines}/${rawLines} frame=${simFrame} phase=${phase}`);
+      log.info(`engine exited code=${code} timedOut=${timedOut} stopped=${stoppedEarly} zkrLines=${zkrLines}/${rawLines} frame=${simFrame} phase=${phase}`);
       if (opts.logDir) {
-        mkdirSync(opts.logDir, { recursive: true });
+        mkdirSync(path.join(opts.logDir, "errors"), { recursive: true });
         writeFileSync(path.join(opts.logDir, "engine-stdout.log"), rawOutput.join("\n"));
         writeFileSync(path.join(opts.logDir, "engine-stderr.log"), Buffer.concat(errChunks));
+        // errors get their own folder per run: malformed ZKR lines keep their
+        // FULL text (the console truncates to 120 chars), plus a run summary
+        writeFileSync(
+          path.join(opts.logDir, "errors", `zkr-errors-${new Date().toISOString().replace(/[:.]/g, "")}.txt`),
+          [
+            `zkr resim error report ${new Date().toISOString()}`,
+            `engine exit code: ${code} timedOut=${timedOut} stoppedEarly=${stoppedEarly}`,
+            `sim frame reached: ${simFrame} (phase ${phase})`,
+            `zkr lines: ${zkrLines} captured, ${rawLines} total stdout lines`,
+            `malformed zkr lines: ${errorLines.length}`,
+            errorLines.length > 0 ? "" : "(none — ingest accepted every ZKR line)",
+            ...errorLines.flatMap((l) => ["", "-".repeat(78), l]),
+          ].join("\n"),
+        );
+        log.info(`error report: ${errorLines.length} malformed ZKR line(s) written to logs/errors/`);
       }
       if (zkrLines === 0 && rawOutput.length > 0) {
         log.warn(`no ZKR frames captured; last engine output:\n${rawOutput.slice(-5).join("\n")}`);
       }
-      resolve({ code, timedOut, snapshot, rawLines, zkrLines, simFrame, phase });
+      resolve({ code, timedOut, snapshot, rawLines, zkrLines, simFrame, phase, stoppedEarly });
     });
   });
 }

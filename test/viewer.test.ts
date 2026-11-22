@@ -717,6 +717,54 @@ test("unitValueClass buckets defs into econ/other/combat for the stats grid", ()
   assert.equal(ZkrReplay.unitValueClass("funnelweb", "mobiletachyon"), "combat");
 });
 
+test("autohost polls parse into votes: counts, resolution, per-poll voter attribution", () => {
+  // exact shapes observed in the real demo's relayed chat: Poll state lines
+  // end with [!y=a/b, !n=c/d] or [END:...]; players cast with "!vote 1|2"
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 600, map: { name: "M", dims: [10000, 9000] } },
+    chat: [
+      [1000, 6, 254, "SPRINGIE:<ninse>!poll resign"],
+      [1100, 255, 254, "Poll: Resign team 2? [!y=0/3, !n=0/3]"],
+      [1200, 6, 254, "!vote 1"],
+      [1300, 3, 254, "!vote 2"],
+      [1400, 255, 254, "Poll: Resign team 2? [!y=1/3, !n=1/3]"],
+      [2200, 255, 254, "Poll: Resign team 2? [!y=3/3, !n=1/3]"],
+      [2400, 255, 254, "Poll: Resign team 2? [END:SUCCESS]"],
+      [2500, 9, 255, "!vote 1"],        // after resolution: belongs to nothing
+      [2700, 255, 254, "Team 2 resigned"],
+    ],
+    roster: {
+      players: [
+        { name: "ninse", script: "player6", team: 3, spectator: false },
+        { name: "hallohallo", script: "player3", team: 5, spectator: false },
+      ],
+      teams: [{ num: 3, allyteam: 1 }, { num: 5, allyteam: 1 }],
+    },
+    metalSpots: { schema: 1, spots: [[2816, 2816, 2], [1000, 7777, 1.5]] },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  assert.equal(model.votes.length, 1, "one poll parsed");
+  const v = model.votes[0]!;
+  assert.equal(v.subject, "Resign team 2");
+  assert.equal(v.yes, 3);
+  assert.equal(v.no, 1);
+  assert.equal(v.needed, 3);
+  assert.equal(v.success, true);
+  assert.ok(Math.abs(v.startTm - 1100 / 30) < 1e-6, "poll starts at its first state line");
+  assert.ok(Math.abs(v.endTm - 2400 / 30) < 1e-6, "poll ends at its END line");
+  assert.equal(v.voters.length, 2, "votes cast while the poll ran are attributed");
+  assert.equal(v.voters.find((x) => x.yes)!.name, "ninse", "!vote 1 line carries the caster's name");
+  assert.equal(v.voters.find((x) => !x.yes)!.name, "hallohallo");
+  assert.ok(!v.voters.some((x) => x.tm > v.endTm), "a vote after resolution never joins the poll");
+  assert.ok(model.feedData.some((f) => f.cls === "vote" && /Resign team 2 — passed/.test(f.txt)),
+    "resolved poll leaves a feed line");
+  // metal spots normalize to map fractions
+  assert.equal(model.metalSpots.length, 2);
+  assert.ok(Math.abs(model.metalSpots[0]!.x - 0.2816) < 1e-6);
+  assert.ok(Math.abs(model.metalSpots[1]!.y - 7777 / 9000) < 1e-6);
+});
+
 test("model.players carries every roster player's elo/level with command counts", () => {
   // mirrors the real demo: 10 players, three spectators, each player their
   // own team; the old hardcoded table dropped four players' elo

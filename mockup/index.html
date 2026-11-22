@@ -85,6 +85,13 @@
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
+  /* sticky poll card: pinned at the top of the feed while a vote runs */
+  .feed li.vote-sticky{position:sticky;top:0;z-index:2;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;margin:4px 6px;color:var(--txt)}
+  .feed li.vote-sticky .vt{font-weight:800;font-size:13.5px;letter-spacing:.4px}
+  .vbar{position:relative;background:#000;border-radius:3px;height:8px;margin:5px 0 4px;overflow:hidden}
+  .vfill{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+  .vcount{position:absolute;right:6px;top:-1px;font-size:10.5px;color:#cfd6da;text-shadow:0 1px 2px #000}
+  .vv .vopt{display:inline-block;margin-right:12px;font-size:11.5px;color:var(--dim)}
 
   /* ---- in-game chat ---- */
   .chat{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto;font-size:12.5px}
@@ -357,7 +364,7 @@ function buildArtifactModel(artifact){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
-      cls:u.cls||"combat",
+      cls:u.cls||"combat",def:u.def,
       /* build fraction at the last track sample: what was actually
          invested when the unit died (nanoframe kills lost a fraction) */
       bdEnd:u.track.length?u.track[u.track.length-1].bd:undefined,
@@ -403,6 +410,11 @@ function buildArtifactModel(artifact){
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
     teamNames:m.teamNames,teamMeta:m.teamMeta,players:m.players||[],startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
+    /* autohost polls (resign/kick/exit) — parsed from relayed chat */
+    votes:m.votes||[],
+    /* metal-extractor units for spot ownership + the spots themselves */
+    mexUnits:units.filter(function(u){return u.def==="staticmex"}),
+    metalSpots:m.metalSpots||[],
     wrecks:wrecks,
     unitStats:losses,
     wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
@@ -479,6 +491,35 @@ function draw(model,tm){
                  into ellipses). Artifacts without map dims (synthetic
      fixtures) still render at the 16384-elmo default scale. */
   var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
+  // metal spots: grey circles with a bright dotted border; a spot claimed by
+  // a live mex (nearest within 60 elmos) takes the owner's team colour —
+  // drawn at the very bottom of the under-layer, below wrecks and fields
+  if(model.metalSpots&&model.metalSpots.length){
+    var mr=Math.max(2.5,90*pxPerElmo);
+    var mw=model.mapW>0?model.mapW:16384, mh=model.mapW>0?(model.mapH>0?model.mapH:mw):mw;
+    var claimers=[];
+    (model.mexUnits||[]).forEach(function(u){var p=u.posAt(tm);if(p)claimers.push({x:p.x,y:p.y,t:u.t});});
+    cx.setLineDash([4,3]);
+    cx.lineWidth=1.4;
+    model.metalSpots.forEach(function(s){
+      var own=null,best=60*60; /* mex claims its spot within 60 elmos */
+      claimers.forEach(function(c){
+        var ex=(s.x-c.x)*mw, ey=(s.y-c.y)*mh;
+        var d2=ex*ex+ey*ey;
+        if(d2<best){best=d2;own=c;}
+      });
+      var col=own?teamColor(own.t):"#aeb6ba";
+      cx.globalAlpha=own?0.55:0.35;
+      cx.fillStyle=col;
+      cx.beginPath();cx.arc(s.x*W,s.y*H,mr,0,7);cx.fill();
+      cx.globalAlpha=0.95;
+      cx.strokeStyle=own?col:"#cfd6da"; /* brighter so it reads on grey maps */
+      cx.beginPath();cx.arc(s.x*W,s.y*H,mr,0,7);cx.stroke();
+      cx.globalAlpha=1;
+    });
+    cx.setLineDash([]);
+    cx.lineWidth=1;
+  }
   // wreck dots: alive wrecks only (features die when reclaimed), magenta
   // at half transparency to keep the field uncluttered;
   // (synthetic fallback models carry empty wreck lists)
@@ -662,31 +703,102 @@ function draw(model,tm){
   else vic.classList.remove("show");
 }
 
-/* event feed up to current time */
-function renderFeed(model,tm){
-  var el=document.getElementById("feed");var html="";
-  for(var i=model.feedData.length-1;i>=0;i--){var e=model.feedData[i];
-    if(e.tm>tm)continue;
-    html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
-    if(html.length>4000)break;}
-  el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
-  var first=el.firstChild;if(first)el.scrollTop=0;
+/* how many rows of an ascending-sorted-by-tm list are in play at tm */
+function countUpTo(arr,tm){
+  var lo=0,hi=arr.length;
+  while(lo<hi){var mid=(lo+hi)>>1;if(arr[mid].tm<=tm)lo=mid+1;else hi=mid;}
+  return lo;
 }
 
-/* in-game chat up to current time; entries: {tm,name,kind,ally,txt} */
+/* vote subject -> display flavour: resign takes the resigned side's team
+   colour, kick shows the target's nick in that player's colour, anything
+   else (exit/force/spec poll) stays neutral white */
+function voteKindInfo(model,subject){
+  var rm=/^resign(?:\s+team)?\s+(\d+)/i.exec(subject);
+  if(rm){
+    var side=Number(rm[1])-1;if(side<0)side=0;
+    var team=null;
+    (model.players||[]).forEach(function(p){if(team===null&&p.ally===side&&p.team!==undefined)team=p.team;});
+    return {color:team!==null?teamColor(team):"#ffffff"};
+  }
+  var km=/^kick\s+(.+)$/i.exec(subject);
+  if(km){
+    var nick=km[1];
+    var p=(model.players||[]).filter(function(x){return x.name===nick;})[0];
+    return {color:p!==undefined?teamColor(p.team):"#ffffff"};
+  }
+  return {color:"#ffffff"};
+}
+
+/* sticky cards for polls currently running at tm, pinned above the feed */
+function voteCards(model,tm){
+  var out="";
+  (model.votes||[]).forEach(function(v){
+    if(!(tm>=v.startTm&&(v.endTm<0||tm<v.endTm)))return;
+    var info=voteKindInfo(model,v.subject);
+    var pct=v.needed>0?Math.min(1,v.yes/v.needed):0;
+    var yes=[],no=[];
+    v.voters.forEach(function(x){
+      if(x.tm>tm)return;
+      var p=(model.players||[]).filter(function(pl){return pl.name===x.name;})[0];
+      var col=p!==undefined?teamColor(p.team):"#cfd6da";
+      (x.yes?yes:no).push('<span style="color:'+col+'">'+esc(x.name)+"</span>");
+    });
+    out+='<li class="vote-sticky">'+
+      '<div class="vt" style="color:'+info.color+'">'+esc(v.subject.toUpperCase())+"</div>"+
+      '<div class="vbar"><div class="vfill" style="width:'+Math.round(pct*100)+"%;background:"+info.color+'"></div><span class="vcount">'+v.yes+"/"+v.needed+"</span></div>"+
+      '<div class="vv"><span class="vopt">✓ '+ (yes.length?yes.join(", "):"—") +"</span>"+
+      '<span class="vopt">✗ '+ (no.length?no.join(", "):"—") +"</span></div>"+
+      "</li>";
+  });
+  return out;
+}
+
+/* event feed up to current time; the signature skips identical re-renders so
+   the panel keeps the user's scroll position while playing or paused */
+function renderFeed(model,tm){
+  var el=document.getElementById("feed");
+  if(!el)return;
+  var n=countUpTo(model.feedData,tm);
+  var chatN=model.chatData?countUpTo(model.chatData,tm):0;
+  var sig=n+":"+chatN;
+  if(el._sig===sig)return;
+  el._sig=sig;
+  var html="";
+  for(var i=n-1;i>=0;i--){
+    var e=model.feedData[i];
+    html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
+    if(html.length>4400)break;
+  }
+  html=voteCards(model,tm)+html;
+  var keep=el.scrollTop;
+  el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
+  el.scrollTop=keep;
+}
+
+/* in-game chat up to current time; signature-skipped like the feed so the
+   scroll position survives playback (the old version re-anchored to the
+   top on every frame, which read as "locked at the newest message") */
 function renderChat(model,tm){
-  var el=document.getElementById("chat");var html="";
-  for(var i=model.chatData.length-1;i>=0;i--){var e=model.chatData[i];
-    if(e.tm>tm)continue;
+  var el=document.getElementById("chat");
+  if(!el)return;
+  var n=countUpTo(model.chatData,tm);
+  var sig=String(n)+":"+(model.feedData?countUpTo(model.feedData,tm):0);
+  if(el._sig===sig)return;
+  el._sig=sig;
+  var html="";
+  for(var i=n-1;i>=0;i--){
+    var e=model.chatData[i];
     var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper \u2192 "+(e.to||"?"):"autohost";
     var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
     /* pre-game chat (lobby/pick phase, sent before STARTPLAYING): shown from
        the first frame, tagged lobby instead of a negative time */
     var tlabel=e.pre?"lobby":fmt(Math.max(0,e.tm));
     html+='<li class="'+cls+(e.pre?" c-pre":"")+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+tlabel+"</time></li>";
-    if(html.length>6000)break;}
+    if(html.length>6400)break;}
+  var keep=el.scrollTop;
   el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
-  var first=el.firstChild;if(first)el.scrollTop=0;
+  el.scrollTop=keep;
 }
 
 /* economy chart up to tm; artifact ecoPts: [{team,pts:[[s,val]..]}], synthetic: [[s,t1,t2]] */

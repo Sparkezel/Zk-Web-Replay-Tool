@@ -9,6 +9,11 @@
  *              [--timeout SEC] [--status-every-sec N] [--game-over-grace-sec N]
  *              [--speed N]   sim-speed multiplier (default 5 for fast resim)
  *              [--no-zkr-sec N]  abort when no ZKR captured N sec into the sim (default 120, 0 disables)
+ *              [--stop-after-game-min N]  truncated TEST run: stop after N game
+ *                                      minutes, pack a partial artifact, and cap
+ *                                      META game time so the viewer timeline ends
+ *                                      where the data ends (per-run error report
+ *                                      in .zkr-work/logs/errors/)
  *
  * Without an engine available the daemon still packs a valid artifact from
  * the cheap-parse demo sections (M1 data only, no POS/EVNT/PROJ/LINK rows).
@@ -54,6 +59,10 @@ export interface ResimJob {
   speedFactor?: number;
   /** kill the resim when zero ZKR lines were captured this many seconds after sim start (default 120, 0 disables) */
   zkrAbortSec?: number;
+  /** truncated TEST run: stop the engine after this many game minutes and
+   *  pack a partial artifact (META's game time capped to match) for early
+   *  inspection of a long replay */
+  stopAfterGameMin?: number;
 }
 
 export interface ResimResult {
@@ -81,6 +90,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
 
   let zkrLines = 0;
   let resimulated = false;
+  let stoppedAtFrame = -1;
   let snap: SnapshotData | undefined;
 
   if (!job.skipResim) {
@@ -115,11 +125,13 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
         statusEverySec: job.statusEverySec,
         gameOverGraceSec: job.gameOverGraceSec,
         noZkrSec: job.zkrAbortSec,
+        stopAfterFrame: job.stopAfterGameMin !== undefined ? job.stopAfterGameMin * 30 * 60 : undefined,
         lastFrame: Math.round(demo.stream.lastModGameTime * 30),
       });
       snap = run.snapshot;
       zkrLines = run.zkrLines;
-      log.info(`resim reached frame=${run.simFrame} phase=${run.phase}`);
+      if (run.stoppedEarly) stoppedAtFrame = run.simFrame;
+      log.info(`resim reached frame=${run.simFrame} phase=${run.phase}${run.stoppedEarly ? " (truncated test run)" : ""}`);
       resimulated = zkrLines > 0;
       if (zkrLines === 0) log.warn("engine produced no ZKR frames; falling back to cheap-parse sections");
     } else {
@@ -131,7 +143,10 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   log.info(`packing ${snap !== undefined && zkrLines > 0 ? "resim" : "cheap-parse"} sections ...`);
   mkdirSync(path.dirname(artifactPath), { recursive: true });
   const zkr = snap !== undefined && zkrLines > 0
-    ? buildZkrFromResim(snap, { demo, posRate: job.posRate, projectiles: job.projectiles })
+    ? buildZkrFromResim(snap, {
+        demo, posRate: job.posRate, projectiles: job.projectiles,
+        lastSimFrame: stoppedAtFrame > 0 ? stoppedAtFrame : undefined,
+      })
     : buildZkrFromDemo(demo);
   writeFileSync(artifactPath, zkr);
   log.info(`artifact written: ${artifactPath} (${zkr.byteLength} bytes, resim=${resimulated})`);
@@ -231,6 +246,7 @@ export function parseArgs(argv: string[]): ResimJob {
       case "--timeout": job.timeoutSec = Math.max(1, Number(next()) | 0); break;
       case "--status-every-sec": job.statusEverySec = Math.max(0, Number(next()) | 0); break;
       case "--game-over-grace-sec": job.gameOverGraceSec = Math.max(0, Number(next()) | 0); break;
+      case "--stop-after-game-min": job.stopAfterGameMin = Math.max(1, Number(next()) | 0); break;
       default: throw new Error(`unknown flag ${a}`);
     }
   }

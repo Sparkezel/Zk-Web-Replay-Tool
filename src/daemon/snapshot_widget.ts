@@ -319,6 +319,7 @@ end
 
 function widget:GameFrame(frame)
   maybeSendStartboxes()
+  maybeSendMetalSpots()
   -- press /speedup every probe frame while the engine's wanted factor is below
   -- target; supplements the GameStart burst in case those presses raced server
   -- boot or got dropped. Stops pressing once wanted >= target (idempotent).
@@ -403,6 +404,38 @@ function widget:GameStart()
     Spring.SendCommands("speedup")
   end
   maybeSendStartboxes()
+  maybeSendMetalSpots()
+end
+
+-- map metal spots: ZK's mex placement gadget publishes them as game-rules
+-- params (the same source api_mexspot_fetcher.lua builds WG.metalSpots from)
+-- — exact positions in elmos plus per-spot metal income. Emitted once per
+-- line at start (a per-spot line stays far under the engine's console cap
+-- on spot-dense maps); maps without metal carry no mex_count param and give
+-- up after the probe window, mirroring the startbox retry.
+local mespSent = false
+function maybeSendMetalSpots()
+  if mespSent then return end
+  local count = tonumber(Spring.GetGameRulesParam("mex_count"))
+  if count == nil then
+    if Spring.GetGameFrame() > 300 then mespSent = true end
+    return
+  end
+  if count == -1 then
+    mespSent = true -- game says "no metal map" explicitly
+    return
+  end
+  if count <= 0 then return end
+  for i = 1, count do
+    local x = Spring.GetGameRulesParam("mex_x" .. i)
+    local z = Spring.GetGameRulesParam("mex_z" .. i)
+    if x ~= nil and z ~= nil then
+      local m = Spring.GetGameRulesParam("mex_metal" .. i)
+      emit('{"t":"mesp","x":' .. num(x) .. ',"z":' .. num(z) ..
+        ',"m":' .. (m ~= nil and num(m) or "0") .. '}')
+    end
+  end
+  mespSent = true
 end
 
 -- startboxes: the ZK start_boxes gadget loads them from the map/game config
