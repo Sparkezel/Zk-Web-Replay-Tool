@@ -1,0 +1,41 @@
+# Deploys the mockup viewer — index.html + replay.js + map.png + icons/ +
+# battle.zkr (the pre-simulated artifact) — to GitHub Pages, so
+# https://sparkezel.github.io/Zk-Web-Replay-Tool/ shows a working replay.
+# Requires the repo's Pages setting (Settings -> Pages -> Source) to be
+# "GitHub Actions"; any push to main touching mockup/** redeploys.
+
+name: Deploy viewer to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mockup/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          # the viewer is self-contained: relative fetches of battle.zkr,
+          # map.png and icons/ all resolve inside this directory
+          path: mockup
+      - id: deploy
+        uses: actions/deploy-pages@v4

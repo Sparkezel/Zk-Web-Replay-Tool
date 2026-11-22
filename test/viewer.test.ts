@@ -32,7 +32,8 @@ function syntheticSnapshot() {
     events: [
       { kind: "spawn", frame: 6, unitID: 1, int1: 10, int2: 0, int3: -1 },
       { kind: "spawn", frame: 6, unitID: 2, int1: 11, int2: 1, int3: -1 },
-      { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 },
+      // a morph SELF-destructs its victim: no killer is attributed
+      { kind: "death", frame: 900, unitID: 2, int1: -1, int2: 0, int3: 42 },
     ],
     projectiles: new Map([
       [100, { proID: 100, weaponDefID: 7, projClass: 3, ownerTeam: 0, startFrame: 6,
@@ -72,7 +73,10 @@ test("startbox parser reads ROST lua startboxes, tolerant of sci notation", () =
 });
 
 test("feed falls back to ids and team numbers without ROST/UDEF data", async () => {
-  const zkr = buildZkrFromResim(syntheticSnapshot(), { projectiles: "heavy" });
+  const snap = syntheticSnapshot();
+  // the fixture's morph victim self-destructs; this test wants a KILL line
+  snap.events[2] = { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 };
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   const model = ZkrReplay.artifactToModel(artifact);
   assert.equal(model.feedData.length, 1);
@@ -226,24 +230,125 @@ test("hp ring colour follows the green->orange->red gradient", () => {
   assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
 });
 
-test("POS v2 keeps true sample timing (probe gaps) and the cloak bit", async () => {
+test("POS v3 keeps true sample timing (probe gaps), cloak/field bits and shield charge", async () => {
   // irregular gaps are the point: v1 threw the cadence away and decoders
   // wrongly assumed one sample per frame, compressing unit motion to 1/6
   const snap = syntheticSnapshot();
   const u = snap.units.get(1)!;
   u.samples = [
-    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true },
-    { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true },
-    { frame: 25, x: 1200, z: 2200, hp: 255, build: 255 },
+    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true, cloakField: true, shield: 1 },
+    { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true, cloakStalled: true, shield: 0.5 },
+    { frame: 25, x: 1200, z: 2200, hp: 255, build: 255, cloaked: true, cloakField: true },
   ];
+  snap.unitDefs = new Map([
+    [10, { defID: 10, name: "shieldshield", humanName: "Aspis", metalCost: 900, health: 2500, canMove: true, iconType: "walkershield", cloakRadius: -1, shieldRadius: 350, shieldPower: 3600 }],
+  ]);
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.pos.version, 3);
   const posUnit = artifact.pos!.units.find((x) => x.unitID === 1)!;
   assert.deepEqual(posUnit.samples.map((s) => s.frame), [6, 13, 25]);
-  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, false]);
+  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, true]);
+  assert.deepEqual(posUnit.samples.map((s) => s.cf), [true, false, true]);
+  assert.deepEqual(posUnit.samples.map((s) => s.cs), [false, true, false]);
+  // shield charge byte round-trips at 0..254 resolution, 255 = no shield
+  assert.ok(Math.abs(posUnit.samples[0]!.sh! - 1) < 0.01);
+  assert.ok(Math.abs(posUnit.samples[1]!.sh! - 0.5) < 0.01);
+  assert.equal(posUnit.samples[2]!.sh, undefined, "no shield recorded -> undefined, not 0");
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units.find((x) => x.id === 1)!;
   assert.deepEqual(m.track.map((t) => Math.round(t.t * 30)), [6, 13, 25]);
+  assert.equal(m.shieldRadius, 350, "UDEF v3 shield radius reaches the model");
+  assert.equal(m.shieldPower, 3600);
+  assert.deepEqual(m.track.map((t) => t.cs), [false, true, false]);
+  // C1 regression: probes are 6 frames apart, so nearly every rendered
+  // frame interpolates — the state bits must survive trackAt mid-sample
+  // (samples sit at 0.2/0.433/0.833 s; 0.3 is strictly between the first two)
+  const mid = ZkrReplay.trackAt(m.track, 0.3);
+  assert.ok(mid.sh !== undefined && Math.abs(mid.sh! - 1) < 0.01,
+    "shield charge survives interpolation (was dropped before the counter-review fix)");
+  assert.equal(mid.cf, true);
+  assert.equal(mid.cs, false);
+  const mid2 = ZkrReplay.trackAt(m.track, 0.5);
+  assert.equal(mid2.cs, true, "mid-way to sample 2 picks up the stalled bit");
+});
+
+test("shield colour lerp matches ZK's shieldGoodColor/shieldBadColor", () => {
+  assert.equal(ZkrReplay.shieldColor(1), "rgb(26,26,255)");
+  assert.equal(ZkrReplay.shieldColor(0), "rgb(255,26,26)");
+  assert.equal(ZkrReplay.shieldColor(0.5), "rgb(141,26,141)", "midpoint is a smooth 50% mix");
+  assert.equal(ZkrReplay.shieldColor(-3), ZkrReplay.shieldColor(0), "clamped low");
+  assert.equal(ZkrReplay.shieldColor(9), ZkrReplay.shieldColor(1), "clamped high");
+  assert.equal(ZkrReplay.shieldColor(0.5, 0.2), "rgba(141,26,141,0.2)", "alpha form for the field circle");
+});
+
+test("wreck features pack/decode: reclaimed wrecks disappear, metal kept", async () => {
+  const snap = syntheticSnapshot();
+  // a fencer wreck at frame 900, reclaimed again at frame 1500
+  snap.events.push(
+    { kind: "wreck", frame: 900, unitID: 90001, int1: 88, int2: 3072, int3: 6144 },
+    { kind: "unwreck", frame: 1500, unitID: 90001, int1: -1, int2: -1, int3: -1 },
+  );
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.ok(artifact.evnt.records.some((r) => r.kind === "wreck"), "wreck kind survives the pack");
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.wrecks.length, 1, "engine-recorded wrecks replace the death fallback");
+  const w = model.wrecks[0]!;
+  assert.ok(Math.abs(w.born - 30) < 1e-6);
+  assert.ok(Math.abs(w.gone - 50) < 1e-6);
+  assert.equal(w.metal, 88);
+  assert.ok(Math.abs(w.x - 3072 / 16384) < 1e-6);
+});
+
+test("no wreck records: wrecks fall back to death positions and 40% metal", async () => {
+  const snap = syntheticSnapshot();
+  snap.unitDefs = new Map([
+    [11, { defID: 11, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
+  ]);
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  // unit 2 dies at frame 900 (fixture); its last sample is at (4096, 8192)
+  assert.equal(model.wrecks.length, 1);
+  const w = model.wrecks[0]!;
+  assert.ok(Math.abs(w.born - 30) < 1e-6);
+  assert.equal(w.metal, 88, "220 metal x 0.4 reclaim estimate");
+  assert.equal(w.gone, -1, "unrecorded wrecks never disappear");
+  // u16 position quantization: 1/65535 granularity
+  assert.ok(Math.abs(w.x - 4096 / 16384) < 1e-4 && Math.abs(w.y - 8192 / 16384) < 1e-4);
+});
+
+test("legacy POS v2 decodes cloaked but leaves the field bit undefined (fallback to ck)", async () => {
+  // hand-pack a v2 POS section exactly as the PR #12 packer wrote it
+  // (s16 dX, s16 dZ, s16 frameDelta, u8 hp, u8 build, u8 flags = bit0)
+  const b = Buffer.alloc(64);
+  let o = 0;
+  b.writeUInt32LE(1, o); o += 4;                      // numUnits
+  b.writeUInt32LE(5, o); o += 4;                     // unitID
+  b.writeUInt16LE(10, o); o += 2;                    // defID
+  b.writeUInt32LE(100, o); o += 4;                   // firstFrame
+  b.writeUInt16LE(2, o); o += 2;                     // sampleCount
+  b.writeUInt16LE(0, o); o += 2;                      // originX
+  b.writeUInt16LE(0, o); o += 2;                      // originZ
+  for (let k = 0; k < 2; k++) {
+    b.writeInt16LE(10, o); o += 2;                   // dX
+    b.writeInt16LE(5, o); o += 2;                    // dZ
+    b.writeInt16LE(6, o); o += 2;                     // frameDelta
+    b.writeUInt8(255, o); o += 1;                      // hp
+    b.writeUInt8(255, o); o += 1;                      // build
+    b.writeUInt8(k === 0 ? 1 : 3, o); o += 1;          // flags: bit0, v2's bit1 is garbage
+  }
+  const { writeZkr } = require("../dist/zkr/container.js");
+  const zkr = writeZkr([{ id: "POS ", version: 2, payload: new Uint8Array(b.subarray(0, o)), codec: 1 }]);
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const s = artifact.pos!.units[0]!.samples;
+  assert.deepEqual(s.map((x) => x.ck), [true, true]);
+  assert.deepEqual(s.map((x) => x.cf), [undefined, undefined],
+    "v2 bit1 is NOT a field bit: pre-#13 artifacts would lose all field circles if read");
+  const model = ZkrReplay.artifactToModel(artifact);
+  const m = model.units[0]!;
+  assert.deepEqual(m.track.map((t) => t.cf), [undefined, undefined]);
 });
 
 test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () => {
@@ -350,4 +455,309 @@ test("parseDemoStream anchors at the STARTPLAYING with its countdown elapsed", (
   // the anchor must be the LATEST candidate: 4918 + 0, not 4799 + 120 === 4919
   assert.equal(res.startPlayingFrame, Math.max(4799 + 120, 4918));
   assert.equal(res.chat.length, 1);
+});
+
+test("damageShade: full hp keeps the exact colour, dead keeps each channel at 50%", () => {
+  const col = "hsl(120, 100%, 50%)"; // pure green
+  assert.equal(ZkrReplay.damageShade(col, 1), "rgb(0,255,0)");
+  assert.equal(ZkrReplay.damageShade(col, 0), "rgb(0,128,0)"); // 0.5 * 255
+  const half = ZkrReplay.damageShade(col, 0.5); // k = 0.75
+  assert.equal(half, "rgb(0,191,0)");
+  // hp clamp + passthrough of unparseable colours / absent hp
+  assert.equal(ZkrReplay.damageShade(col, 5), "rgb(0,255,0)");
+  assert.equal(ZkrReplay.damageShade(col, -3), "rgb(0,128,0)");
+  assert.equal(ZkrReplay.damageShade("rgb(12,34,56)", 0), "rgb(12,34,56)");
+  assert.equal(ZkrReplay.damageShade(col, undefined), col);
+  // hex form (spectator grey) shades too
+  assert.equal(ZkrReplay.damageShade("#9aa4aa", 0), "rgb(77,82,85)", "each channel at 50%");
+});
+
+test("damageShade quantizes hp to 16 steps (bounds the icon tint cache)", () => {
+  const col = "hsl(120, 100%, 50%)";
+  // 0.37 is not on a 16th boundary: it rounds to 6/16 = 0.375
+  assert.equal(ZkrReplay.damageShade(col, 0.37), ZkrReplay.damageShade(col, 0.375));
+  assert.notEqual(ZkrReplay.damageShade(col, 0.31), ZkrReplay.damageShade(col, 0.375), "a different 16th must shade differently");
+  const distinct = new Set<string>();
+  for (let hp = 0; hp <= 1.0001; hp += 0.01) distinct.add(ZkrReplay.damageShade(col, hp));
+  assert.equal(distinct.size, 17, "exactly one shade per 16th plus full hp keeps the cache bounded");
+});
+
+test("damageShade matches hslToRgb scaled channels (random spot checks)", () => {
+  for (const hue of [4, 32, 130, 206, 342]) {
+    for (const l of [0.32, 0.55, 0.82]) {
+      const src = "hsl(" + hue + ",88%," + Math.round(l * 100) + "%)";
+      const hp = 0.37; // quantizes to 6/16
+      const got = ZkrReplay.damageShade(src, hp);
+      const expect = ZkrReplay.hslToRgb(hue, 0.88, l)
+        .map((v) => Math.round(v * (0.5 + 0.5 * 0.375)));
+      assert.equal(got, "rgb(" + expect.join(",") + ")");
+    }
+  }
+});
+
+test("terraform helper units never reach the model (units or feed)", async () => {
+  const snap = syntheticSnapshot();
+  // a terraunit: spawned, probed, and destroyed by unit 1
+  snap.unitDefs = new Map([
+    [10, { defID: 10, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
+    [77, { defID: 77, name: "terraunit", humanName: "Terraform", metalCost: 0, health: 10000, canMove: true, iconType: "" }],
+  ]);
+  snap.units.set(9, { unitID: 9, defID: 77, samples: [{ frame: 6, x: 100, z: 100, hp: 255, build: 255 }] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 9, int1: 77, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 9, int1: 1, int2: 0, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.pos.units.length, 3); // bytes still carry it (old artifacts)
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.ok(!model.units.some((u) => u.def === "terraunit"), "terraunit filtered from units");
+  assert.ok(!model.units.some((u) => u.id === 9), "terraunit track absent (not just renamed)");
+  assert.ok(model.units.some((u) => u.id === 1));
+  assert.ok(!model.feedData.some((f) => f.txt.includes("Terraform")), "no terraunit death in the feed");
+});
+
+test("recycled projectile IDs pack as two independent short flights", async () => {
+  const snap = syntheticSnapshot();
+  snap.closedProjectiles = [{
+    proID: 100, weaponDefID: 7, ownerTeam: 0,
+    samples: [
+      { frame: 6, x: 8192, z: 4096, y: 100 },
+      { frame: 12, x: 8196, z: 4100, y: 150 },
+      { frame: 18, x: 8200, z: 4104, y: 120 },
+    ],
+  }];
+  // same ID, ~2.7 min later: a completely unrelated missile
+  snap.projectiles.get(100)!.samples = [
+    { frame: 5000, x: 4096, z: 8192, y: 100 },
+    { frame: 5006, x: 4096, z: 8200, y: 150 },
+  ];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.proj.paths.length, 2);
+  const spans = artifact.proj.paths.map((p) => p.samples[p.samples.length - 1].frame - p.startFrame);
+  assert.ok(spans.every((s) => s <= 12), "each flight spans a handful of frames, not minutes: " + spans);
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.projectiles.length, 2);
+  assert.ok(model.projectiles[0].born !== model.projectiles[1].born);
+  // no sample jump inside either path (the old contamination marker)
+  for (const p of model.projectiles) {
+    for (let i = 1; i < p.path.length; i++) {
+      const dt = p.path[i].t - p.path[i - 1].t;
+      assert.ok(dt <= 0.6, "path step " + dt + "s exceeds one probe gap");
+    }
+  }
+});
+
+test("legacy artifacts: one contaminated proID path splits into two flights at model build", async () => {
+  const snap = syntheticSnapshot();
+  // exactly what the pre-fix ingest baked: two unrelated flights of the
+  // same recycled ID concatenated into a single track
+  snap.projectiles.get(100)!.samples = [
+    { frame: 6, x: 8192, z: 4096, y: 100 },
+    { frame: 12, x: 8196, z: 4100, y: 150 },
+    { frame: 5000, x: 4096, z: 8192, y: 100 },   // 166 s hole: ID reuse
+    { frame: 5006, x: 4096, z: 8200, y: 150 },
+  ];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.proj.paths.length, 1); // bytes are what they are
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.projectiles.length, 2, "split at the >1 s sample hole");
+  const [first, second] = model.projectiles;
+  assert.ok(Math.abs(first.end - 12 / 30) < 1e-6);
+  assert.ok(Math.abs(second.born - 5000 / 30) < 1e-6);
+  for (const p of model.projectiles) {
+    for (let i = 1; i < p.path.length; i++) {
+      assert.ok(p.path[i].t - p.path[i - 1].t <= 0.6, "no cross-map crawl steps");
+    }
+  }
+});
+
+test("morph deaths read as morphed: same-team spawn on the same spot, no wreck", async () => {
+  const snap = syntheticSnapshot();
+  // fixture death: unit 2 (team 1, def 11) dies at frame 900 with its only
+  // sample at {6, (4096, 8192)}: give it a morph target — a same-team unit
+  // spawning at frame 900 at that exact position
+  snap.units.set(3, { unitID: 3, defID: 12, samples: [
+    { frame: 900, x: 4096, z: 8192, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 3, int1: 12, int2: 1, int3: -1 });
+  // ...and a genuine kill with no same-spot respawn: unit 4 (team 0) dies at 400
+  snap.units.set(4, { unitID: 4, defID: 10, samples: [
+    { frame: 6, x: 100, z: 100, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 4, int1: 10, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 400, unitID: 4, int1: 1, int2: 0, int3: 42 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const m2 = model.units.find((x) => x.id === 2)!;
+  const m4 = model.units.find((x) => x.id === 4)!;
+  assert.equal(m2.morph, true, "death+same-spot same-team spawn within 4 s = morph");
+  assert.equal(m4.morph, false, "a kill with no respawn coincidence stays a death");
+  const morphRow = model.feedData.find((f) => f.cls === "morph")!;
+  assert.ok(morphRow, "feed has a morph row");
+  assert.match(morphRow.txt, /morphed into/);
+  assert.ok(model.feedData.some((f) => f.cls === "death" && f.txt.includes("destroyed")),
+    "the genuine kill still reads destroyed");
+  assert.ok(!model.feedData.some((f) => f.cls === "death" && f.txt.includes("Unit #2")),
+    "the morph victim is not reported destroyed");
+});
+
+test("morph gates: kills never morph, fakeunit proxies excluded, post-gameover cleanup is no cancel", async () => {
+  const snap = syntheticSnapshot();
+  // unit 2's death keeps its ENEMY killer (unit 1) while a teammate
+  // completes at the same spot in the same frame - a kill, never a morph
+  snap.events[2] = { kind: "death", frame: 900, unitID: 2, int1: 1, int2: 0, int3: 42 };
+  snap.units.set(3, { unitID: 3, defID: 12, samples: [
+    { frame: 900, x: 4096, z: 8192, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 3, int1: 12, int2: 1, int3: -1 });
+  // a killer-less complete death next to a fakeunit_los proxy spawn: the
+  // proxy is not a valid morph target (Scan Sweep LoS provider)
+  snap.unitDefs.set(13, { defID: 13, name: "fakeunit_los", metalCost: 5, health: 100, canMove: true, iconType: "none", humanName: "LOS Provider" });
+  snap.units.set(8, { unitID: 8, defID: 11, samples: [
+    { frame: 100, x: 6000, z: 6000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 8, int1: 11, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 8, int1: -1, int2: 1, int3: -1 });
+  snap.units.set(9, { unitID: 9, defID: 13, samples: [
+    { frame: 300, x: 6000, z: 6000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 300, unitID: 9, int1: 13, int2: 1, int3: -1 });
+  // a nanoframe dying killer-less AFTER the gameover frame (fixture gameover
+  // at 1500): defeat cleanup reads destroyed, not cancelled
+  snap.unitDefs.set(14, { defID: 14, name: "solarfake", metalCost: 70, health: 200, canMove: false, iconType: "energy_med", humanName: "Test Nanoframe" });
+  snap.units.set(10, { unitID: 10, defID: 14, samples: [
+    { frame: 1550, x: 2000, z: 4000, hp: 40, build: 60 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 1550, unitID: 10, int1: 14, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 1600, unitID: 10, int1: -1, int2: 0, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+  assert.ok(!model.units.find((x) => x.id === 2)!.morph,
+    "a killer-attributed death never pairs as a morph");
+  assert.ok(!model.feedData.some((f) => f.cls === "morph"), "no morph row despite the same-spot spawn");
+  assert.ok(model.feedData.some((f) => f.cls === "death" && f.txt.indexOf("Unit #2") !== -1),
+    "the kill still reads destroyed");
+  assert.ok(!model.units.some((x) => x.def === "fakeunit_los"),
+    "fakeunit_los units never reach the model");
+  assert.ok(!model.feedData.some((f) => f.txt.indexOf("LOS Provider") !== -1),
+    "no fakeunit feed noise");
+  assert.ok(!model.units.find((x) => x.id === 8)!.morph,
+    "a fakeunit child is not a morph target");
+  const cleanup = model.feedData.find((f) => f.txt.indexOf("Test Nanoframe") !== -1);
+  assert.ok(cleanup, "post-gameover destroy has a feed line");
+  assert.equal(cleanup!.cls, "death", "post-gameover cleanup reads destroyed, not cancelled");
+  assert.match(cleanup!.txt, /destroyed/);
+});
+
+test("commander morph reads chassis + level, cancelled nanoframes read cancelled", async () => {
+  const snap = syntheticSnapshot();
+  // team-0 commander chain: chassis def (humanName "Guardian") dies at 900
+  // exactly when dynassault1_00 spawns under it — ZK levels are shown as
+  // comm_level+1, so the message says level 2, not "morphed into dynassault1"
+  snap.unitDefs.set(50, { defID: 50, name: "dyntrainer_assault_base", metalCost: 1100, health: 4400, canMove: true, iconType: "commander1", humanName: "Guardian" });
+  snap.unitDefs.set(51, { defID: 51, name: "dynassault1_00", metalCost: 1100, health: 5000, canMove: true, iconType: "commander2", humanName: "" });
+  snap.units.set(5, { unitID: 5, defID: 50, samples: [
+    { frame: 6, x: 500, z: 500, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 5, int1: 50, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 900, unitID: 5, int1: -1, int2: 0, int3: -1 });
+  snap.units.set(6, { unitID: 6, defID: 51, samples: [
+    { frame: 900, x: 500, z: 500, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 6, int1: 51, int2: 0, int3: -1 });
+  // cancelled nanoframe: dies at build 12% with no killer — the builder
+  // cancelled the frame; the old read of this death was a false morph
+  snap.unitDefs.set(52, { defID: 52, name: "weaver", metalCost: 200, health: 250, canMove: true, iconType: "spidersupport", humanName: "Weaver" });
+  snap.units.set(7, { unitID: 7, defID: 52, samples: [
+    { frame: 300, x: 1000, z: 1000, hp: 30, build: 30 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 300, unitID: 7, int1: 52, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 400, unitID: 7, int1: -1, int2: 1, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const commMorph = model.feedData.find((f) => f.cls === "morph" && f.txt.includes("Guardian"));
+  assert.ok(commMorph, "feed carries the commander morph");
+  assert.match(commMorph!.txt, /Guardian morphed to level 2/,
+    "level = target def digit + 1 (ZK shows comm_level+1)");
+  const cancelled = model.feedData.find((f) => f.cls === "cancelled");
+  assert.ok(cancelled, "cancelled nanoframe death gets its own feed class");
+  assert.match(cancelled!.txt, /Weaver was cancelled/);
+  // a cancelled nanoframe with a same-spot replacement never reads as a morph
+  assert.ok(!model.units.some((u) => u.id === 7 && u.morph), "nanoframe victim is not a morph");
+  // commander level + effective value: base = level 0 at the recorded cost,
+  // dynassault1_00 = level 1 at base + the 50-metal first morph cost
+  const m5 = model.units.find((x) => x.id === 5)!;
+  const m6 = model.units.find((x) => x.id === 6)!;
+  assert.equal(m5.commLevel, 0, "base chassis def is comm level 0");
+  assert.equal(m5.metalValue, 1100, "base comm value is the recorded cost");
+  assert.equal(m6.commLevel, 1, "dynassault1_00 embeds comm level 1");
+  assert.equal(m6.metalValue, 1150, "level-1 value = 1100 base + first morph cost");
+});
+
+test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
+  assert.equal(ZkrReplay.unitValueClass("energysolar", "energy_med"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("staticmex", "mex"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("estorage", "storage"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("factoryspider", "facspider"), "other");
+  assert.equal(ZkrReplay.unitValueClass("striderhub", "t3hub"), "other");
+  assert.equal(ZkrReplay.unitValueClass("cloakjammer", "kbotjammer"), "other");
+  assert.equal(ZkrReplay.unitValueClass("staticradar", "radar"), "other");
+  assert.equal(ZkrReplay.unitValueClass("dyntrainer_assault_base", "commander1"), "other");
+  assert.equal(ZkrReplay.unitValueClass("cloakraid", "kbotraider"), "combat");
+  assert.equal(ZkrReplay.unitValueClass("turretaaclose", "defenseaa"), "combat");
+  assert.equal(ZkrReplay.unitValueClass("funnelweb", "mobiletachyon"), "combat");
+});
+
+test("model.players carries every roster player's elo/level with command counts", () => {
+  // mirrors the real demo: 10 players, three spectators, each player their
+  // own team; the old hardcoded table dropped four players' elo
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 100, map: { name: "M", dims: [16384, 16384] } },
+    roster: {
+      players: [
+        { name: "Sarathos", elo: 2591, level: 93, spectator: true, script: "player0" },
+        { name: "Boetvaardig", elo: 2216, level: 79, team: 0, spectator: false, script: "player1" },
+        { name: "kurikurin", elo: 1515, level: 4, team: 1, spectator: false, script: "player2" },
+        { name: "hallohallo", elo: 2045, level: 71, team: 2, spectator: false, script: "player3" },
+        { name: "WM1enjoyer", elo: 1156, level: 31, team: 6, spectator: false, script: "player9", clan: "RSMC" },
+      ],
+      teams: [
+        { num: 0, allyteam: 0 }, { num: 1, allyteam: 0 },
+        { num: 2, allyteam: 0 }, { num: 6, allyteam: 1 },
+      ],
+      allyteams: [], modoptions: null,
+    },
+    psta: [
+      { index: 1, numCommands: 566 },
+      { index: 2, numCommands: 1380 },
+      { index: 3, numCommands: 889 },
+      { index: 9, numCommands: 1435 },
+    ],
+    unitDefs: { units: [] }, weaponDefs: null, chat: null, eco: null, link: null,
+    proj: null, evnt: { records: [], maxFrame: 0 },
+    pos: { units: [], maxFrame: 0 },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  assert.equal(model.players.length, 4, "spectators are not team-table players");
+  const byName = new Map(model.players.map((p: { name: string }) => [p.name, p]));
+  assert.equal(byName.get("Boetvaardig")!.elo, 2216);
+  assert.equal(byName.get("kurikurin")!.elo, 1515, "kurikurin's elo must not be '—' anymore");
+  assert.equal(byName.get("hallohallo")!.elo, 2045);
+  assert.equal(byName.get("WM1enjoyer")!.elo, 1156, "WM1enjoyer's elo must not be '—' anymore");
+  assert.equal(byName.get("WM1enjoyer")!.clan, "RSMC");
+  assert.equal(byName.get("kurikurin")!.cmds, 1380, "commands joined from PSTAT by playerNum");
+  assert.equal(byName.get("Boetvaardig")!.ally, 0);
+  assert.equal(byName.get("WM1enjoyer")!.ally, 1);
+  // sorted by allyteam then team: the first three rows are allyteam 0
+  assert.ok(model.players.findIndex((p: { name: string }) => p.name === "WM1enjoyer") === 3);
 });

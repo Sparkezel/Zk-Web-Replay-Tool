@@ -48,7 +48,6 @@
   .stage{position:relative;background:#101416}
   canvas#replay{display:block;width:100%;height:460px}
   .stage .overlay-tl{position:absolute;top:10px;left:12px;font-size:12px;color:#c4ccd1;text-shadow:0 1px 2px #000;background:rgba(0,0,0,.35);padding:4px 10px;border-radius:4px}
-  .stage .overlay-tr{position:absolute;top:10px;right:12px;display:flex;flex-direction:column;gap:4px;font-size:12px;text-shadow:0 1px 2px #000}
   .victory{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(8,12,10,.55);flex-direction:column;gap:6px}
   .victory.show{display:flex}
   .victory .big{font-size:26px;font-weight:800;letter-spacing:1px;color:var(--gold);text-shadow:0 2px 6px #000}
@@ -68,6 +67,7 @@
   .team-table{width:100%;border-collapse:collapse;font-size:13px}
   .team-table th{text-align:left;color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;padding:4px 8px;border-bottom:1px solid var(--line)}
   .team-table td{padding:6px 8px;border-bottom:1px solid #30373b}
+  .team-table th.num,.team-table td.num{text-align:right;font-variant-numeric:tabular-nums}
   .dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
   .winner-row td{background:rgba(106,184,64,.08)}
   .win-txt{color:var(--accent);font-size:11.5px;margin-left:6px}
@@ -79,6 +79,8 @@
   .feed li{padding:5px 12px;border-bottom:1px solid #30373b;color:var(--dim)}
   .feed li b{color:var(--txt);font-weight:600}
   .feed li.death b{color:var(--t2)}
+  .feed li.morph b{color:#8fb0c9;font-style:italic}
+  .feed li.cancelled b{color:#b5998a;font-style:italic}
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
@@ -140,10 +142,6 @@
         <div class="stage">
           <canvas id="replay" width="1180" height="460"></canvas>
           <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
-          <div class="overlay-tr">
-            <div><span class="dot" style="background:var(--t1)"></span><span id="t1label">Team 1</span> · <span id="cnt1">0</span> units</div>
-            <div><span class="dot" style="background:var(--t2)"></span><span id="t2label">Team 2</span> · <span id="cnt2">0</span> units</div>
-          </div>
           <div class="victory" id="victory">
             <div class="big">Team 1 wins</div>
             <div class="sub">allyTeam 0 · 25:16 game time</div>
@@ -155,7 +153,23 @@
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
           <span class="speed" id="speeds"></span>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wrecks" checked> wrecks</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="wreckZones"> wrk zones</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="shields" checked> shields</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="cloaks" checked> cloaks</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1"> healthv1</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2" checked> healthv2</label>
           <span class="chip" id="chip">10 min/s preview</span>
+        </div>
+      </div>
+
+      <!-- ====== units per player (live during playback) ====== -->
+      <div class="panel">
+        <h2>Units per player</h2>
+        <div class="bd" style="padding:0;overflow-x:auto">
+          <table class="team-table" style="min-width:520px">
+            <tr><th></th><th>Player</th><th class="num">Combat value</th><th class="num">Economy value</th><th class="num">Other value</th><th class="num">Total units</th><th class="num">Units lost</th><th class="num">Value lost</th></tr>
+            <tbody id="unitCounts"></tbody>
+          </table>
         </div>
       </div>
 
@@ -210,17 +224,8 @@
         <h2>Teams</h2>
         <div class="bd" style="padding:0">
           <table class="team-table">
-            <tr><th></th><th>Player</th><th>ELO</th><th>Cmds</th></tr>
-            <tbody>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>SparkezelPL<span class="win-txt">✓</span></td><td>2622</td><td>1121</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>lostconnector<span class="win-txt">✓</span></td><td>2396</td><td>1159</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>CptSpackJarrow<span class="win-txt">✓</span></td><td>2140</td><td>670</td></tr>
-              <tr class="winner-row"><td><span class="dot" style="background:var(--t1)"></span></td><td>WM1enjoyer<span class="win-txt">✓</span></td><td>—</td><td>1435</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>ninse</td><td>2608</td><td>772</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>Boetvaardig</td><td>—</td><td>566</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>hallohallo</td><td>—</td><td>889</td></tr>
-              <tr><td><span class="dot" style="background:var(--t2)"></span></td><td>kurikurin</td><td>—</td><td>1380</td></tr>
-            </tbody>
+            <tr><th></th><th>Player</th><th>ELO</th><th>Lvl</th><th>Cmds</th></tr>
+            <tbody id="teamRows"></tbody>
           </table>
           <div class="bd" style="padding:10px 12px">
             <div style="margin:0 0 6px;color:var(--dim);font-size:12px">Chance of victory — Team 1: 55.5% · Team 2: 44.5%</div>
@@ -292,22 +297,72 @@ function buildSyntheticModel(){
   for(var s=0;s<=1516;s+=15){var f=s/1516;
     ecoPts.push([s,1-Math.pow(1-f,2.2)*(0.9+0.05*Math.sin(s*.05)),1-Math.pow(1-f,2.4)]);}
   return {END:END,units:units,projectiles:projectiles,feedData:feedData,ecoPts:ecoPts,blobs:blobs,
-    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],
+    winner:1,winnerLabel:"Team 2",teams:[1,2],synthetic:true,chatData:[],players:[],
+    wrecks:[],wreckZones:[],
     startPolys:[[[[.04,.3],[.2,.3],[.2,.7],[.04,.7]]],[[[.8,.3],[.96,.3],[.96,.7],[.8,.7]]]]};
 }
 
 /* ---------- artifact model (battle.zkr) ---------- */
+
+/* convex hull (monotone chain); pts are [x, y] in map-fraction space */
+function convexHull(pts){
+  var p=pts.slice().sort(function(a,b){return a[0]-b[0]||a[1]-b[1]});
+  if(p.length<3)return p;
+  var cross=function(o,a,b){return (a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0])};
+  var lo=[],up=[];
+  for(var i=0;i<p.length;i++){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p[i])<=0)lo.pop();lo.push(p[i]);}
+  for(var j=p.length-1;j>=0;j--){while(up.length>=2&&cross(up[up.length-2],up[up.length-1],p[j])<=0)up.pop();up.push(p[j]);}
+  lo.pop();up.pop();
+  return lo.concat(up);
+}
+
+/* greedy clustering of wreck points: a wreck joins a cluster when it is
+   within 300 elmos of the cluster's running CENTROID (member-to-member
+   chaining measured to merge battlefields into 400-wreck mega-polygons);
+   hull + centroid per cluster. The metal label is computed per draw
+   (wreck lifetimes matter). */
+function clusterWrecks(wrecks,mapW,mapH){
+  var R=300,clusters=[];
+  for(var i=0;i<wrecks.length;i++){
+    var w=wrecks[i],best=null,bestD=1e9;
+    for(var c=0;c<clusters.length;c++){
+      var cl=clusters[c];
+      var dx=(w.x-cl.cx)*mapW,dz=(w.y-cl.cy)*mapH;
+      var d=dx*dx+dz*dz;
+      if(d<=R*R&&d<bestD){best=cl;bestD=d;}
+    }
+    if(best){
+      var n=best.pts.length;
+      best.cx=(best.cx*n+w.x)/(n+1);best.cy=(best.cy*n+w.y)/(n+1);
+      best.pts.push(w);
+    }else clusters.push({pts:[w],cx:w.x,cy:w.y});
+  }
+  var zones=[];
+  for(var z=0;z<clusters.length;z++){
+    var pts=clusters[z].pts;
+    if(pts.length<3)continue;
+    zones.push({hull:convexHull(pts.map(function(p){return[p.x,p.y]})),cx:clusters[z].cx,cy:clusters[z].cy,wrecks:pts});
+  }
+  return zones;
+}
+
 function buildArtifactModel(artifact){
   var m=ZkrReplay.artifactToModel(artifact);
   var R=mulberry(2539874);
   var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
   var units=m.units.map(function(u){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
-    return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
+    return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
+      cls:u.cls||"combat",
+      /* build fraction at the last track sample: what was actually
+         invested when the unit died (nanoframe kills lost a fraction) */
+      bdEnd:u.track.length?u.track[u.track.length-1].bd:undefined,
+      commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
+      sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
   var projectiles=m.projectiles.map(function(p){
     return {born:p.born,impact:p.end,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
@@ -318,10 +373,36 @@ function buildArtifactModel(artifact){
   m.units.forEach(function(u){if(u.team>=0)tset[u.team]=1});
   var teams=Object.keys(tset).map(Number).sort(function(a,b){return a-b});
   if(teams.length===0)teams=[0];
+  /* losses per team: sorted death times + prefix sums of (count, value),
+     so the grid can read casualties at any draw frame in O(log n).
+     Morph victims are excluded (the unit continues as its target). */
+  var lossByTeam={};
+  units.forEach(function(u){
+    if(u.died>0&&!u.morph){
+      var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
+      d.t.push(u.died);
+      /* invested-at-death value: a killed nanoframe lost its build
+         fraction, not the full def cost (the real artifact's 33 cancels
+         counted 15k metal at full cost vs ~6.2k actually invested) */
+      d.v.push(u.metalValue>0?u.metalValue*(u.bdEnd===undefined?1:u.bdEnd):0);
+    }
+  });
+  var losses={};
+  Object.keys(lossByTeam).forEach(function(t){
+    var d=lossByTeam[t];
+    var idx=d.t.map(function(_,i){return i}).sort(function(a,b){return d.t[a]-d.t[b]});
+    var times=[],cnt=[],val=[],c=0,v=0;
+    idx.forEach(function(i){c++;v+=d.v[i];times.push(d.t[i]);cnt.push(c);val.push(v);});
+    losses[t]={times:times,cnt:cnt,val:val};
+  });
+  var wrecks=m.wrecks||[];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
-    teamNames:m.teamNames,teamMeta:m.teamMeta,startPolys:m.startPolys,teams:teams,
+    teamNames:m.teamNames,teamMeta:m.teamMeta,players:m.players||[],startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
+    wrecks:wrecks,
+    unitStats:losses,
+    wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
     END:m.END||1516,synthetic:false,
     links:m.links,
     mapW:m.mapW||0,mapH:m.mapH||0,
@@ -379,55 +460,180 @@ function draw(model,tm){
     });
     cx.setLineDash([]);cx.globalAlpha=1;cx.lineWidth=1;
   }
-  var n1=0,n2=0;
+  var liveStats={};
+  var wrecksOn=document.getElementById("wrecks").checked;
+  var shieldsOn=document.getElementById("shields").checked;
+  var cloaksOn=document.getElementById("cloaks").checked;
+  /* health style: v1 = green->red ring around hurt units; v2 (default) =
+     damage-darkened team colour, no ring. If both toggles are on, v1 wins. */
+  var hpv1On=document.getElementById("hpv1").checked;
+  var hpv2On=!hpv1On&&document.getElementById("hpv2").checked;
+
+  /* ------------- under-layer: wrecks, shield fields, cloak fields -------------
+     all of this renders BELOW every unit icon; radii use the single
+     horizontal px/elmo scale so fields always stay circles (the canvas
+     does not preserve the map aspect, per-axis scaling stretched them
+                 into ellipses). Artifacts without map dims (synthetic
+     fixtures) still render at the 16384-elmo default scale. */
+  var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
+  // wreck dots: alive wrecks only (features die when reclaimed), magenta
+  // at half transparency to keep the field uncluttered;
+  // (synthetic fallback models carry empty wreck lists)
+  if(wrecksOn){
+    cx.fillStyle="#ff44ff";
+    cx.globalAlpha=.5;
+    (model.wrecks||[]).forEach(function(w){
+      if(!(tm>=w.born&&(w.gone<0||tm<w.gone)))return;
+      cx.beginPath();cx.arc(w.x*W,w.y*H,2.2,0,7);cx.fill();
+    });
+    cx.globalAlpha=1;
+  }
+  // wreck zones: independent of the dots (metal spots are useful even with
+  // the dots hidden) - hull around each cluster + live metal per spot
+  if(document.getElementById("wreckZones").checked){
+    cx.font="10px system-ui,sans-serif";
+    cx.textAlign="center";
+    (model.wreckZones||[]).forEach(function(z){
+      var metal=0,count=0;
+      for(var i=0;i<z.wrecks.length;i++){
+        var wz=z.wrecks[i];
+        if(tm>=wz.born&&(wz.gone<0||tm<wz.gone)){metal+=wz.metal;count++;}
+      }
+      if(count<3)return;
+      /* per-zone: the hull stroke must not inherit the label outline
+         settings left by the previous iteration's strokeText */
+      cx.strokeStyle="rgba(255,68,255,.55)";
+      cx.lineWidth=1;
+      cx.beginPath();
+      z.hull.forEach(function(h,i){i===0?cx.moveTo(h[0]*W,h[1]*H):cx.lineTo(h[0]*W,h[1]*H);});
+      cx.closePath();cx.stroke();
+      var label=(metal>=1000?(metal/1000).toFixed(1)+"k":Math.round(metal))+" metal";
+      /* 1px black outline on each side of the glyph edge keeps the label
+         readable over the map image and wreck dots */
+      cx.strokeStyle="#000";cx.lineWidth=2;
+      cx.strokeText(label,z.cx*W,z.cy*H-4);
+      cx.fillStyle="rgba(255,68,255,.95)";
+      cx.fillText(label,z.cx*W,z.cy*H-4);
+    });
+    cx.textAlign="start";
+    cx.lineWidth=1;
+  }
+  // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
+  // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
+  if(shieldsOn){
+    model.units.forEach(function(u){
+      if(u.sr<200)return;
+      var pos=u.posAt(tm);
+      if(!pos||pos.sh===undefined)return;
+      var rx=u.sr*pxPerElmo;
+      if(rx<3)return;
+      cx.fillStyle=ZkrReplay.shieldColor(pos.sh,.2);
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
+      cx.strokeStyle=ZkrReplay.shieldColor(pos.sh,.5);cx.lineWidth=1;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
+    });
+  }
+  // cloak fields (iris/conjurer/etc.): only when the field actually runs —
+  // exact field bit on artifacts that record it, own-cloak fallback on
+  // older ones; a stalled field (unpowered) flashes red
+  if(cloaksOn){
+    var flash=(Math.sin(tm*5)+1)/2;
+    model.units.forEach(function(u){
+      if(u.cr<=0)return;
+      var pos=u.posAt(tm);
+      if(!pos)return;
+      var fieldOn,fieldStalled=false;
+      if(pos.cf!==undefined){fieldOn=pos.cf;fieldStalled=pos.cs;}
+      else fieldOn=pos.ck;
+      if(!fieldOn&&!fieldStalled)return;
+      var rx=u.cr*pxPerElmo;
+      if(rx<3)return;
+      var fill="rgba(110,190,255,.07)",stroke="rgba(110,190,255,.42)";
+      if(fieldStalled){
+        fill="rgba(255,80,80,"+(0.06+0.08*flash).toFixed(3)+")";
+        stroke="rgba(255,"+Math.round(60+120*flash)+",60,"+(0.35+0.3*flash).toFixed(3)+")";
+      }
+      cx.fillStyle=fill;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
+      cx.strokeStyle=stroke;cx.lineWidth=1;
+      cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
+    });
+  }
+
   model.units.forEach(function(u){
-    var pos=u.posAt(tm);
-    if(!pos)return;
-    if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
-    var x=pos.x*W,y=pos.y*H;
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
-    /* area-cloak field (Iris etc.): light-blue circle scaled by the unit's
-       in-game cloak radius against the map's elmo size per axis — the mockup
-       canvas need not be square, and Radiohead^-1 maps are not either */
-    if(u.cr>0&&model.mapW>0&&model.mapH>0){
-      var crW=u.cr/model.mapW*W,crH=u.cr/model.mapH*H;
-      cx.fillStyle="rgba(110,190,255,.07)";
-      cx.beginPath();cx.ellipse(x,y,crW,crH,0,0,7);cx.fill();
-      cx.strokeStyle="rgba(110,190,255,.42)";cx.lineWidth=1;
-      cx.beginPath();cx.ellipse(x,y,crW,crH,0,0,7);cx.stroke();
+    /* dynamic commanders grow with level (def digit dynXX<N>_ , 0=_base):
+      x1.0 for the fresh chassis, +0.2 per level, capped at x2 — the
+      cost-based size above saturates at its 9 px ceiling for every
+      regular unit, so only leveled comms ever exceed it */
+    if(u.commLevel)r*=Math.min(2,1+0.2*u.commLevel);
+    var pos=u.posAt(tm);
+    if(!pos)return;
+    if(u.t!==undefined){
+      var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
+      st.n++;
+      /* value on the field counts what is invested: units still under
+         construction contribute their build fraction of full value */
+      var invested=(pos.bd!==undefined&&pos.bd<1)?pos.bd:1;
+      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalValue>0?u.metalValue:0)*invested;
     }
+    var x=pos.x*W,y=pos.y*H;
     var alpha=1;
     /* ghost units: vanished from tracking without a death event before the
        battle ended (wrecks / missing kills) — drawn transparent, or hidden
        with the "wrecks" toggle; under-construction units fade in
        (synthetic-preview units carry no track — the guard keeps them drawn) */
     if(u.track&&u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
-      if(!document.getElementById("wrecks").checked)return;
+      if(!wrecksOn)return;
       alpha=0.45;
     }else if(pos.bd!==undefined&&pos.bd<1){
       alpha=0.3+0.7*pos.bd;
     }
     cx.globalAlpha=alpha;
+    /* healthv2: the team colour itself darkens as the unit takes damage
+       (full hp = exact colour, nearly dead = 50% of each channel);
+       building units stay at full colour — their progress reads from the
+       yellow build bar below, not from their (growing) hp */
+    var col=teamColor(u.t);
+    if(hpv2On&&pos.hp!==undefined&&!(pos.bd!==undefined&&pos.bd<1)){
+      col=ZkrReplay.damageShade(col,pos.hp);
+    }
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
-    var tinted=img?ZkrReplay.tintIcon(img,teamColor(u.t)):null;
+    var tinted=img?ZkrReplay.tintIcon(img,col):null;
     if(tinted){
       cx.drawImage(tinted,x-r,y-r,r*2,r*2);
     }else{
-      cx.fillStyle=teamColor(u.t);
+      cx.fillStyle=col;
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
     cx.globalAlpha=1;
+    /* under construction: icon-width yellow build bar (3 px, black
+       background) instead of a from-zero health readout */
+    if(pos.bd!==undefined&&pos.bd<1){
+      cx.fillStyle="#000";cx.fillRect(x-r,y+r+2.5,r*2,3);
+      cx.fillStyle="#ffe14d";cx.fillRect(x-r,y+r+2.5,r*2*pos.bd,3);
+    }
     /* cloaked (own cloak or inside an Iris field): small cyan dot
        beneath the icon — non-intrusive, readable at any zoom */
     if(pos.ck){
       cx.fillStyle="#4be3ff";
       cx.beginPath();cx.arc(x,y+r+2.2,1.8,0,7);cx.fill();
     }
-    /* health ring: shown only when the unit has actually lost hp below its
-       own peak (hurt), and its build is finished; green (full) -> orange
+    /* fallback shield charge bar (right of the icon, full icon height, 3 px):
+       shown when area-shield circles are toggled off for this unit, and
+       ALWAYS for personal-shield units (thug/felon/commander shield module
+       — radius < 200, never an area circle). Charge fills from the bottom,
+       same deep blue -> deep red gradient as the circles */
+    if(u.sr>0&&pos.sh!==undefined&&(u.sr<200||!shieldsOn)){
+      cx.fillStyle="#000";cx.fillRect(x+r+2,y-r,3,2*r);
+      cx.fillStyle=ZkrReplay.shieldColor(pos.sh,1);
+      cx.fillRect(x+r+2,y-r+2*r*(1-pos.sh),3,2*r*pos.sh);
+    }
+    /* health ring (v1): shown only when the unit has actually lost hp below
+       its own peak (hurt), and its build is finished; green (full) -> orange
        (60%) -> deep red (0) */
-    if(pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
+    if(hpv1On&&pos.hp!==undefined&&u.hpMax!==undefined&&pos.hp<u.hpMax-0.002&&(pos.bd===undefined||pos.bd>=0.99)){
       cx.strokeStyle=ZkrReplay.hpColor(pos.hp);
       cx.lineWidth=1.4;
       cx.beginPath();cx.arc(x,y,r+2,0,7);cx.stroke();
@@ -442,8 +648,7 @@ function draw(model,tm){
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
     cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
   });
-  document.getElementById("cnt1").textContent=n1;
-  document.getElementById("cnt2").textContent=n2;
+  renderUnitStats(model,liveStats,tm);
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
   document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
   document.getElementById("timeline").value=Math.min(tm,model.END);
@@ -536,13 +741,82 @@ function teamLabelOf(model,team){
   var n=model.teamNames&&model.teamNames[team];
   return n?n:("Team "+(team+1));
 }
+
+/* Teams table: real roster rows (name, elo/level from the demo startscript,
+   engine-reported command count from PSTAT) instead of the hardcoded mock
+   markup — everyone gets their ELO if the demo carries it */
+function renderTeams(model){
+  var el=document.getElementById("teamRows");
+  if(!el)return;
+  var html="";
+  (model.players||[]).forEach(function(p){
+    var winner=model.winner!==null&&model.winner!==undefined&&p.ally===model.winner;
+    html+='<tr'+(winner?' class="winner-row"':'')+'>'+
+      '<td><span class="dot" style="background:'+teamColor(p.team)+'"></span></td>'+
+      '<td>'+esc(p.name)+(p.clan?' <span style="color:var(--dim)">['+esc(p.clan)+']</span>':'')+(winner?'<span class="win-txt">✓</span>':'')+'</td>'+
+      '<td>'+(p.elo!==undefined?p.elo:'—')+'</td>'+
+      '<td>'+(p.level!==undefined?p.level:'—')+'</td>'+
+      '<td>'+(p.cmds!==undefined?p.cmds:'—')+'</td></tr>';
+  });
+  el.innerHTML=html;
+}
+
+/* live per-player stats grid: alive unit VALUE by class (combat/economy/
+   other), alive unit count, and cumulative losses (count + value), all
+   read at the current replay time. Every numeric column is colour-scaled
+   against the other players right now — highest green, lowest red, and
+   the loss columns inverted (losing least is green). Terraform helpers
+   and other fake units are already excluded at model-build time. */
+function fmtStat(v){return v>=10000?Math.round(v/1000)+"k":v>=1000?(v/1000).toFixed(1)+"k":String(Math.round(v));}
+function statCellColor(v,min,max,invert){
+  if(!isFinite(v)||max<=min)return "";
+  var f=(v-min)/(max-min);if(invert)f=1-f;
+  if(f<0)f=0;if(f>1)f=1;
+  var h=Math.round(10+(150-10)*f); /* red 10 -> green 150 */
+  return "hsla("+h+",75%,45%,.30)";
+}
+function lossStatsAt(model,team,tm){
+  var d=model.unitStats&&model.unitStats[team];
+  if(!d||!d.times.length)return {n:0,v:0};
+  var lo=0,hi=d.times.length-1;
+  if(tm<d.times[0])return {n:0,v:0};
+  while(lo<hi){var mid=(lo+hi+1)>>1;if(d.times[mid]<=tm)lo=mid;else hi=mid-1;}
+  return {n:d.cnt[lo],v:d.val[lo]};
+}
+function renderUnitStats(model,live,tm){
+  var el=document.getElementById("unitCounts");
+  if(!el)return;
+  var teams=model.teams||[];
+  var rows=teams.map(function(t){
+    var st=live[t]||{n:0,combat:0,econ:0,other:0};
+    var ls=model.synthetic?{n:0,v:0}:lossStatsAt(model,t,tm);
+    return {team:t,combat:st.combat,econ:st.econ,other:st.other,n:st.n,lost:ls.n,lostVal:ls.v};
+  });
+  var cols=["combat","econ","other","n","lost","lostVal"];
+  var invert={lost:1,lostVal:1};
+  var min={},max={};
+  cols.forEach(function(c){
+    min[c]=Infinity;max[c]=-Infinity;
+    rows.forEach(function(r){if(r[c]<min[c])min[c]=r[c];if(r[c]>max[c])max[c]=r[c];});
+  });
+  var html="";
+  rows.forEach(function(r){
+    html+='<tr data-team="'+r.team+'" data-units="'+r.n+'"><td><span class="dot" style="background:'+teamColor(r.team)+'"></span></td>'+
+      '<td>'+esc(teamLabelOf(model,r.team))+'</td>';
+    cols.forEach(function(c){
+      html+='<td class="num" style="background:'+statCellColor(r[c],min[c],max[c],!!invert[c])+'">'+
+        fmtStat(r[c])+'</td>';
+    });
+    html+='</tr>';
+  });
+  el.innerHTML=html;
+}
+
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
-  var ts=model.teams||[];
-  if(ts.length>=1)document.getElementById("t1label").textContent=teamLabelOf(model,ts[0]);
-  if(ts.length>=2)document.getElementById("t2label").textContent=teamLabelOf(model,ts[1]);
+  renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
   t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
 }

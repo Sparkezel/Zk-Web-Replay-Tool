@@ -3,4 +3,5 @@ dist/
 *.tsbuildinfo
 __pycache__/
 *.pyc
-battle.zkr
+# local artifact backups (the deployed example artifact itself IS tracked)
+mockup/battle.zkr.*

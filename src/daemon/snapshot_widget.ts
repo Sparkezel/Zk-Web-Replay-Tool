@@ -44,6 +44,18 @@ local knownWeaponDefs = {}
 -- 5x, 0.5 below 10x, 1.0 beyond
 local targetSpeed = tonumber("__ZKR_SPEED_FACTOR__") or 1
 
+-- engine bookkeeping units (ZK terraform helper "terraunit") are invisible
+-- blobs created by terraform gadgets; tracking their hp/position is noise, so
+-- they never get spawn/death events or probe rows
+local excludedDefIDs = {}
+local excludedUnitIDs = {}
+
+-- shield info per unitdef (computed at udef discovery): the Shield weapon's
+-- shieldPower gives the max charge for runtime fraction reads; the radius
+-- (>= 200 elmos = area shield in ZK's own classification) travels in the
+-- UDEF section and decides circle vs fallback bar in the viewer
+local shieldPowerByDef = {}
+
 local function emit(json)
   Spring.Echo("ZKR " .. json)
 end
@@ -106,11 +118,31 @@ local function maybeUdef(defID)
     end
     if radius ~= nil then cloakRadius = radius end
   end
+  -- shield discovery: the first Shield-type weapon carries radius/max
+  -- charge (shieldPower). Radius >= 200 = area shield (aspis, aegis,
+  -- funnelweb, comm areashield module); smaller personal shields (thug,
+  -- felon, comm personal module) get the fallback bar only
+  local shieldRadius, shieldPower
+  for i = 1, #weapons do
+    local wd = WeaponDefs[weapons[i] ~= nil and (weapons[i].weaponDef or weapons[i][1]) or nil]
+    if wd ~= nil and wd.type == "Shield" then
+      shieldRadius = wd.shieldRadius or 0
+      shieldPower = wd.shieldPower or 0
+      break
+    end
+  end
+  if shieldRadius ~= nil then
+    shieldPowerByDef[defID] = shieldPower
+  end
   local cr = ""
   if cloakRadius ~= nil then cr = ',"cr":' .. cloakRadius end
+  local sr = ""
+  if shieldRadius ~= nil then
+    sr = ',"sr":' .. shieldRadius .. ',"sp":' .. shieldPower
+  end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. '}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. '}')
 end
 
 local function maybeWdef(defID)
@@ -126,10 +158,16 @@ local function maybeWdef(defID)
 end
 
 function widget:Initialize()
+  for defID = 1, #UnitDefs do
+    if UnitDefs[defID] ~= nil and UnitDefs[defID].name == "terraunit" then
+      excludedDefIDs[defID] = true
+    end
+  end
   emit('{"t":"meta","w":' .. num(Game.mapSizeX) .. ',"h":' .. num(Game.mapSizeZ) .. '}')
 end
 
 function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
+  if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = true return end
   maybeUdef(unitDefID)
   local name = ""
   if unitDefID ~= nil and UnitDefs[unitDefID] ~= nil then name = UnitDefs[unitDefID].name or "" end
@@ -146,10 +184,85 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
+  if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
   if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
     ',"k":' .. (attackerID or -1) .. ',"kt":' .. (attackerTeam or -1) ..
     ',"w":' .. (weaponDefID or attackerDefID or -1) .. '}')
+end
+
+-- wreck features: Spring spawns a *_dead / *_heap feature when a unit dies;
+-- reclaiming (or collapsing) destroys it, so the viewer can paint wreck
+-- dots with the engine-authoritative metal and remove them on reclaim.
+-- The headless resim engine (spring-headless.exe) does NOT deliver the
+-- unsynced FeatureCreated/FeatureDestroyed callins (proven on the Otago
+-- resim: 1015 corpses, zero wrk lines despite on-map reclamation), so the
+-- lifecycle is POLLED once per second over Spring.GetAllFeatures() - new
+-- wreck-named features are announced, disappeared ones uwrk'd. Where the
+-- callins do fire they share the same registry and nothing double-emits.
+local wreckFeatures = {}
+local wreckDefCache = {}
+
+function isWreckFeatureName(name)
+  if name == nil then return false end
+  return string.find(name, "_dead", -5, true) ~= nil
+    or string.find(name, "_heap", -5, true) ~= nil
+    or string.find(name, "_wreck", -6, true) ~= nil
+end
+
+local function isWreckDefID(fdid)
+  if fdid == nil then return false end
+  local cached = wreckDefCache[fdid]
+  if cached == nil then
+    local fd = FeatureDefs[fdid]
+    cached = (fd ~= nil and isWreckFeatureName(fd.name)) or false
+    wreckDefCache[fdid] = cached
+  end
+  return cached
+end
+
+local function emitWreck(featureID, fdid)
+  local fd = FeatureDefs[fdid]
+  local x, _, z = Spring.GetFeaturePosition(featureID)
+  emit('{"t":"wrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID ..
+    ',"m":' .. num(fd and fd.metal) ..
+    ',"x":' .. num(x) .. ',"z":' .. num(z) .. '}')
+end
+
+function widget:FeatureCreated(featureID)
+  local fdid = Spring.GetFeatureDefID(featureID)
+  if not isWreckDefID(fdid) or wreckFeatures[featureID] then return end
+  wreckFeatures[featureID] = true
+  emitWreck(featureID, fdid)
+end
+
+function widget:FeatureDestroyed(featureID)
+  if not wreckFeatures[featureID] then return end
+  wreckFeatures[featureID] = nil
+  emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID .. '}')
+end
+
+-- 1-second lifecycle poll (the headless engine skips the callins above)
+local function pollWreckFeatures()
+  local alive = {}
+  local feats = (Spring.GetAllFeatures ~= nil and Spring.GetAllFeatures()) or {}
+  for i = 1, #feats do
+    local fid = feats[i]
+    alive[fid] = true
+    if not wreckFeatures[fid] then
+      local fdid = Spring.GetFeatureDefID(fid)
+      if isWreckDefID(fdid) then
+        wreckFeatures[fid] = true
+        emitWreck(fid, fdid)
+      end
+    end
+  end
+  for fid in pairs(wreckFeatures) do
+    if not alive[fid] then
+      wreckFeatures[fid] = nil
+      emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. fid .. '}')
+    end
+  end
 end
 
 -- port of the daemon-side spec §C classifier (src/daemon/classify.ts): only
@@ -185,6 +298,25 @@ if projMode == "none" then keepProjClass = {}
 elseif projMode == "beams" then keepProjClass = { [1] = true }
 elseif projMode == "all" then keepProjClass = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true } end
 
+-- shield charge fraction (0..1) for a unit right now; nil when it has no
+-- shield. Dyncomms publish their runtime shield module via comm_shield_*
+-- rules params (weapon number + max charge) because the module is not part
+-- of the base unitdef; regular units use the unitdef's Shield weapon
+local function shieldFrac(uid, defID)
+  local max = shieldPowerByDef[defID] or 0
+  local charge
+  local commMax = Spring.GetUnitRulesParam(uid, "comm_shield_max")
+  if commMax ~= nil and commMax > 0 then
+    max = commMax
+    local commNum = Spring.GetUnitRulesParam(uid, "comm_shield_num")
+    charge = select(2, Spring.GetUnitShieldState(uid, commNum))
+  elseif max > 0 then
+    charge = select(2, Spring.GetUnitShieldState(uid))
+  end
+  if charge == nil or max <= 0 then return nil end
+  return math.max(0, math.min(1, charge / max))
+end
+
 function widget:GameFrame(frame)
   maybeSendStartboxes()
   -- press /speedup every probe frame while the engine's wanted factor is below
@@ -197,20 +329,33 @@ function widget:GameFrame(frame)
     end
   end
   if frame % probeEvery ~= 0 then return end
+  -- wreck lifecycle poll: every 30 frames (1 s) - the headless engine
+  -- never delivers the FeatureCreated/FeatureDestroyed callins
+  if frame % 30 == 0 then pollWreckFeatures() end
   local units = Spring.GetAllUnits()
   local rows = {}
   for i = 1, #units do
     local uid = units[i]
-    local x, y, z = Spring.GetUnitPosition(uid)
-    local hp, maxHp = Spring.GetUnitHealth(uid)
-    local build = select(5, Spring.GetUnitHealth(uid))
-    -- cloak state: 1 when the unit is cloaked right now (own cloak or inside
-    -- an Iris/Onion area field) — the viewer draws a cyan dot under it
-    local ck = false
-    if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
-    rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
-      "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
-      "," .. frac(build and 1 or nil) .. "," .. (ck and 1 or 0) .. "]"
+    if excludedUnitIDs[uid] ~= true then
+      local x, y, z = Spring.GetUnitPosition(uid)
+      local hp, maxHp = Spring.GetUnitHealth(uid)
+      local build = select(5, Spring.GetUnitHealth(uid))
+      -- cloak bits: 1 = unit cloaked right now (own/personal/ally-field), the
+      -- viewer draws a cyan dot under it; 2 = THIS unit's area-cloak field is
+      -- active (ZK's cloak_shield gadget rules param: 2 = grown and running,
+      -- 1 = stalled/unpowered -> bit 4, 0 = toggled off)
+      local ck = false
+      if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
+      local cs = Spring.GetUnitRulesParam(uid, "cloak_shield")
+      local cf = cs == 2
+      local csBit = cs == 1
+      local sh = shieldFrac(uid, Spring.GetUnitDefID(uid))
+      rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
+        "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
+        "," .. frac(build) .. "," ..
+        ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0)) ..
+        "," .. frac(sh) .. "]"
+    end
   end
   if #rows > 0 then
     emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')

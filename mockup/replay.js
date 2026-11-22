@@ -22,10 +22,66 @@
   "use strict";
 
   const FPS = 30;
-  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover"];
+  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
+  /* morph pairing: ZK's morph gadget spawns the target in the very frame
+     the victim dies (measured 0-frame delta on real comms); 0.4 s admits
+     probe quantization while a same-spot REBUILD (minutes later, or a
+     nanoframe at bd<1) no longer reads as a morph */
+  const MORPH_PAIR_WINDOW_SEC = 0.4;
+  /* engine bookkeeping units (ZK's terraform helper) are not real units —
+     their hp is meaningless and they are never rendered or fed */
+  const EXCLUDED_UNIT_DEFS = new Set(["terraunit"]);
+
+  /** defs that must never reach the model, feed or pairing: the terraform
+   *  helper plus ZK's own invisible proxy units (fakeunit_los is the Scan
+   *  Sweep LoS provider spawned at y=10000 — it also poisons the morph
+   *  pairing, because a dying plane within 80 elmos of the spawn point
+   *  reads as "morphed into LOS Provider") */
+  function isExcludedDef(defName) {
+    const n = String(defName || "").toLowerCase();
+    return EXCLUDED_UNIT_DEFS.has(n) || n.indexOf("fakeunit") === 0;
+  }
+
+  /** Coarse unit-value class for the per-player stats grid, from the UDEF
+   *  iconType (Spring icons are reliable well past per-fallback heuristics):
+   *  econ = production & storage (energy icons, mex, pylon), other = factories, pads,
+   *  builders, radar, jammers and commanders, everything else = combat. */
+  function unitValueClass(defName, iconType) {
+    const ic = String(iconType || defName || "").toLowerCase();
+    const nm = String(defName || "").toLowerCase();
+    if (ic.indexOf("energy") === 0 || ic === "mex" || ic === "storage" ||
+        ic === "pylon" || nm.indexOf("energy") === 0) return "econ";
+    if (ic.indexOf("fac") === 0 || ic.indexOf("pad") === 0 || ic === "builder" ||
+        ic === "staticbuilder" || ic === "radar" || ic === "advradar" ||
+        ic.indexOf("jammer") !== -1 || ic.indexOf("commander") === 0 ||
+        ic === "none" || /factory|gantry|hub/.test(nm)) return "other";
+    return "combat";
+  }
+
+  /* Dynamic commander levels: the generated level defs embed ZK's comm_level
+     as the digit in dyn<chassis><level>_<modules>; the chassis base defs
+     end in "_base" and are level 0 (the game displays level+1). ZK never
+     updates the generated def's metalCost, so a leveled comm still records
+     its ~1100 base cost in UDEF — its investment lives in the level morph
+     costs (dynamic_comm_defs.lua morphCosts) plus per-module costs; the
+     module share is not recoverable from the artifact and stays uncounted */
+  const COMM_MORPH_BASE_COSTS = [50, 100, 150, 200, 250];
+  function commLevelOfDef(defName) {
+    if (!defName) return undefined;
+    if (/_base$/.test(defName)) return 0;
+    const m = /^dyn[a-z]+(\d+)_/.exec(defName);
+    return m ? Number(m[1]) : undefined;
+  }
+  function commValueOfDef(defName, baseCost) {
+    const lvl = commLevelOfDef(defName);
+    if (lvl === undefined || baseCost === undefined || baseCost < 0) return undefined;
+    let add = 0;
+    for (let i = 0; i < lvl && i < COMM_MORPH_BASE_COSTS.length; i++) add += COMM_MORPH_BASE_COSTS[i];
+    return baseCost + add;
+  }
 
   /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
      green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
@@ -67,6 +123,64 @@
     else hue = 5 + (32 - 5) * Math.max(0, hp) / 0.6;
     const light = hp >= 0.6 ? 47 : 55 - 10 * hp / 0.6;
     return "hsl(" + Math.round(hue) + ",95%," + Math.round(light) + "%)";
+  }
+
+  /** hsl (0..360, 0..1, 0..1) -> [r, g, b] each 0..255 */
+  function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs(hp % 2 - 1));
+    let r = 0, g = 0, b = 0;
+    if (hp < 1) { r = c; g = x; }
+    else if (hp < 2) { r = x; g = c; }
+    else if (hp < 3) { g = c; b = x; }
+    else if (hp < 4) { g = x; b = c; }
+    else if (hp < 5) { r = x; b = c; }
+    else { r = c; b = x; }
+    const m = l - c / 2;
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  }
+
+  /** healthv2 damage shading: the unit's team colour IS its health bar —
+      full hp shows the exact team colour, damage darkens the colour vector
+      toward 50% (never below, so a nearly-dead unit still reads as its
+      team's hue, just much darker). hp is 0..1, quantized to 16 steps: the
+      tint cache keys on the returned colour, and a shade per raw u8 hp level
+      grew the icon cache to 12k offscreen canvases on a real sweep —
+      17 reachable shades read identically and keep the cache bounded.
+      Unparseable colours / absent hp pass through unchanged. */
+  function damageShade(color, hp) {
+    if (hp === null || hp === undefined || !isFinite(hp)) return color;
+    const h = Math.round(Math.max(0, Math.min(1, hp)) * 16) / 16;
+    const k = 0.5 + 0.5 * h;
+    let rgb = null;
+    const s = String(color);
+    const m = /^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/.exec(s);
+    if (m) {
+      rgb = hslToRgb(Number(m[1]), Number(m[2]) / 100, Number(m[3]) / 100);
+    } else {
+      const hex = /^#([0-9a-f]{6})$/i.exec(s);
+      if (hex) {
+        rgb = [0, 1, 2].map((j) => parseInt(hex[1].slice(j * 2, j * 2 + 2), 16));
+      }
+    }
+    if (!rgb) return color;
+    return "rgb(" + rgb.map((v) => Math.round(v * k)).join(",") + ")";
+  }
+
+  /** shield charge colour: ZK's own shield rendering lerps between
+      shieldGoodColor (0.1 0.1 1 → rgb 26,26,255) at full charge and
+      shieldBadColor (1 0.1 0.1 → rgb 255,26,26) when drained, smoothly.
+      Charge is 0..1 (deep red) .. (deep blue). */
+  function shieldColor(charge, alpha) {
+    const c = Math.max(0, Math.min(1, charge));
+    const r = Math.round(255 + (26 - 255) * c);
+    const g = 26;
+    const b = Math.round(26 + (255 - 26) * c);
+    return alpha === undefined
+      ? "rgb(" + r + "," + g + "," + b + ")"
+      : "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
   }
 
   /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
@@ -172,23 +286,24 @@
     return iconCache.get(iconType);
   }
 
-  /* Recolour a unit icon into the owning player's colour. Spring unit icons
-     are white/greyscale with alpha, so a multiply tint preserves the shape
-     while taking the team hue. Results are cached offscreen per (src, colour). */
+  /* Recolour a unit icon into the owning player's colour, exactly like the
+     game does: Spring icons are black linework on grey scale fills, and a
+     plain multiply keeps the black lines black while the grey interiors take
+     the team hue. Results are cached offscreen per (src, colour). */
   const tintCache = new Map();
   function tintIcon(img, color) {
     if (!img || !img.complete || !img.naturalWidth || !color) return null;
     const key = (img.src || "") + "|" + color;
     if (!tintCache.has(key)) {
+      /* healthv2 feeds a shade per hp level, which would grow this cache
+         unbounded (12k+ offscreen canvases measured on a full sweep);
+         quantizing the shade below keeps live entries low, and the cap
+         guarantees the ceiling even with many icons */
+      if (tintCache.size > 600) tintCache.clear();
       const c = document.createElement("canvas");
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       const g = c.getContext("2d");
       g.drawImage(img, 0, 0);
-      /* the dds art is mid-grey (avg ~50%); raise its luminance floor first
-         or the multiply below turns icons nearly invisible on dark maps */
-      g.globalCompositeOperation = "lighten";
-      g.fillStyle = "#b4b4b4";
-      g.fillRect(0, 0, c.width, c.height);
       g.globalCompositeOperation = "multiply";
       g.fillStyle = color;
       g.fillRect(0, 0, c.width, c.height);
@@ -214,7 +329,7 @@
   const POS_PROBE_EVERY = 6;
 
   function decodePos(dv, u8, version) {
-    const p = { units: [], maxFrame: 0 };
+    const p = { version, units: [], maxFrame: 0 };
     let o = 0;
     const numUnits = dv.getUint32(o, true); o += 4;
     for (let i = 0; i < numUnits; i++) {
@@ -237,9 +352,21 @@
         }
         const hp = u8[o] / 255; o += 1;
         const build = u8[o] / 255; o += 1;
-        let ck = false;
-        if (version >= 2) { ck = (u8[o] & 1) !== 0; o += 1; }
-        samples.push({ frame, x, z, hp, build, ck });
+        let ck = false, cf = undefined, cs = undefined, sh = undefined;
+        // v3 adds the own-field/cloak-stall bits and a shield charge byte;
+        // v1/v2 artifacts predate them — bit1/bit2 are padding there, so cf/cs
+        // stay undefined and the viewer falls back to ck for the field state
+        if (version >= 3) {
+          const flags = u8[o]; o += 1;
+          ck = (flags & 1) !== 0;
+          cf = (flags & 2) !== 0;
+          cs = (flags & 4) !== 0;
+          const sv = u8[o]; o += 1;
+          if (sv !== 255) sh = sv / 254;
+        } else if (version === 2) {
+          ck = (u8[o] & 1) !== 0; o += 1;
+        }
+        samples.push({ frame, x, z, hp, build, ck, cf, cs, sh });
       }
       p.units.push({ unitID, defID, firstFrame, samples });
       if (frame > p.maxFrame) p.maxFrame = frame;
@@ -394,12 +521,22 @@
     const teamByUnit = new Map();
     const defByUnit = new Map();
     const deathByUnit = new Map();
+    const killerByUnit = new Map();
     let winner = null;
     let endFrame = 0;
+    let gameOverFrame = -1;
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") { teamByUnit.set(r.unitID, r.int2); defByUnit.set(r.unitID, r.int1); }
-      else if (r.kind === "death") { deathByUnit.set(r.unitID, r.frame); endFrame = Math.max(endFrame, r.frame); }
-      else if (r.kind === "gameover") { winner = r.int1 >= 0 ? r.int1 : winner; endFrame = Math.max(endFrame, r.frame); }
+      else if (r.kind === "death") {
+        deathByUnit.set(r.unitID, r.frame);
+        killerByUnit.set(r.unitID, r.int1);
+        endFrame = Math.max(endFrame, r.frame);
+      }
+      else if (r.kind === "gameover") {
+        winner = r.int1 >= 0 ? r.int1 : winner;
+        endFrame = Math.max(endFrame, r.frame);
+        gameOverFrame = Math.max(gameOverFrame, r.frame);
+      }
     }
     if (defByUnit.size === 0) for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") defByUnit.set(r.unitID, r.int1);
@@ -417,7 +554,76 @@
         // def predates the column — its known in-game value is the fallback
         cloakRadius: row.length > 7 && row[7] > 0 ? row[7]
           : row[1] === "cloakjammer" ? 350 : undefined,
+        // UDEF v3 columns: Shield-type weapon radius (>= 200 elmos counts as
+        // an area shield: aspis/aegis/funnelweb/comm areashield; smaller
+        // personal shields — thug/felon/comm personal module — feed the
+        // fallback charge bar only) and its max charge (shieldPower)
+        shieldRadius: row.length > 8 && row[8] > 0 ? row[8] : undefined,
+        shieldPower: row.length > 9 && row[9] > 0 ? row[9] : undefined,
       });
+    }
+    const defNameOfUnit = (unitID) => {
+      const d = defByUnit.get(unitID);
+      const info = d !== undefined ? udef.get(d) : null;
+      return info ? info.name : null;
+    };
+
+    /* ZK morphs destroy the old unit and spawn its target at the same spot
+       in the same frame; EVNT carries only death, so morphs read as
+       "destroyed" and would leave a wreck dot under the live morphed unit.
+       A REAL morph victim is a complete unit (bd = 1) which destroys ITSELF
+       — the engine records no killer — and whose target spawns complete
+       within 0.4 s within 80 elmos. A nanoframe death is a kill or the
+       builder cancelling the frame; a same-spot rebuild starts at bd < 1;
+       a death with an enemy killer attributed is a kill — none of them
+       pair as a morph. Excluded (terra/fakeunit) defs never enter either
+       side of the pairing. Cavem: unit_morph copies buildProgress to the
+       target (an unfinished unit CAN morph), so a shift-queued nanoframe
+       morph reads "cancelled" — not present in real data, accepted. */
+    const morphIntoByUnit = new Map();
+    const parentOfUnit = new Map();
+    const lastBuildByUnit = new Map();
+    {
+      const dims0 = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+      const mw = dims0 && dims0[0] > 0 ? dims0[0] : 16384;
+      const mh = dims0 && dims0[1] > 0 ? dims0[1] : mw;
+      const spawnsByTeam = {};
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length || isExcludedDef(defNameOfUnit(u.unitID))) continue;
+        lastBuildByUnit.set(u.unitID, u.samples[u.samples.length - 1].build);
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
+          unitID: u.unitID, t: toSec(u.firstFrame),
+          x: u.samples[0].x, y: u.samples[0].z,
+          b0: u.samples[0].build,
+        });
+      }
+      for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
+        if (isExcludedDef(defNameOfUnit(u.unitID))) continue;
+        if ((lastBuildByUnit.get(u.unitID) ?? 1) < 0.99) continue;
+        /* a morph victim destroys itself: a real kill (killer >= 0) is a
+           kill even when a same-spot spawn coincides within the window */
+        if ((killerByUnit.get(u.unitID) ?? -1) >= 0) continue;
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        const list = spawnsByTeam[team];
+        if (!list) continue;
+        const diedT = toSec(deathByUnit.get(u.unitID));
+        const last = u.samples[u.samples.length - 1];
+        for (const s of list) {
+          if (s.unitID === u.unitID) continue;
+          if (s.t < diedT - MORPH_PAIR_WINDOW_SEC) continue;
+          if (s.t > diedT + MORPH_PAIR_WINDOW_SEC) break;
+          if (s.b0 < 0.99) continue;
+          const dx = (s.x - last.x) * mw, dz = (s.y - last.z) * mh;
+          if (dx * dx + dz * dz <= 80 * 80) {
+            morphIntoByUnit.set(u.unitID, s.unitID);
+            parentOfUnit.set(s.unitID, u.unitID);
+            break;
+          }
+        }
+      }
     }
     const wdef = new Map();
     for (const w of (artifact.weaponDefs ? artifact.weaponDefs.weapons : [])) wdef.set(w.id, w);
@@ -447,10 +653,71 @@
       return names || "Team " + (team + 1);
     };
 
+    /* commander chassis label: ZK names a comm after its base chassis def
+       (dyntrainer/cX _base humanName, e.g. "Guardian"/"Slim"); the level
+       defs (dynXX1_..) are generated without the profile name, so the
+       chassis label is recovered by walking the morph chain back to its
+       _base root */
+    const chassisOfUnit = (unitID) => {
+      let cur = unitID, guard = 0;
+      while (cur !== undefined && guard++ < 32) {
+        const defID = defByUnit.get(cur);
+        const info = defID !== undefined ? udef.get(defID) : null;
+        /* profiles come from player-typed names ("Commander " has a
+           trailing space) — trim so the feed line has no dangling gap */
+        if (info && /_base$/.test(info.name || "") && info.humanName) {
+          return info.humanName.replace(/\s+$/, "") || null;
+        }
+        cur = parentOfUnit.get(cur);
+      }
+      return null;
+    };
     const feedData = [];
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
+      const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
+      if (isExcludedDef(deadDef && deadDef.name)) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
+      if (morphIntoByUnit.has(r.unitID)) {
+        const childID = morphIntoByUnit.get(r.unitID);
+        const childInfo = (() => {
+          const d = defByUnit.get(childID);
+          return d !== undefined ? udef.get(d) : null;
+        })();
+        /* ZK's own context menu shows commander "Level" as comm_level + 1
+           (gui_contextmenu.lua: comm_level+1), and the level defs embed
+           comm_level in their name (dynXX<level>_..) — so a base comm
+           (level 0) morphing into dynXX1 reads "morphed to level 2",
+           matching the in-game "Slim lvl:2" naming */
+        const lvl = childInfo ? /^dyn[a-z]+(\d+)_/.exec(childInfo.name || "") : null;
+        if (lvl) {
+          const chassis = chassisOfUnit(r.unitID) || unitName;
+          feedData.push({
+            tm: toSec(r.frame), cls: "morph",
+            txt: chassis + " morphed to level " + (Number(lvl[1]) + 1),
+          });
+        } else {
+          const intoName = defLabel(childID, null) || "an upgraded unit";
+          feedData.push({
+            tm: toSec(r.frame), cls: "morph",
+            txt: unitName + " morphed into " + intoName,
+          });
+        }
+        continue;
+      }
+      /* unfinished unit dying before gameover with no killer = the builder
+         cancelled the frame (enemy kills keep their killer). After the
+         gameover frame the engine sweeps the field with killer-less
+         destroys — those are defeat cleanup, NOT cancels, and read
+         as plain destroyed */
+      if ((lastBuildByUnit.get(r.unitID) ?? 1) < 0.99 && r.int1 < 0 &&
+          (gameOverFrame < 0 || r.frame <= gameOverFrame)) {
+        feedData.push({
+          tm: toSec(r.frame), cls: "cancelled",
+          txt: unitName + " was cancelled",
+        });
+        continue;
+      }
       const killerName = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
       feedData.push({
         tm: toSec(r.frame), cls: "death",
@@ -485,6 +752,33 @@
         teamMeta[tn] = { ally: Number(ally), idx, n: list.length };
       });
     }
+
+    /* per-player roster rows for the Teams table: name, elo, level, clan
+       (all live in the demo startscript) plus the command count the engine
+       reports per playerNum in the PSTAT section — the old table was
+       hardcoded mock markup, which is why some players showed "—" */
+    const cmdsByPlayerNum = new Map();
+    for (const ps of (artifact.psta ?? [])) {
+      if (ps && ps.index !== undefined && ps.numCommands !== undefined) {
+        cmdsByPlayerNum.set(ps.index, ps.numCommands);
+      }
+    }
+    const players = [];
+    for (const p of rosterPlayers) {
+      if (p.spectator || p.team === undefined || p.team < 0 || !p.name) continue;
+      const nm = /^(?:.*\/)?player(\d+)$/.exec(p.script || "");
+      players.push({
+        team: p.team,
+        name: p.name,
+        elo: p.elo,
+        level: p.level,
+        clan: p.clan || undefined,
+        country: p.countrycode || p.country || undefined,
+        ally: teamAllyteam.get(p.team),
+        cmds: nm ? cmdsByPlayerNum.get(Number(nm[1])) : undefined,
+      });
+    }
+    players.sort((a, b) => (a.ally ?? 99) - (b.ally ?? 99) || a.team - b.team);
 
     /* startboxes: engine-loaded polygons (STBX section, read from the map/game
        config via the start_boxes gadget's rules params) win over the startscript
@@ -548,27 +842,112 @@
       const info = udef.get(u.defID);
       let hpMax = 0;
       for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
+      const commLevel = commLevelOfDef(info ? info.name : undefined);
       return {
         id: u.unitID, defID: u.defID,
+        name: info ? (info.humanName || info.name) : undefined,
+        def: info ? info.name : undefined,
         hpMax: hpMax > 0 ? hpMax : undefined,
         team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
         metalCost: info ? (info.metalCost ?? -1) : -1,
+        /* effective value: leveled commanders add their morph costs on top
+           of the recorded base cost; every other unit stays at metalCost */
+        metalValue: info ? (commValueOfDef(info.name, info.metalCost ?? undefined) ?? info.metalCost ?? -1) : -1,
+        commLevel,
         kind: info && info.canMove === false ? "str" : undefined,
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
+        /* value-class bucket for the per-player stats grid (econ/other/combat) */
+        cls: info ? unitValueClass(info.name, info.iconType) : "combat",
         cloakRadius: info ? info.cloakRadius : undefined,
+        /* Shield weapon radius/power; >= 200 elmos = area shield (circle),
+           smaller personal shields only feed the fallback charge bar */
+        shieldRadius: info ? info.shieldRadius : undefined,
+        shieldPower: info ? info.shieldPower : undefined,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build, ck: s.ck })),
+        /* ZK morph victim: no wreck marker under the live morphed unit */
+        morph: morphIntoByUnit.has(u.unitID),
+        track: u.samples.map((s) => ({
+          t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build,
+          ck: s.ck,
+          /* own area-cloak field active; undefined on artifacts packed
+             before the field bit existed — the caller falls back to ck */
+          cf: s.cf,
+          /* own field stalled/unpowered (flashes red in the viewer) */
+          cs: s.cs,
+          /* shield charge fraction; undefined = no shield / not recorded */
+          sh: s.sh,
+        })),
       };
-    });
+    }).filter((u) => !isExcludedDef(u.def));
 
-    const projectiles = (artifact.proj ? artifact.proj.paths : []).map((p) => ({
-      proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
-      weaponDefID: p.weaponDefID, team: p.team,
-      born: toSec(p.startFrame),
-      end: toSec(p.samples[p.samples.length - 1].frame),
-      path: p.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
-    }));
+    /* Wreck features (recorded from the next resim on): Spring spawns a
+       *_dead/*_heap feature where a unit died and destroys it when it is
+       reclaimed, so reclaimed wreckage really disappears. The engine's own
+       metal value travels with the event. Once ANY wreck feature is
+       recorded the layer shows exactly the field: ZK leaves no corpse for
+       DGun/disintegrator and nanoframe-reclaim deaths, and no dot for
+       those is correct in-game behavior, not a gap. Old artifacts without
+       feature events fall back to death positions at ZK's 40% reclaim
+       estimate (dyncomm wrecks are exactly cost*0.4; crushed *_heap-stage
+       wrecks would be 20%) so the layer still renders. */
+    const dimsW = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+    const wmw = dimsW && dimsW[0] > 0 ? dimsW[0] : 16384;
+    const wmh = dimsW && dimsW[1] > 0 ? dimsW[1] : wmw;
+    let nWreckEvents = 0;
+    const wreckByFeature = new Map();
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind === "wreck") {
+        nWreckEvents++;
+        wreckByFeature.set(r.unitID, {
+          born: toSec(r.frame),
+          x: r.int2 / wmw, y: r.int3 / wmh,
+          metal: Math.max(0, r.int1), gone: -1,
+        });
+      } else if (r.kind === "unwreck") {
+        const w = wreckByFeature.get(r.unitID);
+        if (w) w.gone = toSec(r.frame);
+      }
+    }
+    let wrecks = [...wreckByFeature.values()];
+    if (nWreckEvents === 0) {
+      for (const u of units) {
+        if (u.died < 0 || u.morph || !u.track || !u.track.length) continue;
+        const last = u.track[u.track.length - 1];
+        wrecks.push({
+          born: u.died, x: last.x, y: last.y,
+          metal: (u.metalCost > 0 ? u.metalCost : 0) * 0.4, gone: -1,
+        });
+      }
+    }
+
+    /* Spring recycles projectile IDs (u16 pools), so a byte-level "path" can
+       be several unrelated flights concatenated by an older ingest. Real
+       flights are probed every 6 frames — a >0.6 s hole in the sample
+       stream means the first projectile is long dead: split there, so
+       artifacts packed before the daemon-side fix render correctly too. */
+    const PROJ_REUSE_GAP_FRAMES = 18;
+    const projectiles = [];
+    for (const p of (artifact.proj ? artifact.proj.paths : [])) {
+      const mkPath = (seg) => ({
+        proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
+        weaponDefID: p.weaponDefID, team: p.team,
+        born: toSec(seg[0].frame),
+        end: toSec(seg[seg.length - 1].frame),
+        path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
+      });
+      if (!p.samples.length) continue;
+      let seg = [p.samples[0]];
+      for (let i = 1; i < p.samples.length; i++) {
+        const s = p.samples[i];
+        if (s.frame - seg[seg.length - 1].frame > PROJ_REUSE_GAP_FRAMES) {
+          projectiles.push(mkPath(seg));
+          seg = [];
+        }
+        seg.push(s);
+      }
+      projectiles.push(mkPath(seg));
+    }
 
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({
       djinnID: l.djinnID, lampID: l.lampID, team: l.team,
@@ -596,9 +975,12 @@
       fps: FPS,
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
+      /* wreck layer: engine-recorded feature lifetimes when present,
+         else synthesized from unit deaths (est. 40% of build cost) */
+      wrecks,
       winner, winnerLabel,
       startPolys,
-      teamNames, teamMeta, chatData,
+      teamNames, teamMeta, players, chatData,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -635,6 +1017,9 @@
       hp: near.hp,
       bd: near.bd,
       ck: near.ck,
+      cf: near.cf,
+      cs: near.cs,
+      sh: near.sh,
     };
   }
 
@@ -660,7 +1045,10 @@
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
-    teamColor, hpColor, TEAL16, WARM16,
+    teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
+    EXCLUDED_UNIT_DEFS, unitValueClass,
+    commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
+    MORPH_PAIR_WINDOW_SEC,
   };
 })(typeof window !== "undefined" ? window : globalThis);

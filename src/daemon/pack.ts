@@ -94,11 +94,25 @@ export function quantizationOf(snap: SnapshotData): Quantization {
  *           repeat sample: s16 dX, s16 dZ, u8 hpFrac, u8 buildFrac
  *
  * `POS ` v2 — v1 plus real sample timing (the widget probes every 6th frame;
- * v1 decoders wrongly assumed one sample per frame, compressing unit motion
- * to 1/6 of its life) and the cloak bit:
+ *           v1 decoders wrongly assumed one sample per frame, compressing unit
+ *           motion to 1/6 of its life) and the cloak bit:
  *
  *           repeat sample: s16 dX, s16 dZ, s16 frameDelta, u8 hpFrac,
  *                          u8 buildFrac, u8 flags (bit0 = cloaked)
+ *
+ * `POS ` v3 — v2 plus the area-cloak field bits in the flags byte and a
+ *           shield charge byte (all three: shields/area cloak render):
+ *
+ *           repeat sample: s16 dX, s16 dZ, s16 frameDelta, u8 hpFrac,
+ *                          u8 buildFrac,
+ *                          u8 flags (bit0 = cloaked,
+ *                                    bit1 = own area-cloak field active,
+ *                                    bit2 = own area-cloak field stalled),
+ *                          u8 shieldFrac (255 = no shield/unknown,
+ *                                         0..254 = charge × 254)
+ *
+ *           v2 decoders must NOT read bit1/bit2 as field bits: v2 artifacts
+ *           predate them and their padding reads as 0.
  */
 export function encodePos(snap: SnapshotData): Uint8Array {
   const mapW = snap.meta.mapW ?? 0;
@@ -127,7 +141,12 @@ export function encodePos(snap: SnapshotData): Uint8Array {
       // unknown (undefined) packs as 255 = full hp / finished build
       w.u8(Math.max(0, Math.min(255, Math.round(s.hp ?? 255))))
         .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
-      w.u8(s.cloaked ? 1 : 0);
+      // flags: bit0 = cloaked now (own/ally-field/personal), bit1 = this
+      // unit's own area-cloak field active, bit2 = field stalled/unpowered
+      w.u8((s.cloaked ? 1 : 0) | (s.cloakField ? 2 : 0) | (s.cloakStalled ? 4 : 0));
+      // shield charge: 255 = no shield/unknown, else 0..254 = charge x 254
+      w.u8(s.shield === undefined ? 255
+        : Math.max(0, Math.min(254, Math.round(s.shield * 254))));
       prevX = qx;
       prevZ = qz;
       prevFrame = s.frame;
@@ -136,15 +155,16 @@ export function encodePos(snap: SnapshotData): Uint8Array {
   return w.finish();
 }
 
-const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3, gameover: 4 };
+const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3, gameover: 4, wreck: 5, unwreck: 6 };
 
-/**
- * `EVNT` v1 — unit lifecycle events.
+/** `EVNT` — unit lifecycle + wreck-feature events.
  *
  *   u32 numRecords
  *   repeat: u8 kind, u32 frame, s32 unitID, s32 int1, s32 int2, s32 int3
  *   (spawn: defID, team, builderID — death: killerUnit, killerTeam, weaponDef
- *    gameover: unitID -1, int1 first winner allyteam, int2 winner count)
+ *    gameover: unitID -1, int1 first winner allyteam, int2 winner count
+ *    wreck: unitID = featureID, int1 = reclaimable metal, int2/int3 = x/z elmos
+ *    unwreck: unitID = featureID, int1..3 = -1)
  */
 export function encodeEvents(snap: SnapshotData): Uint8Array {
   const w = new ByteWriter();
@@ -177,10 +197,10 @@ export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset =
   const mapW = snap.meta.mapW ?? 0;
   const mapH = snap.meta.mapH ?? mapW;
   const w = new ByteWriter();
-  const kept = [...snap.projectiles.values()]
+  const kept = [...snap.projectiles.values(), ...(snap.closedProjectiles ?? [])]
     .filter((p) => presetRecords(preset, classifyProjectile(snap.weaponDefs.get(p.weaponDefID) ?? { defID: p.weaponDefID })))
     .filter((p) => p.samples.length > 0)
-    .sort((a, b) => a.proID - b.proID);
+    .sort((a, b) => a.proID - b.proID || a.samples[0]!.frame - b.samples[0]!.frame);
   w.u32(kept.length);
   for (const p of kept) {
     const cls = classifyProjectile(snap.weaponDefs.get(p.weaponDefID) ?? { defID: p.weaponDefID });
@@ -270,7 +290,7 @@ function encodeStartboxes(snap: SnapshotData): Uint8Array | null {
 function encodeUnitDefs(snap: SnapshotData): Uint8Array {
   const rows = [...snap.unitDefs.values()]
     .sort((a, b) => a.defID - b.defID)
-    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? "", d.cloakRadius ?? -1]);
+    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? "", d.cloakRadius ?? -1, d.shieldRadius ?? -1, d.shieldPower ?? -1]);
   return jsonSection({ schema: 1, units: rows });
 }
 
@@ -338,9 +358,9 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
     );
   }
   secs.push(
-    { id: SECTION.UNITDEF, version: 2, payload: encodeUnitDefs(snap), codec },
+    { id: SECTION.UNITDEF, version: 3, payload: encodeUnitDefs(snap), codec },
     { id: SECTION.WEAPONDEF, version: 1, payload: encodeWeaponDefs(snap), codec },
-    { id: SECTION.POS, version: 2, payload: encodePos(posSnap), codec },
+    { id: SECTION.POS, version: 3, payload: encodePos(posSnap), codec },
     { id: SECTION.EVENTS, version: 1, payload: encodeEvents(snap), codec },
     { id: SECTION.PROJECTILES, version: 2, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
     { id: SECTION.LINKS, version: 1, payload: encodeLinks(snap), codec },

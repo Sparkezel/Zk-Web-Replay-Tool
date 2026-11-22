@@ -22,6 +22,18 @@ export const ProjClass = {
 } as const;
 export type ProjClassValue = (typeof ProjClass)[keyof typeof ProjClass];
 
+/** Unit defs that are engine bookkeeping, not real units — never recorded
+ *  (ZK's terraform helper is a shapeless spigot whose "hp" is meaningless). */
+export const EXCLUDED_UNIT_DEFS = new Set(["terraunit"]);
+
+/** Spring recycles projectile IDs. Two PROJ rows more than this many frames
+ *  apart for the same proID are two different weapons' projectiles (real
+ *  flights are probed every 6 frames; 3+ missed probes in a row while a
+ *  projectile is alive does not happen — a gap of 0.6 s means the first
+ *  projectile is long dead). Concatenating them renders impossible
+ *  "flying" trails. */
+export const PROJ_ID_REUSE_GAP_FRAMES = 18;
+
 export interface UnitDefInfo {
   defID: number;
   name: string;
@@ -36,6 +48,11 @@ export interface UnitDefInfo {
   /** area-cloak field radius in elmos (units with a Cloaker-type weapon:
    *  Iris, Onion); the viewer draws the cloak circle at this scale */
   cloakRadius?: number;
+  /** Shield-type weapon radius in elmos (>= 200 = area shield: aspis, aegis,
+   *  funnelweb, comm areashield module; smaller = personal shield: bar only) */
+  shieldRadius?: number;
+  /** Shield-type weapon max charge ("shieldPower") */
+  shieldPower?: number;
 }
 
 export interface PosSample {
@@ -48,6 +65,14 @@ export interface PosSample {
   build?: number | undefined;
   /** unit currently cloaked (own cloak or inside an Iris area field) */
   cloaked?: boolean | undefined;
+  /** this unit's area-cloak field is active (cloak_shield gadget rules
+   *  param == 2; drawn as the field circle in the viewer) */
+  cloakField?: boolean | undefined;
+  /** this unit's area-cloak field wants to run but is unpowered/stalled
+   *  (cloak_shield rules param == 1; the viewer flashes the circle red) */
+  cloakStalled?: boolean | undefined;
+  /** shield charge fraction 0..1; undefined when the unit has no shield */
+  shield?: number | undefined;
 }
 
 export interface UnitTrack {
@@ -58,17 +83,17 @@ export interface UnitTrack {
   samples: PosSample[];
 }
 
-export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover";
+export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover" | "wreck" | "unwreck";
 
 export interface EvntRecord {
   kind: EventKind;
   frame: number;
   unitID: number;
-  /** meaning depends on kind (spawn: defID; death: killer unitID) */
+  /** meaning depends on kind (spawn: defID; death: killer unitID; wreck: metal) */
   int1: number;
-  /** death: killer team; spawn: team */
+  /** death: killer team; spawn: team; wreck: x elmos */
   int2: number;
-  /** death: weaponDefID */
+  /** death: weaponDefID; wreck: z elmos */
   int3: number;
 }
 
@@ -102,6 +127,10 @@ export interface SnapshotData {
   units: Map<number, UnitTrack>;
   events: EvntRecord[];
   projectiles: Map<number, ProjTrack>;
+  /** tracks closed because their proID was recycled — packed like any other */
+  closedProjectiles: ProjTrack[];
+  /** unitIDs of EXCLUDED_UNIT_DEFS spawns (pos/death rows skipped) */
+  ignoredUnits: Set<number>;
   links: Map<number, LinkRecord>;
   unitDefs: Map<number, UnitDefInfo>;
   weaponDefs: Map<number, WeaponDefInfo>;
@@ -115,6 +144,8 @@ export function newSnapshot(): SnapshotData {
     units: new Map(),
     events: [],
     projectiles: new Map(),
+    closedProjectiles: [],
+    ignoredUnits: new Set(),
     links: new Map(),
     unitDefs: new Map(),
     weaponDefs: new Map(),
@@ -180,6 +211,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
         humanName: typeof ev["hn"] === "string" && ev["hn"] !== "" ? ev["hn"] : undefined,
         cloakRadius: ev["cr"] !== undefined && ev["cr"] !== null ? num(ev["cr"]) : undefined,
+        shieldRadius: ev["sr"] !== undefined && ev["sr"] !== null ? num(ev["sr"]) : undefined,
+        shieldPower: ev["sp"] !== undefined && ev["sp"] !== null ? num(ev["sp"]) : undefined,
       });
       return;
     }
@@ -202,6 +235,14 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       const team = num(ev["tm"]);
       const builderID = num(ev["b"]);
       const frame = num(ev["f"], 0);
+      // engine bookkeeping units (terraform helper) are noise: no track, no event
+      if (name === "terraunit" || snap.unitDefs.get(defID)?.name === "terraunit") {
+        snap.ignoredUnits.add(unitID);
+        return;
+      }
+      // Spring recycles unitIDs; if this id belonged to an excluded unit
+      // before, the real spawn reclaims it (matches the widget's cleanup)
+      snap.ignoredUnits.delete(unitID);
       let track = snap.units.get(unitID);
       if (!track) {
         track = { unitID, defID, name, team, samples: [] };
@@ -231,24 +272,34 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       const rows = Array.isArray(ev["p"]) ? (ev["p"] as unknown[][]) : [];
       for (const row of rows) {
         const unitID = num(row[0]);
+        if (snap.ignoredUnits.has(unitID)) continue;
         const track = snap.units.get(unitID) ?? {
           unitID, defID: -1, samples: [] as PosSample[],
         };
         if (!snap.units.has(unitID)) snap.units.set(unitID, track);
+        const ckByte = row.length > 5 ? num(row[5], -1) : -1;
+        // 7th column: shield charge fraction (0..1, null when no shield)
+        const shRaw = row.length > 6 ? num(row[6], -1) : -1;
         track.samples.push({
           frame,
           x: num(row[1], 0),
           z: num(row[2], 0),
           hp: frac(row[3]),
           build: frac(row[4]),
-          // 6th column is new (v1 widget lines stop at build); 1 = cloaked
-          cloaked: row.length > 5 ? num(row[5]) === 1 : undefined,
+          // 6th column: bitfield (bit0 cloaked, bit1 own field active,
+          // bit2 own field stalled — v1 widget lines stop at build and read
+          // as plain 0/1, both interpretations agree)
+          cloaked: ckByte === -1 ? undefined : (ckByte & 1) === 1,
+          cloakField: ckByte === -1 ? undefined : (ckByte & 2) === 2,
+          cloakStalled: ckByte === -1 ? undefined : (ckByte & 4) === 4,
+          shield: shRaw < 0 ? undefined : Math.max(0, Math.min(1, shRaw)),
         });
       }
       return;
     }
     case "death": {
       const unitID = num(ev["u"]);
+      if (snap.ignoredUnits.has(unitID)) return;
       snap.events.push({
         kind: "death",
         frame: num(ev["f"], 0),
@@ -267,9 +318,44 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       if (link && link.closeFrame === undefined) link.closeFrame = num(ev["f"], 0);
       return;
     }
+    case "wrk": {
+      // wreck feature created (unit corpse *_dead/*_heap/*_wreck): the
+      // engine's own metal value is the amount reclaimable there
+      snap.events.push({
+        kind: "wreck",
+        frame: num(ev["f"], 0),
+        unitID: num(ev["u"]),
+        // missing/nil metal reads as 0 here (-1 would subtract from zone sums)
+        int1: num(ev["m"], 0),
+        int2: num(ev["x"]),
+        int3: num(ev["z"]),
+      });
+      return;
+    }
+    case "uwrk": {
+      // wreck feature gone (fully reclaimed, or crushed)
+      snap.events.push({
+        kind: "unwreck",
+        frame: num(ev["f"], 0),
+        unitID: num(ev["u"]),
+        int1: -1,
+        int2: -1,
+        int3: -1,
+      });
+      return;
+    }
     case "proj": {
       const proID = num(ev["u"]);
       let track = snap.projectiles.get(proID);
+      // Spring recycles projectile IDs: if the gap since this track's last
+      // sample is far beyond the probe cadence, the first projectile is long
+      // dead and we are seeing the ID's *next* flight. Close the old track so
+      // the viewer never interpolates one flight into another.
+      if (track && track.samples.length > 0 &&
+          num(ev["f"], 0) - track.samples[track.samples.length - 1]!.frame > PROJ_ID_REUSE_GAP_FRAMES) {
+        snap.closedProjectiles.push(track);
+        track = undefined;
+      }
       if (!track) {
         track = {
           proID,

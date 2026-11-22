@@ -145,6 +145,13 @@ function extractInlineScript(): string {
   return m[1]!;
 }
 
+/** the old top-right unit counters (cnt1/cnt2 and their labels) must be
+ *  gone from the markup after the per-player panel replaced them */
+function teamConstantsAreGone(): boolean {
+  const html = readFileSync(path.join("mockup", "index.html"), "utf8");
+  return !/id="(cnt1|cnt2|t1label|t2label)"/.test(html);
+}
+
 /** Run the page script headlessly; drive the rAF loop and a timeline sweep. */
 async function runPage(serveFile: string | null): Promise<{ byId: (id: string) => El; state: SimState }> {
   const { byId, state } = installStubs(serveFile);
@@ -189,10 +196,14 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   const tl = byId("timeline");
   tl.value = 60;
   (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 60 } });
-  const counted = Number(byId("cnt1").textContent) + Number(byId("cnt2").textContent);
-  // alive unit 1 (team 0, cnt1), ghost unit 2 (team 0, cnt1) and unit 3's
-  // drawn state was cleared by the sweep — at least the two team-0 units count
-  assert.ok(counted >= 2, `visible counters must report units (got ${counted})`);
+  // per-player stats grid: teams are the two fixture players; team 0 has
+  // the alive unit 1 + the drawn ghost unit 2, team 1's unit 3 died at 50 s
+  const counts = byId("unitCounts").innerHTML;
+  assert.match(counts, /data-team="0" data-units="\d+"/, "team-0 grid row present with a live count");
+  assert.ok(counts.indexOf('data-team="1"') !== -1, "every team gets a grid row, not just the first two players");
+  const n0 = Number(/data-team="0" data-units="(\d+)"/.exec(counts)?.[1] ?? "0");
+  assert.ok(n0 >= 2, `team-0 count includes alive+ghost units (got ${n0})`);
+  assert.ok(teamConstantsAreGone(), "the old two-corner counters no longer exist");
   assert.match(String(byId("clock").textContent), /01:00 \/ 01:30/, "clock follows the seek (END = 90s)");
 });
 
@@ -202,4 +213,38 @@ test("page falls back to the synthetic preview when the artifact fetch fails", a
   assert.ok(state.calls > 100, "synthetic preview must also draw");
   // synthetic units carry no .track; the wrecks guard must keep them rendering
   assert.ok(state.raf.length > 0, "loop alive after synthetic fallback");
+});
+
+test("healthv2 shading + wreck markers draw without breaking the loop", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-page2-"));
+  const artifact = buildArtifact(dir);
+  const { byId, state } = await runPage(artifact);
+
+  // switch to damage-shading mode: ring hidden, tinted icons/circles shaded
+  byId("hpv1").checked = false;
+  byId("hpv2").checked = true;
+  const callsBefore = state.calls;
+  const tl = byId("timeline");
+  // 0 s (all alive) -> 30 s -> 55 s (past unit 3's tracked death at 50 s:
+  // its wreck marker branch runs) -> 80 s (near game end)
+  for (const t of [0, 30, 55, 80]) {
+    tl.value = t;
+    (tl.oninput as (e: unknown) => void).call(tl, { target: { value: t } });
+  }
+  assert.ok(state.calls > callsBefore, "draw continued in healthv2 mode");
+
+  // wrecks toggle off must also render cleanly (no wreck dots, ghosts hidden)
+  byId("wrecks").checked = false;
+  for (const t of [60, 90]) {
+    tl.value = t;
+    (tl.oninput as (e: unknown) => void).call(tl, { target: { value: t } });
+  }
+  assert.ok(state.calls > callsBefore, "draw continued with wrecks hidden");
+
+  // and v1+v2 both ticked (browsers allow it): v1 must win without throwing
+  byId("hpv1").checked = true;
+  byId("hpv2").checked = true;
+  tl.value = 55;
+  (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 55 } });
+  assert.ok(state.raf.length > 0, "rAF loop still alive");
 });
