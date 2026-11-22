@@ -139,6 +139,18 @@ function installStubs(serveFile: string | null): { byId: (id: string) => El; sta
   return { byId, state };
 }
 
+/** runPage's fixed waits can lose a race against the streamed inflate
+ * (parse() awaits a DecompressionStream pipeline with thousands of microtask
+ * hops) on slow CI machines — poll for install completion with a deadline
+ * instead of betting on wall-clock sleep durations. */
+async function waitFor(cond: () => boolean, deadlineMs = 4000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > deadlineMs) return; // let the assert report the stale value
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function extractInlineScript(): string {
   const html = readFileSync(path.join("mockup", "index.html"), "utf8");
   const m = /<script>\s*([\s\S]*)<\/script>\s*<\/body>/m.exec(html);
@@ -161,7 +173,9 @@ async function runPage(serveFile: string | null): Promise<{ byId: (id: string) =
   const src = extractInlineScript();
   // indirect eval: the page script runs in global scope exactly as in a browser
   (0, eval)(src);
-  for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 5));
+  /* the eval tail IIFE kicks off loadReplay(0); wait for installModel
+     (every install path writes the chip) instead of a fixed sleep */
+  await waitFor(() => byId("chip").textContent !== "");
 
   // press Play and run ~10 seconds of wall-clock frames
   const playBtn = byId("playBtn");
@@ -215,7 +229,9 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   assert.ok(pick.onclick === null, "select uses onchange");
   pick.value = 1;
   (pick.onchange as () => void).call(pick);
-  await new Promise((r) => setTimeout(r, 20));
+  // the switch re-runs the full fetch -> streamed inflate -> installModel
+  // chain; wait for it rather than racing a fixed 20 ms sleep
+  await waitFor(() => /battle2\.zkr/.test(String(byId("chip").textContent)));
   assert.match(byId("chip").textContent, /battle2\.zkr/, "switching installs the second artifact");
   assert.match(String(byId("infoDur").textContent), /minutes/, "battle-result duration follows the loaded model");
 });
