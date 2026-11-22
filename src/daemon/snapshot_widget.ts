@@ -333,7 +333,20 @@ function widget:GameFrame(frame)
   -- never delivers the FeatureCreated/FeatureDestroyed callins
   if frame % 30 == 0 then pollWreckFeatures() end
   local units = Spring.GetAllUnits()
-  local rows = {}
+  -- pos rows are CHUNKED into several short lines per probe: the engine
+  -- hard-caps a single console line near 32 KB, and a large battle with
+  -- hundreds of live units blows that cap - the JSON tail gets chopped
+  -- (measured: 32798-char truncated pos lines came out as malformed on the
+  -- Comet Catcher stress replay). ~2 KB per line stays far under it; the
+  -- daemon ingest appends per line, so several pos lines per frame merge
+  -- into the same probe seamlessly.
+  local POS_LINE_BUDGET = 2048
+  local rows, rowsLen = {}, 0
+  local function flushRows()
+    if #rows == 0 then return end
+    emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')
+    rows, rowsLen = {}, 0
+  end
   for i = 1, #units do
     local uid = units[i]
     if excludedUnitIDs[uid] ~= true then
@@ -350,16 +363,17 @@ function widget:GameFrame(frame)
       local cf = cs == 2
       local csBit = cs == 1
       local sh = shieldFrac(uid, Spring.GetUnitDefID(uid))
-      rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
+      local row = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
         "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
         "," .. frac(build) .. "," ..
         ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0)) ..
         "," .. frac(sh) .. "]"
+      if rowsLen + #row + 1 > POS_LINE_BUDGET then flushRows() end
+      rows[#rows + 1] = row
+      rowsLen = rowsLen + #row + 1
     end
   end
-  if #rows > 0 then
-    emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')
-  end
+  flushRows()
   local projs = Spring.GetAllProjectiles()
   for i = 1, #projs do
     local pid = projs[i]

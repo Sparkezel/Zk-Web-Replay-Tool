@@ -93,6 +93,28 @@ test("ingest ignores terraunit spawns, probes and deaths", () => {
   assert.ok(snap.events.some((e) => e.kind === "death" && e.unitID === 9));
 });
 
+test("a giant probe arrives as several pos lines (widget chunking) and merges into one frame", () => {
+  // the widget now splits oversized probes: the engine caps a console line
+  // near 32 KB, so a stress-test battle emits its units in ~2 KB chunks,
+  // several pos lines carrying the SAME frame
+  const snap = newSnapshot();
+  ingestLine(snap, 'ZKR {"t":"spawn","f":0,"u":1,"d":10,"tm":0,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"spawn","f":0,"u":2,"d":11,"tm":0,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"spawn","f":0,"u":3,"d":12,"tm":1,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":108,"p":[[1,100,100,1,1,0,null],[2,200,200,1,1,0,null]]}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":108,"p":[[3,300,300,1,1,0,null]]}');
+  assert.equal(snap.units.get(1)!.samples.length, 1, "chunked unit probed once");
+  assert.equal(snap.units.get(2)!.samples.length, 1, "chunked unit probed once");
+  assert.equal(snap.units.get(3)!.samples.length, 1, "tail chunk's unit probed once");
+  assert.equal(snap.units.get(3)!.samples[0]!.frame, 108, "tail chunk keeps the frame");
+  // a TRUNCATED giant line (the old failure mode: engine 32 KB cap) still
+  // parses as isZkr but reports not-ok without throwing
+  const cut = ingestLine(snap, 'ZKR {"t":"pos","f":114,"p":[[1,100,100,1.000,1.000,0,null]');
+  assert.equal(cut.isZkr, true);
+  assert.equal(cut.ok, false, "chopped JSON reports malformed, no crash");
+  assert.equal(snap.units.get(1)!.samples.length, 1, "malformed chunk adds nothing");
+});
+
 test("pos rows carry a cloak bitfield + shield charge: bit0 cloaked, bit1 field, bit2 stalled", () => {
   const snap = newSnapshot();
   ingestLine(snap, 'ZKR {"t":"spawn","f":6,"u":1,"d":12,"n":"cloakjammer","tm":0,"b":-1}');
