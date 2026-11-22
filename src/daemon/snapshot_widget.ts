@@ -50,6 +50,12 @@ local targetSpeed = tonumber("__ZKR_SPEED_FACTOR__") or 1
 local excludedDefIDs = {}
 local excludedUnitIDs = {}
 
+-- shield info per unitdef (computed at udef discovery): the Shield weapon's
+-- shieldPower gives the max charge for runtime fraction reads; the radius
+-- (>= 200 elmos = area shield in ZK's own classification) travels in the
+-- UDEF section and decides circle vs fallback bar in the viewer
+local shieldPowerByDef = {}
+
 local function emit(json)
   Spring.Echo("ZKR " .. json)
 end
@@ -112,11 +118,31 @@ local function maybeUdef(defID)
     end
     if radius ~= nil then cloakRadius = radius end
   end
+  -- shield discovery: the first Shield-type weapon carries radius/max
+  -- charge (shieldPower). Radius >= 200 = area shield (aspis, aegis,
+  -- funnelweb, comm areashield module); smaller personal shields (thug,
+  -- felon, comm personal module) get the fallback bar only
+  local shieldRadius, shieldPower
+  for i = 1, #weapons do
+    local wd = WeaponDefs[weapons[i] ~= nil and (weapons[i].weaponDef or weapons[i][1]) or nil]
+    if wd ~= nil and wd.type == "Shield" then
+      shieldRadius = wd.shieldRadius or 0
+      shieldPower = wd.shieldPower or 0
+      break
+    end
+  end
+  if shieldRadius ~= nil then
+    shieldPowerByDef[defID] = shieldPower
+  end
   local cr = ""
   if cloakRadius ~= nil then cr = ',"cr":' .. cloakRadius end
+  local sr = ""
+  if shieldRadius ~= nil then
+    sr = ',"sr":' .. shieldRadius .. ',"sp":' .. shieldPower
+  end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. '}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. '}')
 end
 
 local function maybeWdef(defID)
@@ -165,6 +191,37 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
     ',"w":' .. (weaponDefID or attackerDefID or -1) .. '}')
 end
 
+-- wreck features: Spring spawns a *_dead / *_heap feature when a unit dies;
+-- reclaiming (or collapsing) destroys it. The viewer paints wreck dots with
+-- the engine-authoritative metal value, and removes them when the feature
+-- is gone - so reclaimed wrecks really disappear. Trees and other scenery
+-- never match the wreck suffixes.
+local wreckFeatures = {}
+
+function isWreckFeatureName(name)
+  if name == nil then return false end
+  return string.find(name, "_dead", -5, true) ~= nil
+    or string.find(name, "_heap", -5, true) ~= nil
+    or string.find(name, "_wreck", -6, true) ~= nil
+end
+
+function widget:FeatureCreated(featureID)
+  local fdid = Spring.GetFeatureDefID(featureID)
+  local fd = fdid ~= nil and FeatureDefs[fdid] or nil
+  if fd == nil or not isWreckFeatureName(fd.name) then return end
+  wreckFeatures[featureID] = true
+  local x, _, z = Spring.GetFeaturePosition(featureID)
+  emit('{"t":"wrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID ..
+    ',"m":' .. num(fd.metal) ..
+    ',"x":' .. num(x) .. ',"z":' .. num(z) .. '}')
+end
+
+function widget:FeatureDestroyed(featureID)
+  if not wreckFeatures[featureID] then return end
+  wreckFeatures[featureID] = nil
+  emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID .. '}')
+end
+
 -- port of the daemon-side spec §C classifier (src/daemon/classify.ts): only
 -- projectiles whose class survives the preset are echo'd. Spring.Echo lines
 -- hit stdout AND infolog.txt, so every dropped projectile skipped here is
@@ -198,6 +255,25 @@ if projMode == "none" then keepProjClass = {}
 elseif projMode == "beams" then keepProjClass = { [1] = true }
 elseif projMode == "all" then keepProjClass = { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true } end
 
+-- shield charge fraction (0..1) for a unit right now; nil when it has no
+-- shield. Dyncomms publish their runtime shield module via comm_shield_*
+-- rules params (weapon number + max charge) because the module is not part
+-- of the base unitdef; regular units use the unitdef's Shield weapon
+local function shieldFrac(uid, defID)
+  local max = shieldPowerByDef[defID] or 0
+  local charge
+  local commMax = Spring.GetUnitRulesParam(uid, "comm_shield_max")
+  if commMax ~= nil and commMax > 0 then
+    max = commMax
+    local commNum = Spring.GetUnitRulesParam(uid, "comm_shield_num")
+    charge = select(2, Spring.GetUnitShieldState(uid, commNum))
+  elseif max > 0 then
+    charge = select(2, Spring.GetUnitShieldState(uid))
+  end
+  if charge == nil or max <= 0 then return nil end
+  return math.max(0, math.min(1, charge / max))
+end
+
 function widget:GameFrame(frame)
   maybeSendStartboxes()
   -- press /speedup every probe frame while the engine's wanted factor is below
@@ -221,14 +297,18 @@ function widget:GameFrame(frame)
       -- cloak bits: 1 = unit cloaked right now (own/personal/ally-field), the
       -- viewer draws a cyan dot under it; 2 = THIS unit's area-cloak field is
       -- active (ZK's cloak_shield gadget rules param: 2 = grown and running,
-      -- 1 = stalled/unpowered, 0 = off) — personal cloak or a bigger ally
-      -- field also set bit1's engine-cloak state, so only bit2 gates the circle
+      -- 1 = stalled/unpowered -> bit 4, 0 = toggled off)
       local ck = false
       if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
-      local cf = Spring.GetUnitRulesParam(uid, "cloak_shield") == 2
+      local cs = Spring.GetUnitRulesParam(uid, "cloak_shield")
+      local cf = cs == 2
+      local csBit = cs == 1
+      local sh = shieldFrac(uid, Spring.GetUnitDefID(uid))
       rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
         "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
-        "," .. frac(build) .. "," .. ((ck and 1 or 0) + (cf and 2 or 0)) .. "]"
+        "," .. frac(build) .. "," ..
+        ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0)) ..
+        "," .. frac(sh) .. "]"
     end
   end
   if #rows > 0 then

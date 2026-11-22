@@ -22,7 +22,7 @@
   "use strict";
 
   const FPS = 30;
-  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover"];
+  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
@@ -114,6 +114,20 @@
     }
     if (!rgb) return color;
     return "rgb(" + rgb.map((v) => Math.round(v * k)).join(",") + ")";
+  }
+
+  /** shield charge colour: ZK's own shield rendering lerps between
+      shieldGoodColor (0.1 0.1 1 → rgb 26,26,255) at full charge and
+      shieldBadColor (1 0.1 0.1 → rgb 255,26,26) when drained, smoothly.
+      Charge is 0..1 (deep red) .. (deep blue). */
+  function shieldColor(charge, alpha) {
+    const c = Math.max(0, Math.min(1, charge));
+    const r = Math.round(255 + (26 - 255) * c);
+    const g = 26;
+    const b = Math.round(26 + (255 - 26) * c);
+    return alpha === undefined
+      ? "rgb(" + r + "," + g + "," + b + ")"
+      : "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
   }
 
   /** Parse one leaf `{ ... }` body: `x1=..,z1=..` keys or positional
@@ -285,17 +299,21 @@
         }
         const hp = u8[o] / 255; o += 1;
         const build = u8[o] / 255; o += 1;
-        let ck = false, cf = undefined;
-        // v3 adds the own-field bit; v1/v2 artifacts predate it — their bit1
-        // is padding, so cf stays undefined and the viewer falls back to ck
+        let ck = false, cf = undefined, cs = undefined, sh = undefined;
+        // v3 adds the own-field/cloak-stall bits and a shield charge byte;
+        // v1/v2 artifacts predate them — bit1/bit2 are padding there, so cf/cs
+        // stay undefined and the viewer falls back to ck for the field state
         if (version >= 3) {
           const flags = u8[o]; o += 1;
           ck = (flags & 1) !== 0;
           cf = (flags & 2) !== 0;
+          cs = (flags & 4) !== 0;
+          const sv = u8[o]; o += 1;
+          if (sv !== 255) sh = sv / 254;
         } else if (version === 2) {
           ck = (u8[o] & 1) !== 0; o += 1;
         }
-        samples.push({ frame, x, z, hp, build, ck, cf });
+        samples.push({ frame, x, z, hp, build, ck, cf, cs, sh });
       }
       p.units.push({ unitID, defID, firstFrame, samples });
       if (frame > p.maxFrame) p.maxFrame = frame;
@@ -510,6 +528,12 @@
         // def predates the column — its known in-game value is the fallback
         cloakRadius: row.length > 7 && row[7] > 0 ? row[7]
           : row[1] === "cloakjammer" ? 350 : undefined,
+        // UDEF v3 columns: Shield-type weapon radius (>= 200 elmos counts as
+        // an area shield: aspis/aegis/funnelweb/comm areashield; smaller
+        // personal shields — thug/felon/comm personal module — feed the
+        // fallback charge bar only) and its max charge (shieldPower)
+        shieldRadius: row.length > 8 && row[8] > 0 ? row[8] : undefined,
+        shieldPower: row.length > 9 && row[9] > 0 ? row[9] : undefined,
       });
     }
     const wdef = new Map();
@@ -661,6 +685,10 @@
         kind: info && info.canMove === false ? "str" : undefined,
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
         cloakRadius: info ? info.cloakRadius : undefined,
+        /* Shield weapon radius/power; >= 200 elmos = area shield (circle),
+           smaller personal shields only feed the fallback charge bar */
+        shieldRadius: info ? info.shieldRadius : undefined,
+        shieldPower: info ? info.shieldPower : undefined,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
@@ -671,9 +699,49 @@
           /* own area-cloak field active; undefined on artifacts packed
              before the field bit existed — the caller falls back to ck */
           cf: s.cf,
+          /* own field stalled/unpowered (flashes red in the viewer) */
+          cs: s.cs,
+          /* shield charge fraction; undefined = no shield / not recorded */
+          sh: s.sh,
         })),
       };
     }).filter((u) => !u.def || !EXCLUDED_UNIT_DEFS.has(String(u.def).toLowerCase()));
+
+    /* Wreck features (recorded from the next resim on): Spring spawns a
+       *_dead/*_heap feature where a unit died and destroys it when it is
+       reclaimed, so reclaimed wreckage really disappears. The engine's own
+       metal value travels with the event. Older artifacts carry no wreck
+       features: fall back to death positions with ZK's 40% reclaim estimate
+       so the wreckage layer still renders. */
+    const dimsW = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+    const wmw = dimsW && dimsW[0] > 0 ? dimsW[0] : 16384;
+    const wmh = dimsW && dimsW[1] > 0 ? dimsW[1] : wmw;
+    let nWreckEvents = 0;
+    const wreckByFeature = new Map();
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind === "wreck") {
+        nWreckEvents++;
+        wreckByFeature.set(r.unitID, {
+          born: toSec(r.frame),
+          x: r.int2 / wmw, y: r.int3 / wmh,
+          metal: r.int1, gone: -1,
+        });
+      } else if (r.kind === "unwreck") {
+        const w = wreckByFeature.get(r.unitID);
+        if (w) w.gone = toSec(r.frame);
+      }
+    }
+    let wrecks = [...wreckByFeature.values()];
+    if (nWreckEvents === 0) {
+      for (const u of units) {
+        if (u.died < 0 || u.morph || !u.track || !u.track.length) continue;
+        const last = u.track[u.track.length - 1];
+        wrecks.push({
+          born: u.died, x: last.x, y: last.y,
+          metal: (u.metalCost > 0 ? u.metalCost : 0) * 0.4, gone: -1,
+        });
+      }
+    }
 
     /* Spring recycles projectile IDs (u16 pools), so a byte-level "path" can
        be several unrelated flights concatenated by an older ingest. Real
@@ -729,6 +797,9 @@
       fps: FPS,
       hasUnits: units.length > 0,
       units, projectiles, links, ecoPts, feedData,
+      /* wreck layer: engine-recorded feature lifetimes when present,
+         else synthesized from unit deaths (est. 40% of build cost) */
+      wrecks,
       winner, winnerLabel,
       startPolys,
       teamNames, teamMeta, chatData,
@@ -793,7 +864,7 @@
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
-    teamColor, hpColor, hslToRgb, damageShade, TEAL16, WARM16,
+    teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
   };

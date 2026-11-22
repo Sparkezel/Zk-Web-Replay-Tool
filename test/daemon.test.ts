@@ -93,22 +93,40 @@ test("ingest ignores terraunit spawns, probes and deaths", () => {
   assert.ok(snap.events.some((e) => e.kind === "death" && e.unitID === 9));
 });
 
-test("pos rows carry a cloak bitfield: bit0 cloaked, bit1 own field active", () => {
+test("pos rows carry a cloak bitfield + shield charge: bit0 cloaked, bit1 field, bit2 stalled", () => {
   const snap = newSnapshot();
   ingestLine(snap, 'ZKR {"t":"spawn","f":6,"u":1,"d":12,"n":"cloakjammer","tm":0,"b":-1}');
-  ingestLine(snap, 'ZKR {"t":"pos","f":6,"p":[[1,100,100,1.0,0.5,3],[1,106,100,1.0,0.5,2],[1,112,100,1.0,0.5,1],[1,118,100,1.0,0.5,0]]}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":6,"p":[' +
+    "[1,100,100,1.0,0.5,7,1.0]," +
+    "[1,106,100,1.0,0.5,6,0.5]," +
+    "[1,112,100,1.0,0.5,5,0.25]," +
+    "[1,118,100,1.0,0.5,1]]}");
   const s = snap.units.get(1)!.samples;
-  assert.deepStrictEqual(s.map((x) => [x.cloaked, x.cloakField]), [
-    [true, true],   // 3 = cloaked + own field on
-    [false, true],  // 2 = own field on, decloaked (firing)
-    [true, false],  // 1 = cloaked by personal/ally cloak, field off
-    [false, false], // 0 = nothing
+  assert.deepStrictEqual(s.map((x) => [x.cloaked, x.cloakField, x.cloakStalled]), [
+    [true, true, true],  // 7 = bit0+bit1+bit2
+    [false, true, true], // 6 = field + stalled
+    [true, false, true], // 5 = cloaked + stalled
+    [true, false, false], // 1, no 7th column -> no shield reading
   ]);
+  assert.equal(s[0]!.shield, 1);
+  assert.equal(s[1]!.shield, 0.5);
+  assert.equal(s[2]!.shield, 0.25);
+  assert.equal(s[3]!.shield, undefined, "no 7th column -> no shield reading");
   assert.equal(s[0]!.build, 128, "build progress reaches the snapshot (0.5 of 255)");
-  // v1 widget rows stop at build: bits undefined, not false
-  ingestLine(snap, 'ZKR {"t":"pos","f":124,"p":[[1,124,100,1.0,1]]}');
-  assert.equal(snap.units.get(1)!.samples[4]!.cloaked, undefined);
-  assert.equal(snap.units.get(1)!.samples[4]!.cloakField, undefined);
+  // shield "null" (unit has no shield) is undefined, not 0
+  ingestLine(snap, 'ZKR {"t":"pos","f":124,"p":[[1,124,100,1.0,1,0,null]]}');
+  assert.equal(snap.units.get(1)!.samples[4]!.shield, undefined);
+  assert.equal(snap.units.get(1)!.samples[4]!.cloaked, false);
+});
+
+test("wreck features ingest into lifecycle events", () => {
+  const snap = newSnapshot();
+  ingestLine(snap, 'ZKR {"t":"wrk","f":900,"u":90001,"m":88.000,"x":3072,"z":6144}');
+  ingestLine(snap, 'ZKR {"t":"uwrk","f":1500,"u":90001}');
+  assert.deepStrictEqual(snap.events, [
+    { kind: "wreck", frame: 900, unitID: 90001, int1: 88, int2: 3072, int3: 6144 },
+    { kind: "unwreck", frame: 1500, unitID: 90001, int1: -1, int2: -1, int3: -1 },
+  ]);
 });
 
 test("artifact roundtrip: sections, POS quantization, EVNT records", () => {

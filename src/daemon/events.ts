@@ -48,6 +48,11 @@ export interface UnitDefInfo {
   /** area-cloak field radius in elmos (units with a Cloaker-type weapon:
    *  Iris, Onion); the viewer draws the cloak circle at this scale */
   cloakRadius?: number;
+  /** Shield-type weapon radius in elmos (>= 200 = area shield: aspis, aegis,
+   *  funnelweb, comm areashield module; smaller = personal shield: bar only) */
+  shieldRadius?: number;
+  /** Shield-type weapon max charge ("shieldPower") */
+  shieldPower?: number;
 }
 
 export interface PosSample {
@@ -63,6 +68,11 @@ export interface PosSample {
   /** this unit's area-cloak field is active (cloak_shield gadget rules
    *  param == 2; drawn as the field circle in the viewer) */
   cloakField?: boolean | undefined;
+  /** this unit's area-cloak field wants to run but is unpowered/stalled
+   *  (cloak_shield rules param == 1; the viewer flashes the circle red) */
+  cloakStalled?: boolean | undefined;
+  /** shield charge fraction 0..1; undefined when the unit has no shield */
+  shield?: number | undefined;
 }
 
 export interface UnitTrack {
@@ -73,17 +83,17 @@ export interface UnitTrack {
   samples: PosSample[];
 }
 
-export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover";
+export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover" | "wreck" | "unwreck";
 
 export interface EvntRecord {
   kind: EventKind;
   frame: number;
   unitID: number;
-  /** meaning depends on kind (spawn: defID; death: killer unitID) */
+  /** meaning depends on kind (spawn: defID; death: killer unitID; wreck: metal) */
   int1: number;
-  /** death: killer team; spawn: team */
+  /** death: killer team; spawn: team; wreck: x elmos */
   int2: number;
-  /** death: weaponDefID */
+  /** death: weaponDefID; wreck: z elmos */
   int3: number;
 }
 
@@ -201,6 +211,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
         humanName: typeof ev["hn"] === "string" && ev["hn"] !== "" ? ev["hn"] : undefined,
         cloakRadius: ev["cr"] !== undefined && ev["cr"] !== null ? num(ev["cr"]) : undefined,
+        shieldRadius: ev["sr"] !== undefined && ev["sr"] !== null ? num(ev["sr"]) : undefined,
+        shieldPower: ev["sp"] !== undefined && ev["sp"] !== null ? num(ev["sp"]) : undefined,
       });
       return;
     }
@@ -266,16 +278,21 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         };
         if (!snap.units.has(unitID)) snap.units.set(unitID, track);
         const ckByte = row.length > 5 ? num(row[5], -1) : -1;
+        // 7th column: shield charge fraction (0..1, null when no shield)
+        const shRaw = row.length > 6 ? num(row[6], -1) : -1;
         track.samples.push({
           frame,
           x: num(row[1], 0),
           z: num(row[2], 0),
           hp: frac(row[3]),
           build: frac(row[4]),
-          // 6th column: bitfield (bit0 cloaked — v1 widget lines stop at
-          // build and read as plain 0/1, both interpretations agree)
+          // 6th column: bitfield (bit0 cloaked, bit1 own field active,
+          // bit2 own field stalled — v1 widget lines stop at build and read
+          // as plain 0/1, both interpretations agree)
           cloaked: ckByte === -1 ? undefined : (ckByte & 1) === 1,
           cloakField: ckByte === -1 ? undefined : (ckByte & 2) === 2,
+          cloakStalled: ckByte === -1 ? undefined : (ckByte & 4) === 4,
+          shield: shRaw < 0 ? undefined : Math.max(0, Math.min(1, shRaw)),
         });
       }
       return;
@@ -299,6 +316,31 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       const lampID = num(ev["lamp"]);
       const link = snap.links.get(lampID);
       if (link && link.closeFrame === undefined) link.closeFrame = num(ev["f"], 0);
+      return;
+    }
+    case "wrk": {
+      // wreck feature created (unit corpse *_dead/*_heap/*_wreck): the
+      // engine's own metal value is the amount reclaimable there
+      snap.events.push({
+        kind: "wreck",
+        frame: num(ev["f"], 0),
+        unitID: num(ev["u"]),
+        int1: num(ev["m"]),
+        int2: num(ev["x"]),
+        int3: num(ev["z"]),
+      });
+      return;
+    }
+    case "uwrk": {
+      // wreck feature gone (fully reclaimed, or crushed)
+      snap.events.push({
+        kind: "unwreck",
+        frame: num(ev["f"], 0),
+        unitID: num(ev["u"]),
+        int1: -1,
+        int2: -1,
+        int3: -1,
+      });
       return;
     }
     case "proj": {

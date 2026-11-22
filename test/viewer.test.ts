@@ -226,16 +226,19 @@ test("hp ring colour follows the green->orange->red gradient", () => {
   assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
 });
 
-test("POS v3 keeps true sample timing (probe gaps) and the cloak/field bits", async () => {
+test("POS v3 keeps true sample timing (probe gaps), cloak/field bits and shield charge", async () => {
   // irregular gaps are the point: v1 threw the cadence away and decoders
   // wrongly assumed one sample per frame, compressing unit motion to 1/6
   const snap = syntheticSnapshot();
   const u = snap.units.get(1)!;
   u.samples = [
-    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true, cloakField: true },
-    { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true },
+    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true, cloakField: true, shield: 1 },
+    { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true, cloakStalled: true, shield: 0.5 },
     { frame: 25, x: 1200, z: 2200, hp: 255, build: 255, cloaked: true, cloakField: true },
   ];
+  snap.unitDefs = new Map([
+    [10, { defID: 10, name: "shieldshield", humanName: "Aspis", metalCost: 900, health: 2500, canMove: true, iconType: "walkershield", cloakRadius: -1, shieldRadius: 350, shieldPower: 3600 }],
+  ]);
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   assert.equal(artifact.pos.version, 3);
@@ -243,10 +246,63 @@ test("POS v3 keeps true sample timing (probe gaps) and the cloak/field bits", as
   assert.deepEqual(posUnit.samples.map((s) => s.frame), [6, 13, 25]);
   assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, true]);
   assert.deepEqual(posUnit.samples.map((s) => s.cf), [true, false, true]);
+  assert.deepEqual(posUnit.samples.map((s) => s.cs), [false, true, false]);
+  // shield charge byte round-trips at 0..254 resolution, 255 = no shield
+  assert.ok(Math.abs(posUnit.samples[0]!.sh! - 1) < 0.01);
+  assert.ok(Math.abs(posUnit.samples[1]!.sh! - 0.5) < 0.01);
+  assert.equal(posUnit.samples[2]!.sh, undefined, "no shield recorded -> undefined, not 0");
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units.find((x) => x.id === 1)!;
   assert.deepEqual(m.track.map((t) => Math.round(t.t * 30)), [6, 13, 25]);
-  assert.deepEqual(m.track.map((t) => t.cf), [true, false, true]);
+  assert.equal(m.shieldRadius, 350, "UDEF v3 shield radius reaches the model");
+  assert.equal(m.shieldPower, 3600);
+  assert.deepEqual(m.track.map((t) => t.cs), [false, true, false]);
+});
+
+test("shield colour lerp matches ZK's shieldGoodColor/shieldBadColor", () => {
+  assert.equal(ZkrReplay.shieldColor(1), "rgb(26,26,255)");
+  assert.equal(ZkrReplay.shieldColor(0), "rgb(255,26,26)");
+  assert.equal(ZkrReplay.shieldColor(0.5), "rgb(141,26,141)", "midpoint is a smooth 50% mix");
+  assert.equal(ZkrReplay.shieldColor(-3), ZkrReplay.shieldColor(0), "clamped low");
+  assert.equal(ZkrReplay.shieldColor(9), ZkrReplay.shieldColor(1), "clamped high");
+  assert.equal(ZkrReplay.shieldColor(0.5, 0.2), "rgba(141,26,141,0.2)", "alpha form for the field circle");
+});
+
+test("wreck features pack/decode: reclaimed wrecks disappear, metal kept", async () => {
+  const snap = syntheticSnapshot();
+  // a fencer wreck at frame 900, reclaimed again at frame 1500
+  snap.events.push(
+    { kind: "wreck", frame: 900, unitID: 90001, int1: 88, int2: 3072, int3: 6144 },
+    { kind: "unwreck", frame: 1500, unitID: 90001, int1: -1, int2: -1, int3: -1 },
+  );
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.ok(artifact.evnt.records.some((r) => r.kind === "wreck"), "wreck kind survives the pack");
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.wrecks.length, 1, "engine-recorded wrecks replace the death fallback");
+  const w = model.wrecks[0]!;
+  assert.ok(Math.abs(w.born - 30) < 1e-6);
+  assert.ok(Math.abs(w.gone - 50) < 1e-6);
+  assert.equal(w.metal, 88);
+  assert.ok(Math.abs(w.x - 3072 / 16384) < 1e-6);
+});
+
+test("no wreck records: wrecks fall back to death positions and 40% metal", async () => {
+  const snap = syntheticSnapshot();
+  snap.unitDefs = new Map([
+    [11, { defID: 11, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
+  ]);
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  // unit 2 dies at frame 900 (fixture); its last sample is at (4096, 8192)
+  assert.equal(model.wrecks.length, 1);
+  const w = model.wrecks[0]!;
+  assert.ok(Math.abs(w.born - 30) < 1e-6);
+  assert.equal(w.metal, 88, "220 metal x 0.4 reclaim estimate");
+  assert.equal(w.gone, -1, "unrecorded wrecks never disappear");
+  // u16 position quantization: 1/65535 granularity
+  assert.ok(Math.abs(w.x - 4096 / 16384) < 1e-4 && Math.abs(w.y - 8192 / 16384) < 1e-4);
 });
 
 test("legacy POS v2 decodes cloaked but leaves the field bit undefined (fallback to ck)", async () => {
