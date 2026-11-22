@@ -355,6 +355,7 @@ function buildArtifactModel(artifact){
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       cls:u.cls||"combat",
+      commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
       sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
@@ -377,7 +378,7 @@ function buildArtifactModel(artifact){
     if(u.died>0&&!u.morph){
       var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
       d.t.push(u.died);
-      d.v.push(u.metalCost>0?u.metalCost:0);
+      d.v.push(u.metalValue>0?u.metalValue:0);
     }
   });
   var losses={};
@@ -553,12 +554,17 @@ function draw(model,tm){
   model.units.forEach(function(u){
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
+    /* dynamic commanders grow with level (def digit dynXX<N>_ , 0=_base):
+      x1.0 for the fresh chassis, +0.2 per level, capped at x2 — the
+      cost-based size above saturates at its 9 px ceiling for every
+      regular unit, so only leveled comms ever exceed it */
+    if(u.commLevel)r*=Math.min(2,1+0.2*u.commLevel);
     var pos=u.posAt(tm);
     if(!pos)return;
     if(u.t!==undefined){
       var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
       st.n++;
-      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalCost>0?u.metalCost:0);
+      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalValue>0?u.metalValue:0);
     }
     var x=pos.x*W,y=pos.y*H;
     var alpha=1;

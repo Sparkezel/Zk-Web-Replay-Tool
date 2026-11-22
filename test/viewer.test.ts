@@ -640,6 +640,14 @@ test("commander morph reads chassis + level, cancelled nanoframes read cancelled
   assert.match(cancelled!.txt, /Weaver was cancelled/);
   // a cancelled nanoframe with a same-spot replacement never reads as a morph
   assert.ok(!model.units.some((u) => u.id === 7 && u.morph), "nanoframe victim is not a morph");
+  // commander level + effective value: base = level 0 at the recorded cost,
+  // dynassault1_00 = level 1 at base + the 50-metal first morph cost
+  const m5 = model.units.find((x) => x.id === 5)!;
+  const m6 = model.units.find((x) => x.id === 6)!;
+  assert.equal(m5.commLevel, 0, "base chassis def is comm level 0");
+  assert.equal(m5.metalValue, 1100, "base comm value is the recorded cost");
+  assert.equal(m6.commLevel, 1, "dynassault1_00 embeds comm level 1");
+  assert.equal(m6.metalValue, 1150, "level-1 value = 1100 base + first morph cost");
 });
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {

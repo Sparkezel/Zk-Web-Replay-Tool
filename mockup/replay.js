@@ -51,6 +51,28 @@
     return "combat";
   }
 
+  /* Dynamic commander levels: the generated level defs embed ZK's comm_level
+     as the digit in dyn<chassis><level>_<modules>; the chassis base defs
+     end in "_base" and are level 0 (the game displays level+1). ZK never
+     updates the generated def's metalCost, so a leveled comm still records
+     its ~1100 base cost in UDEF — its investment lives in the level morph
+     costs (dynamic_comm_defs.lua morphCosts) plus per-module costs; the
+     module share is not recoverable from the artifact and stays uncounted */
+  const COMM_MORPH_BASE_COSTS = [50, 100, 150, 200, 250];
+  function commLevelOfDef(defName) {
+    if (!defName) return undefined;
+    if (/_base$/.test(defName)) return 0;
+    const m = /^dyn[a-z]+(\d+)_/.exec(defName);
+    return m ? Number(m[1]) : undefined;
+  }
+  function commValueOfDef(defName, baseCost) {
+    const lvl = commLevelOfDef(defName);
+    if (lvl === undefined || baseCost === undefined || baseCost < 0) return undefined;
+    let add = 0;
+    for (let i = 0; i < lvl && i < COMM_MORPH_BASE_COSTS.length; i++) add += COMM_MORPH_BASE_COSTS[i];
+    return baseCost + add;
+  }
+
   /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
      green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
      dark red -> orange -> dark brown -> light brown. Lightness zigzags so
@@ -779,6 +801,7 @@
       const info = udef.get(u.defID);
       let hpMax = 0;
       for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
+      const commLevel = commLevelOfDef(info ? info.name : undefined);
       return {
         id: u.unitID, defID: u.defID,
         name: info ? (info.humanName || info.name) : undefined,
@@ -786,6 +809,10 @@
         hpMax: hpMax > 0 ? hpMax : undefined,
         team: teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0,
         metalCost: info ? (info.metalCost ?? -1) : -1,
+        /* effective value: leveled commanders add their morph costs on top
+           of the recorded base cost; every other unit stays at metalCost */
+        metalValue: info ? (commValueOfDef(info.name, info.metalCost ?? undefined) ?? info.metalCost ?? -1) : -1,
+        commLevel,
         kind: info && info.canMove === false ? "str" : undefined,
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
         /* value-class bucket for the per-player stats grid (econ/other/combat) */
@@ -979,6 +1006,7 @@
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS, unitValueClass,
+    commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
     MORPH_PAIR_WINDOW_SEC,
   };
