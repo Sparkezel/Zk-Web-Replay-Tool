@@ -603,6 +603,59 @@ test("morph deaths read as morphed: same-team spawn on the same spot, no wreck",
     "the morph victim is not reported destroyed");
 });
 
+test("commander morph reads chassis + level, cancelled nanoframes read cancelled", async () => {
+  const snap = syntheticSnapshot();
+  // team-0 commander chain: chassis def (humanName "Guardian") dies at 900
+  // exactly when dynassault1_00 spawns under it — ZK levels are shown as
+  // comm_level+1, so the message says level 2, not "morphed into dynassault1"
+  snap.unitDefs.set(50, { defID: 50, name: "dyntrainer_assault_base", metalCost: 1100, health: 4400, canMove: true, iconType: "commander1", humanName: "Guardian" });
+  snap.unitDefs.set(51, { defID: 51, name: "dynassault1_00", metalCost: 1100, health: 5000, canMove: true, iconType: "commander2", humanName: "" });
+  snap.units.set(5, { unitID: 5, defID: 50, samples: [
+    { frame: 6, x: 500, z: 500, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 5, int1: 50, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 900, unitID: 5, int1: -1, int2: 0, int3: -1 });
+  snap.units.set(6, { unitID: 6, defID: 51, samples: [
+    { frame: 900, x: 500, z: 500, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 6, int1: 51, int2: 0, int3: -1 });
+  // cancelled nanoframe: dies at build 12% with no killer — the builder
+  // cancelled the frame; the old read of this death was a false morph
+  snap.unitDefs.set(52, { defID: 52, name: "weaver", metalCost: 200, health: 250, canMove: true, iconType: "spidersupport", humanName: "Weaver" });
+  snap.units.set(7, { unitID: 7, defID: 52, samples: [
+    { frame: 300, x: 1000, z: 1000, hp: 30, build: 30 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 300, unitID: 7, int1: 52, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 400, unitID: 7, int1: -1, int2: 1, int3: -1 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const commMorph = model.feedData.find((f) => f.cls === "morph" && f.txt.includes("Guardian"));
+  assert.ok(commMorph, "feed carries the commander morph");
+  assert.match(commMorph!.txt, /Guardian morphed to level 2/,
+    "level = target def digit + 1 (ZK shows comm_level+1)");
+  const cancelled = model.feedData.find((f) => f.cls === "cancelled");
+  assert.ok(cancelled, "cancelled nanoframe death gets its own feed class");
+  assert.match(cancelled!.txt, /Weaver was cancelled/);
+  // a cancelled nanoframe with a same-spot replacement never reads as a morph
+  assert.ok(!model.units.some((u) => u.id === 7 && u.morph), "nanoframe victim is not a morph");
+});
+
+test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
+  assert.equal(ZkrReplay.unitValueClass("energysolar", "energy_med"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("staticmex", "mex"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("estorage", "storage"), "econ");
+  assert.equal(ZkrReplay.unitValueClass("factoryspider", "facspider"), "other");
+  assert.equal(ZkrReplay.unitValueClass("striderhub", "t3hub"), "other");
+  assert.equal(ZkrReplay.unitValueClass("cloakjammer", "kbotjammer"), "other");
+  assert.equal(ZkrReplay.unitValueClass("staticradar", "radar"), "other");
+  assert.equal(ZkrReplay.unitValueClass("dyntrainer_assault_base", "commander1"), "other");
+  assert.equal(ZkrReplay.unitValueClass("cloakraid", "kbotraider"), "combat");
+  assert.equal(ZkrReplay.unitValueClass("turretaaclose", "defenseaa"), "combat");
+  assert.equal(ZkrReplay.unitValueClass("funnelweb", "mobiletachyon"), "combat");
+});
+
 test("model.players carries every roster player's elo/level with command counts", () => {
   // mirrors the real demo: 10 players, three spectators, each player their
   // own team; the old hardcoded table dropped four players' elo

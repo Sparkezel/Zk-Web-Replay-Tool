@@ -26,9 +26,30 @@
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
+  /* morph pairing: ZK's morph gadget spawns the target in the very frame
+     the victim dies (measured 0-frame delta on real comms); 0.4 s admits
+     probe quantization while a same-spot REBUILD (minutes later, or a
+     nanoframe at bd<1) no longer reads as a morph */
+  const MORPH_PAIR_WINDOW_SEC = 0.4;
   /* engine bookkeeping units (ZK's terraform helper) are not real units —
      their hp is meaningless and they are never rendered or fed */
   const EXCLUDED_UNIT_DEFS = new Set(["terraunit"]);
+
+  /** Coarse unit-value class for the per-player stats grid, from the UDEF
+   *  iconType (Spring icons are reliable well past per-fallback heuristics):
+   *  econ = production & storage (energy icons, mex, pylon), other = factories, pads,
+   *  builders, radar, jammers and commanders, everything else = combat. */
+  function unitValueClass(defName, iconType) {
+    const ic = String(iconType || defName || "").toLowerCase();
+    const nm = String(defName || "").toLowerCase();
+    if (ic.indexOf("energy") === 0 || ic === "mex" || ic === "storage" ||
+        ic === "pylon" || nm.indexOf("energy") === 0) return "econ";
+    if (ic.indexOf("fac") === 0 || ic.indexOf("pad") === 0 || ic === "builder" ||
+        ic === "staticbuilder" || ic === "radar" || ic === "advradar" ||
+        ic.indexOf("jammer") !== -1 || ic.indexOf("commander") === 0 ||
+        ic === "none" || /factory|gantry|hub/.test(nm)) return "other";
+    return "combat";
+  }
 
   /* Allyteam palettes as multi-stop hsl walks. Even allyteams: bright
      green -> dark green -> cyan -> dark blue. Odd allyteams: bright red ->
@@ -482,9 +503,13 @@
     /* ZK morphs destroy the old unit and spawn its target at the same spot
        in the same frame; EVNT carries only death, so morphs read as
        "destroyed" and would leave a wreck dot under the live morphed unit.
-       Mark a death as a morph when a same-team unit spawns within 4 s and
-       80 elmos of the dying unit's last tracked position. */
+       A REAL morph victim is always a complete unit (bd = 1) whose target
+       spawns complete within 0.4 s within 80 elmos; a nanoframe death is a
+       kill or the builder cancelling the frame, and a same-spot rebuild
+       starts at bd < 1 — neither pairs as a morph anymore. */
     const morphIntoByUnit = new Map();
+    const parentOfUnit = new Map();
+    const lastBuildByUnit = new Map();
     {
       const dims0 = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
       const mw = dims0 && dims0[0] > 0 ? dims0[0] : 16384;
@@ -492,15 +517,18 @@
       const spawnsByTeam = {};
       for (const u of (artifact.pos ? artifact.pos.units : [])) {
         if (!u.samples.length) continue;
+        lastBuildByUnit.set(u.unitID, u.samples[u.samples.length - 1].build);
         const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
         (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
           unitID: u.unitID, t: toSec(u.firstFrame),
           x: u.samples[0].x, y: u.samples[0].z,
+          b0: u.samples[0].build,
         });
       }
       for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
       for (const u of (artifact.pos ? artifact.pos.units : [])) {
         if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
+        if ((lastBuildByUnit.get(u.unitID) ?? 1) < 0.99) continue;
         const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
         const list = spawnsByTeam[team];
         if (!list) continue;
@@ -508,10 +536,15 @@
         const last = u.samples[u.samples.length - 1];
         for (const s of list) {
           if (s.unitID === u.unitID) continue;
-          if (s.t < diedT - 4) continue;
-          if (s.t > diedT + 4) break;
+          if (s.t < diedT - MORPH_PAIR_WINDOW_SEC) continue;
+          if (s.t > diedT + MORPH_PAIR_WINDOW_SEC) break;
+          if (s.b0 < 0.99) continue;
           const dx = (s.x - last.x) * mw, dz = (s.y - last.z) * mh;
-          if (dx * dx + dz * dz <= 80 * 80) { morphIntoByUnit.set(u.unitID, s.unitID); break; }
+          if (dx * dx + dz * dz <= 80 * 80) {
+            morphIntoByUnit.set(u.unitID, s.unitID);
+            parentOfUnit.set(s.unitID, u.unitID);
+            break;
+          }
         }
       }
     }
@@ -564,6 +597,21 @@
       return names || "Team " + (team + 1);
     };
 
+    /* commander chassis label: ZK names a comm after its base chassis def
+       (dyntrainer/cX _base humanName, e.g. "Guardian"/"Slim"); the level
+       defs (dynXX1_..) are generated without the profile name, so the
+       chassis label is recovered by walking the morph chain back to its
+       _base root */
+    const chassisOfUnit = (unitID) => {
+      let cur = unitID, guard = 0;
+      while (cur !== undefined && guard++ < 32) {
+        const defID = defByUnit.get(cur);
+        const info = defID !== undefined ? udef.get(defID) : null;
+        if (info && /_base$/.test(info.name || "") && info.humanName) return info.humanName;
+        cur = parentOfUnit.get(cur);
+      }
+      return null;
+    };
     const feedData = [];
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
@@ -571,10 +619,39 @@
       if (deadDef && EXCLUDED_UNIT_DEFS.has((deadDef.name || "").toLowerCase())) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
       if (morphIntoByUnit.has(r.unitID)) {
-        const intoName = defLabel(morphIntoByUnit.get(r.unitID), null) || "an upgraded unit";
+        const childID = morphIntoByUnit.get(r.unitID);
+        const childInfo = (() => {
+          const d = defByUnit.get(childID);
+          return d !== undefined ? udef.get(d) : null;
+        })();
+        /* ZK's own context menu shows commander "Level" as comm_level + 1
+           (gui_contextmenu.lua: comm_level+1), and the level defs embed
+           comm_level in their name (dynXX<level>_..) — so a base comm
+           (level 0) morphing into dynXX1 reads "morphed to level 2",
+           matching the in-game "Slim lvl:2" naming */
+        const lvl = childInfo ? /^dyn[a-z]+(\d+)_/.exec(childInfo.name || "") : null;
+        if (lvl) {
+          const chassis = chassisOfUnit(r.unitID) || unitName;
+          feedData.push({
+            tm: toSec(r.frame), cls: "morph",
+            txt: chassis + " morphed to level " + (Number(lvl[1]) + 1),
+          });
+        } else {
+          const intoName = defLabel(childID, null) || "an upgraded unit";
+          feedData.push({
+            tm: toSec(r.frame), cls: "morph",
+            txt: unitName + " morphed into " + intoName,
+          });
+        }
+        continue;
+      }
+      /* unfinished unit dying with no killer = the builder cancelled the
+         frame (enemy kills keep their killer); ZK leaves no corpse for
+         reclaimed nanoframes, so these suppressed a feed line before */
+      if ((lastBuildByUnit.get(r.unitID) ?? 1) < 0.99 && r.int1 < 0) {
         feedData.push({
-          tm: toSec(r.frame), cls: "morph",
-          txt: unitName + " morphed into " + intoName,
+          tm: toSec(r.frame), cls: "cancelled",
+          txt: unitName + " was cancelled",
         });
         continue;
       }
@@ -711,6 +788,8 @@
         metalCost: info ? (info.metalCost ?? -1) : -1,
         kind: info && info.canMove === false ? "str" : undefined,
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
+        /* value-class bucket for the per-player stats grid (econ/other/combat) */
+        cls: info ? unitValueClass(info.name, info.iconType) : "combat",
         cloakRadius: info ? info.cloakRadius : undefined,
         /* Shield weapon radius/power; >= 200 elmos = area shield (circle),
            smaller personal shields only feed the fallback charge bar */
@@ -899,7 +978,8 @@
     parse, artifactToModel, trackAt, pathAt,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
-    EXCLUDED_UNIT_DEFS,
+    EXCLUDED_UNIT_DEFS, unitValueClass,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
+    MORPH_PAIR_WINDOW_SEC,
   };
 })(typeof window !== "undefined" ? window : globalThis);

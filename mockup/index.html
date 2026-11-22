@@ -67,6 +67,7 @@
   .team-table{width:100%;border-collapse:collapse;font-size:13px}
   .team-table th{text-align:left;color:var(--dim);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;padding:4px 8px;border-bottom:1px solid var(--line)}
   .team-table td{padding:6px 8px;border-bottom:1px solid #30373b}
+  .team-table th.num,.team-table td.num{text-align:right;font-variant-numeric:tabular-nums}
   .dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
   .winner-row td{background:rgba(106,184,64,.08)}
   .win-txt{color:var(--accent);font-size:11.5px;margin-left:6px}
@@ -79,6 +80,7 @@
   .feed li b{color:var(--txt);font-weight:600}
   .feed li.death b{color:var(--t2)}
   .feed li.morph b{color:#8fb0c9;font-style:italic}
+  .feed li.cancelled b{color:#b5998a;font-style:italic}
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
@@ -163,7 +165,12 @@
       <!-- ====== units per player (live during playback) ====== -->
       <div class="panel">
         <h2>Units per player</h2>
-        <ul class="uc" id="unitCounts" style="margin:0;padding:2px 12px;list-style:none;font-size:12px;line-height:1.55"></ul>
+        <div class="bd" style="padding:0;overflow-x:auto">
+          <table class="team-table" style="min-width:520px">
+            <tr><th></th><th>Player</th><th class="num">Combat value</th><th class="num">Economy value</th><th class="num">Other value</th><th class="num">Total units</th><th class="num">Units lost</th><th class="num">Value lost</th></tr>
+            <tbody id="unitCounts"></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- ====== in-game chat ====== -->
@@ -347,6 +354,7 @@ function buildArtifactModel(artifact){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
+      cls:u.cls||"combat",
       track:u.track,cr:u.cloakRadius||0,
       sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
@@ -361,12 +369,32 @@ function buildArtifactModel(artifact){
   m.units.forEach(function(u){if(u.team>=0)tset[u.team]=1});
   var teams=Object.keys(tset).map(Number).sort(function(a,b){return a-b});
   if(teams.length===0)teams=[0];
+  /* losses per team: sorted death times + prefix sums of (count, value),
+     so the grid can read casualties at any draw frame in O(log n).
+     Morph victims are excluded (the unit continues as its target). */
+  var lossByTeam={};
+  units.forEach(function(u){
+    if(u.died>0&&!u.morph){
+      var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
+      d.t.push(u.died);
+      d.v.push(u.metalCost>0?u.metalCost:0);
+    }
+  });
+  var losses={};
+  Object.keys(lossByTeam).forEach(function(t){
+    var d=lossByTeam[t];
+    var idx=d.t.map(function(_,i){return i}).sort(function(a,b){return d.t[a]-d.t[b]});
+    var times=[],cnt=[],val=[],c=0,v=0;
+    idx.forEach(function(i){c++;v+=d.v[i];times.push(d.t[i]);cnt.push(c);val.push(v);});
+    losses[t]={times:times,cnt:cnt,val:val};
+  });
   var wrecks=m.wrecks||[];
   return {units:units,projectiles:projectiles,feedData:m.feedData,
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
     teamNames:m.teamNames,teamMeta:m.teamMeta,players:m.players||[],startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
     wrecks:wrecks,
+    unitStats:losses,
     wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
     END:m.END||1516,synthetic:false,
     links:m.links,
@@ -425,7 +453,7 @@ function draw(model,tm){
     });
     cx.setLineDash([]);cx.globalAlpha=1;cx.lineWidth=1;
   }
-  var teamCounts={};
+  var liveStats={};
   var wrecksOn=document.getElementById("wrecks").checked;
   var shieldsOn=document.getElementById("shields").checked;
   var cloaksOn=document.getElementById("cloaks").checked;
@@ -470,7 +498,13 @@ function draw(model,tm){
       cx.beginPath();
       z.hull.forEach(function(h,i){i===0?cx.moveTo(h[0]*W,h[1]*H):cx.lineTo(h[0]*W,h[1]*H);});
       cx.closePath();cx.stroke();
-      cx.fillText((metal>=1000?(metal/1000).toFixed(1)+"k":Math.round(metal))+" metal",z.cx*W,z.cy*H-4);
+      var label=(metal>=1000?(metal/1000).toFixed(1)+"k":Math.round(metal))+" metal";
+      /* 1px black outline on each side of the glyph edge keeps the label
+         readable over the map image and wreck dots */
+      cx.strokeStyle="#000";cx.lineWidth=2;
+      cx.strokeText(label,z.cx*W,z.cy*H-4);
+      cx.fillStyle="rgba(255,68,255,.95)";
+      cx.fillText(label,z.cx*W,z.cy*H-4);
     });
     cx.textAlign="start";
   }
@@ -521,7 +555,11 @@ function draw(model,tm){
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
     var pos=u.posAt(tm);
     if(!pos)return;
-    if(u.t!==undefined)teamCounts[u.t]=(teamCounts[u.t]||0)+1;
+    if(u.t!==undefined){
+      var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
+      st.n++;
+      if(st[u.cls]!==undefined)st[u.cls]+=(u.metalCost>0?u.metalCost:0);
+    }
     var x=pos.x*W,y=pos.y*H;
     var alpha=1;
     /* ghost units: vanished from tracking without a death event before the
@@ -592,7 +630,7 @@ function draw(model,tm){
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
     cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
   });
-  renderUnitCounts(model,teamCounts,tm);
+  renderUnitStats(model,liveStats,tm);
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
   document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
   document.getElementById("timeline").value=Math.min(tm,model.END);
@@ -705,17 +743,53 @@ function renderTeams(model){
   el.innerHTML=html;
 }
 
-/* live unit counts per player: every team that owns units gets a row
-   (terraform helper units are already excluded at model build), counted
-   from what is actually alive on the field at the current replay time */
-function renderUnitCounts(model,teamCounts,tm){
+/* live per-player stats grid: alive unit VALUE by class (combat/economy/
+   other), alive unit count, and cumulative losses (count + value), all
+   read at the current replay time. Every numeric column is colour-scaled
+   against the other players right now — highest green, lowest red, and
+   the loss columns inverted (losing least is green). Terraform helpers
+   and other fake units are already excluded at model-build time. */
+function fmtStat(v){return v>=10000?Math.round(v/1000)+"k":v>=1000?(v/1000).toFixed(1)+"k":String(Math.round(v));}
+function statCellColor(v,min,max,invert){
+  if(!isFinite(v)||max<=min)return "";
+  var f=(v-min)/(max-min);if(invert)f=1-f;
+  if(f<0)f=0;if(f>1)f=1;
+  var h=Math.round(10+(150-10)*f); /* red 10 -> green 150 */
+  return "hsla("+h+",75%,45%,.30)";
+}
+function lossStatsAt(model,team,tm){
+  var d=model.unitStats&&model.unitStats[team];
+  if(!d||!d.times.length)return {n:0,v:0};
+  var lo=0,hi=d.times.length-1;
+  if(tm<d.times[0])return {n:0,v:0};
+  while(lo<hi){var mid=(lo+hi+1)>>1;if(d.times[mid]<=tm)lo=mid;else hi=mid-1;}
+  return {n:d.cnt[lo],v:d.val[lo]};
+}
+function renderUnitStats(model,live,tm){
   var el=document.getElementById("unitCounts");
   if(!el)return;
+  var teams=model.teams||[];
+  var rows=teams.map(function(t){
+    var st=live[t]||{n:0,combat:0,econ:0,other:0};
+    var ls=model.synthetic?{n:0,v:0}:lossStatsAt(model,t,tm);
+    return {team:t,combat:st.combat,econ:st.econ,other:st.other,n:st.n,lost:ls.n,lostVal:ls.v};
+  });
+  var cols=["combat","econ","other","n","lost","lostVal"];
+  var invert={lost:1,lostVal:1};
+  var min={},max={};
+  cols.forEach(function(c){
+    min[c]=Infinity;max[c]=-Infinity;
+    rows.forEach(function(r){if(r[c]<min[c])min[c]=r[c];if(r[c]>max[c])max[c]=r[c];});
+  });
   var html="";
-  (model.teams||[]).forEach(function(t){
-    var cnt=teamCounts[t]||0;
-    html+='<li><span class="dot" style="background:'+teamColor(t)+'"></span>'+
-      esc(teamLabelOf(model,t))+' — <b>'+cnt+'</b> unit'+(cnt===1?'':'s')+'</li>';
+  rows.forEach(function(r){
+    html+='<tr data-team="'+r.team+'" data-units="'+r.n+'"><td><span class="dot" style="background:'+teamColor(r.team)+'"></span></td>'+
+      '<td>'+esc(teamLabelOf(model,r.team))+'</td>';
+    cols.forEach(function(c){
+      html+='<td class="num" style="background:'+statCellColor(r[c],min[c],max[c],!!invert[c])+'">'+
+        fmtStat(r[c])+'</td>';
+    });
+    html+='</tr>';
   });
   el.innerHTML=html;
 }

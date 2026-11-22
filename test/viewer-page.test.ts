@@ -196,12 +196,12 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   const tl = byId("timeline");
   tl.value = 60;
   (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 60 } });
-  // per-player unit counts: teams are the two fixture players; team 0 has
+  // per-player stats grid: teams are the two fixture players; team 0 has
   // the alive unit 1 + the drawn ghost unit 2, team 1's unit 3 died at 50 s
   const counts = byId("unitCounts").innerHTML;
-  assert.match(counts, /Team 1 — <b>\d+<\/b> unit/, "team-0 row present with a count");
-  assert.ok(counts.indexOf("Team 2") !== -1, "every team gets a row, not just the first two players");
-  const n0 = Number(/Team 1 — <b>(\d+)<\/b>/.exec(counts)?.[1] ?? "0");
+  assert.match(counts, /data-team="0" data-units="\d+"/, "team-0 grid row present with a live count");
+  assert.ok(counts.indexOf('data-team="1"') !== -1, "every team gets a grid row, not just the first two players");
+  const n0 = Number(/data-team="0" data-units="(\d+)"/.exec(counts)?.[1] ?? "0");
   assert.ok(n0 >= 2, `team-0 count includes alive+ghost units (got ${n0})`);
   assert.ok(teamConstantsAreGone(), "the old two-corner counters no longer exist");
   assert.match(String(byId("clock").textContent), /01:00 \/ 01:30/, "clock follows the seek (END = 90s)");
