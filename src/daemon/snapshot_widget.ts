@@ -192,11 +192,16 @@ function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerD
 end
 
 -- wreck features: Spring spawns a *_dead / *_heap feature when a unit dies;
--- reclaiming (or collapsing) destroys it. The viewer paints wreck dots with
--- the engine-authoritative metal value, and removes them when the feature
--- is gone - so reclaimed wrecks really disappear. Trees and other scenery
--- never match the wreck suffixes.
+-- reclaiming (or collapsing) destroys it, so the viewer can paint wreck
+-- dots with the engine-authoritative metal and remove them on reclaim.
+-- The headless resim engine (spring-headless.exe) does NOT deliver the
+-- unsynced FeatureCreated/FeatureDestroyed callins (proven on the Otago
+-- resim: 1015 corpses, zero wrk lines despite on-map reclamation), so the
+-- lifecycle is POLLED once per second over Spring.GetAllFeatures() - new
+-- wreck-named features are announced, disappeared ones uwrk'd. Where the
+-- callins do fire they share the same registry and nothing double-emits.
 local wreckFeatures = {}
+local wreckDefCache = {}
 
 function isWreckFeatureName(name)
   if name == nil then return false end
@@ -205,21 +210,59 @@ function isWreckFeatureName(name)
     or string.find(name, "_wreck", -6, true) ~= nil
 end
 
-function widget:FeatureCreated(featureID)
-  local fdid = Spring.GetFeatureDefID(featureID)
-  local fd = fdid ~= nil and FeatureDefs[fdid] or nil
-  if fd == nil or not isWreckFeatureName(fd.name) then return end
-  wreckFeatures[featureID] = true
+local function isWreckDefID(fdid)
+  if fdid == nil then return false end
+  local cached = wreckDefCache[fdid]
+  if cached == nil then
+    local fd = FeatureDefs[fdid]
+    cached = (fd ~= nil and isWreckFeatureName(fd.name)) or false
+    wreckDefCache[fdid] = cached
+  end
+  return cached
+end
+
+local function emitWreck(featureID, fdid)
+  local fd = FeatureDefs[fdid]
   local x, _, z = Spring.GetFeaturePosition(featureID)
   emit('{"t":"wrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID ..
-    ',"m":' .. num(fd.metal) ..
+    ',"m":' .. num(fd and fd.metal) ..
     ',"x":' .. num(x) .. ',"z":' .. num(z) .. '}')
+end
+
+function widget:FeatureCreated(featureID)
+  local fdid = Spring.GetFeatureDefID(featureID)
+  if not isWreckDefID(fdid) or wreckFeatures[featureID] then return end
+  wreckFeatures[featureID] = true
+  emitWreck(featureID, fdid)
 end
 
 function widget:FeatureDestroyed(featureID)
   if not wreckFeatures[featureID] then return end
   wreckFeatures[featureID] = nil
   emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID .. '}')
+end
+
+-- 1-second lifecycle poll (the headless engine skips the callins above)
+local function pollWreckFeatures()
+  local alive = {}
+  local feats = (Spring.GetAllFeatures ~= nil and Spring.GetAllFeatures()) or {}
+  for i = 1, #feats do
+    local fid = feats[i]
+    alive[fid] = true
+    if not wreckFeatures[fid] then
+      local fdid = Spring.GetFeatureDefID(fid)
+      if isWreckDefID(fdid) then
+        wreckFeatures[fid] = true
+        emitWreck(fid, fdid)
+      end
+    end
+  end
+  for fid in pairs(wreckFeatures) do
+    if not alive[fid] then
+      wreckFeatures[fid] = nil
+      emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. fid .. '}')
+    end
+  end
 end
 
 -- port of the daemon-side spec §C classifier (src/daemon/classify.ts): only
@@ -286,6 +329,9 @@ function widget:GameFrame(frame)
     end
   end
   if frame % probeEvery ~= 0 then return end
+  -- wreck lifecycle poll: every 30 frames (1 s) - the headless engine
+  -- never delivers the FeatureCreated/FeatureDestroyed callins
+  if frame % 30 == 0 then pollWreckFeatures() end
   local units = Spring.GetAllUnits()
   local rows = {}
   for i = 1, #units do
