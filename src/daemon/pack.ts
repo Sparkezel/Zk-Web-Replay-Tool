@@ -92,6 +92,13 @@ export function quantizationOf(snap: SnapshotData): Quantization {
  *   repeat: u32 unitID, u16 defID, u32 firstFrame, u16 sampleCount
  *           u16 originX, u16 originZ
  *           repeat sample: s16 dX, s16 dZ, u8 hpFrac, u8 buildFrac
+ *
+ * `POS ` v2 — v1 plus real sample timing (the widget probes every 6th frame;
+ * v1 decoders wrongly assumed one sample per frame, compressing unit motion
+ * to 1/6 of its life) and the cloak bit:
+ *
+ *           repeat sample: s16 dX, s16 dZ, s16 frameDelta, u8 hpFrac,
+ *                          u8 buildFrac, u8 flags (bit0 = cloaked)
  */
 export function encodePos(snap: SnapshotData): Uint8Array {
   const mapW = snap.meta.mapW ?? 0;
@@ -108,16 +115,22 @@ export function encodePos(snap: SnapshotData): Uint8Array {
     w.u16(originX).u16(originZ);
     let prevX = originX;
     let prevZ = originZ;
+    let prevFrame = samples[0]!.frame;
     for (const s of samples) {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
       w.s16(qx - prevX).s16(qz - prevZ);
+      // frames since the previous sample (0 for the first): keeps probe
+      // cadence lossless instead of assuming one sample per frame
+      w.s16(s.frame - prevFrame);
       // hp/build arrive as 0..255 from the event model (samples carry raw 0..1 fractions);
       // unknown (undefined) packs as 255 = full hp / finished build
       w.u8(Math.max(0, Math.min(255, Math.round(s.hp ?? 255))))
         .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
+      w.u8(s.cloaked ? 1 : 0);
       prevX = qx;
       prevZ = qz;
+      prevFrame = s.frame;
     }
   }
   return w.finish();
@@ -156,6 +169,9 @@ export function encodeEvents(snap: SnapshotData): Uint8Array {
  *           u32 firstFrame, u16 sampleCount
  *           u16 originX, u16 originY, u16 originZ
  *           repeat sample: s16 dX, s16 dZ, s16 absQY
+ *
+ * `PROJ` v2 — v1 plus real sample timing (see POS v2):
+ *           repeat sample: s16 dX, s16 dZ, s16 absQY, s16 frameDelta
  */
 export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset = "heavy"): Uint8Array {
   const mapW = snap.meta.mapW ?? 0;
@@ -178,12 +194,15 @@ export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset =
     w.u16(ox).u16(oy).u16(oz);
     let prevX = ox;
     let prevZ = oz;
+    let prevFrame = s0.frame;
     for (const s of p.samples) {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
       w.s16(qx - prevX).s16(qz - prevZ).s16(quantize(s.y, mapH));
+      w.s16(s.frame - prevFrame);
       prevX = qx;
       prevZ = qz;
+      prevFrame = s.frame;
     }
   }
   return w.finish();
@@ -216,6 +235,23 @@ function jsonSection(value: unknown): Uint8Array {
   return utf8(JSON.stringify(value));
 }
 
+/** META payload with the map's elmo dims patched in from the widget snapshot
+ *  (the demo header only carries the map's name — dims ship as null there;
+ *  the viewer needs the size to scale cloak-field circles). */
+function metaWithDims(demo: ParsedDemo, snap: SnapshotData): Uint8Array {
+  const payload = buildMetaSection(demo);
+  const mapW = snap.meta.mapW ?? 0;
+  const mapH = snap.meta.mapH ?? 0;
+  if (mapW <= 0 || mapH <= 0) return payload;
+  try {
+    const meta = JSON.parse(new TextDecoder().decode(payload)) as { map: { dims: [number, number] | null } };
+    meta.map.dims = [mapW, mapH];
+    return utf8(JSON.stringify(meta));
+  } catch {
+    return payload;
+  }
+}
+
 /**
  * Startboxes as loaded by the engine (from the map's mapconfig/map_startboxes.lua
  * or the game's LuaRules/Configs/StartBoxes/<map>.lua, read via the start_boxes
@@ -234,7 +270,7 @@ function encodeStartboxes(snap: SnapshotData): Uint8Array | null {
 function encodeUnitDefs(snap: SnapshotData): Uint8Array {
   const rows = [...snap.unitDefs.values()]
     .sort((a, b) => a.defID - b.defID)
-    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? ""]);
+    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? "", d.cloakRadius ?? -1]);
   return jsonSection({ schema: 1, units: rows });
 }
 
@@ -294,16 +330,19 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
   const secs: SectionInput[] = [];
   if (opts.demo) {
     secs.push(
-      { id: SECTION.META, version: 1, payload: buildMetaSection(opts.demo), codec },
+      // META: the demo header knows the map name but not its elmo size; the
+      // widget does (meta w/h) — patch the dims in so the viewer can scale
+      // cloak-field circles against the real map dimensions
+      { id: SECTION.META, version: 1, payload: metaWithDims(opts.demo, snap), codec },
       { id: SECTION.ROSTER, version: 1, payload: buildRosterSection(opts.demo), codec },
     );
   }
   secs.push(
-    { id: SECTION.UNITDEF, version: 1, payload: encodeUnitDefs(snap), codec },
+    { id: SECTION.UNITDEF, version: 2, payload: encodeUnitDefs(snap), codec },
     { id: SECTION.WEAPONDEF, version: 1, payload: encodeWeaponDefs(snap), codec },
-    { id: SECTION.POS, version: 1, payload: encodePos(posSnap), codec },
+    { id: SECTION.POS, version: 2, payload: encodePos(posSnap), codec },
     { id: SECTION.EVENTS, version: 1, payload: encodeEvents(snap), codec },
-    { id: SECTION.PROJECTILES, version: 1, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
+    { id: SECTION.PROJECTILES, version: 2, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
     { id: SECTION.LINKS, version: 1, payload: encodeLinks(snap), codec },
   );
   const startboxPayload = encodeStartboxes(snap);

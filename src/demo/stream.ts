@@ -58,6 +58,10 @@ export interface DemoStreamResult {
   pauses: PauseEvent[];
   teamEvents: TeamEvent[];
   playerStats: (PlayerStatistics & { playerNum: number; frame: number })[];
+  /** frame of the first STARTPLAYING netmsg — the play actually begins here
+   *  (ZK games record the lobby/pick phase first; everything before this
+   *  frame is pre-game). 0 when the demo has no explicit anchor. */
+  startPlayingFrame: number;
   /** final modGameTime seen in the stream */
   lastModGameTime: number;
 }
@@ -72,9 +76,11 @@ export function parseDemoStream(
     chunks: [], counts: {}, chat: [], mapDraws: [], playerNames: [],
     startPositions: [], gameOvers: [], playerLefts: [], pauses: [],
     teamEvents: [], playerStats: [], lastModGameTime: 0,
+    startPlayingFrame: 0,
   };
   const dv = new DataView(streamBuf.buffer, streamBuf.byteOffset, streamBuf.byteLength);
   const frameOf = (modGameTime: number) => Math.round(modGameTime * 30);
+  let startPlayingSeen = false;
   let pos = opts.startIndex ?? 0;
   const end = Math.min(pos + header.demoStreamSize, streamBuf.byteLength);
 
@@ -93,6 +99,16 @@ export function parseDemoStream(
     const frame = frameOf(modGameTime);
 
     switch (type) {
+      case NetMsg.StartPlaying: {
+        // [type] — the server told everyone playing begins; the FIRST one is
+        // the game-start anchor (ZK demos show a second event later, so first
+        // wins; frame 0 is a legitimate anchor, hence the separate flag)
+        if (!startPlayingSeen) {
+          res.startPlayingFrame = frame;
+          startPlayingSeen = true;
+        }
+        break;
+      }
       case NetMsg.Chat: {
         // [type][size][from u8][dest u8][text\0]
         if (raw.length < 4) break;

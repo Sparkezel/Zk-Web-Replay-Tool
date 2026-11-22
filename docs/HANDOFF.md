@@ -1,34 +1,52 @@
-# Handoff — replay playback bug RESOLVED (page ghost-crash), PR in flight
+# Handoff — unit-sync + pre-game chat + cloak recording
 
-_Created 2026-11-21 late evening. Map-backdrop bug: closed (PR #5, merged)._
+_Created 2026-11-22 morning. Playback crash (PR #11) and map backdrop (PR #5) both resolved and merged or in flight as applicable._
 
-## The playback bug — root cause and fix (this session)
+## What was found and fixed this session
 
-**Symptom**: pressing Play never starts the replay; seeking showed up to two units at a time (sometimes dying), past 1/3 only a single "fencer wreckage" dot.
+### 1. Unit/wreck sync — the probe-cadence loss (root cause of ALL symptom reports)
 
-**Root cause**: `mockup/index.html`'s `draw()` ghost-unit branch (merged with PR #5's wrecks feature) reads `u.track.length` on the **page-built** unit objects — but `buildArtifactModel()` maps units to objects that carry only a `posAt` closure and never copy `track`. Result: `TypeError: Cannot read properties of undefined (reading 'length')` inside the first `draw()` — which kills the `requestAnimationFrame(loop)` chain permanently:
-- Play button toggles `playing` but nothing advances (loop dead) → "start doesn't work"
-- every seek re-runs `draw()`: canvas cleared, units drawn in id order **until the first alive unit**, then throw → only the first couple of drawn units visible, later seeks leave one dot
-- the synthetic fallback was equally broken (its alive units have no `track` either)
+The snapshot widget probes every unit every 6th engine frame (0.2 s), but POS v1 stored no per-sample timing and the viewer decoder assumed **one sample per frame**. Everything played at 6× and every unit's track "ended" after 1/6 of its real life:
 
-The 33 JS/TS tests stayed green because they test `mockup/replay.js` — the page's `buildArtifactModel`+`draw` pipeline was never executed anywhere. The artifact itself is healthy (1,399 units, EVNT 1400 spawns/1113 deaths/gameover, END 25:17, verified by decoding with the viewer code headlessly).
+- structures "turned into wrecks after a few minutes" (ghost rendering of tracks that stopped early)
+- end-game clutter of "dead" idle units with red hp rings (ghosts frozen at stale hp — nobody cleaned them up)
+- constructor motion appeared to run far ahead of the structures it built ("solar chain delayed ~2 minutes")
+- measured on the real battle: solars "lived" 240 s in the viewer vs 900+ s real; exactly 283 units were ghosts — after the fix: **0 ghosts**, tracks now end within ~4 frames of their real death events
 
-**Fix** (branch `vibe/viewer-page-crash-fix`):
-- `buildArtifactModel` now copies `track` into the page unit objects
-- the ghost branch guards `u.track&&` first (synthetic units have none — normal draw path)
-- `test/viewer-page.test.ts` (NEW): runs the page's inline script headlessly (stub DOM/canvas/fetch), presses Play, drives 600 rAF frames and a timeline sweep — asserts real canvas drawing and no exceptions, for both the artifact and the synthetic-fallback paths. Without the html fix both tests fail; with it the suite is 35/35.
-- `scripts/inspect-zkr.mjs` + `scripts/sim-viewer.mjs` (NEW): artifact dumping + full headless page sim — the debug tools that found this bug in minutes.
+**Fix**: POS/PROJ sections bumped to **v2** with a per-sample `s16 frameDelta` (POS samples also gain a cloak flag byte). Legacy v1 artifacts are decoded with the historical fixed cadence (firstFrame + 6k) — so existing artifacts display correctly without a re-run.
 
-**IMPORTANT for viewing after pulling the fix**: http-server serves index.html/replay.js with `max-age=3600` — hard-refresh (Ctrl+Shift+R) after updating, or run the server with `-c-1`.
+### 2. Pre-game chat — the ZK pick phase
 
-## Still open (unchanged)
+ZK team battles record a lobby/pick phase BEFORE play: this battle has a 160-second tail ("I choose:" commander picks, SPRINGIE relays) up to the demo's **STARTPLAYING** netmsg at frame 4799. The viewer clock now anchors at `MACR.startPlayingFrame` (new field, parsed from the demo stream):
 
-1. Backlog issues #6–#10: gh-pages deployment, version bump, stale-branch cleanup, icon-sync docs.
-2. `package.json` has a stray `"node": "^27.0.0-alpha"` dependency (local modification, uncommitted) that shadows PATH `node` via `node_modules/.bin/node` — the system node is **v16.16.0**, which cannot run `npm test` (needs ≥20). Decide: either commit the dep deliberately with a comment, or drop it and install Node ≥ 20 properly.
-3. Optional hardening: daemon warns loudly when `mapName` is missing from the startscript; mockup README note re `-c-1`.
-4. Only the first two teams' units are counted in the cnt1/cnt2 chips (7-team battles undercount; cosmetic).
+- everything (units, feed, eco, victory) is shifted — playback starts when play starts
+- chat rows recorded before the anchor are tagged `pre` and **shown from the first frame** in the chat panel, labeled "lobby"
+
+**Migration for existing artifacts**: `node scripts/repack-zkr.mjs mockup/battle.zkr <demo.sdfz>` rebuilds the demo-derived sections (META/ROST/CHAT/MACR/…) and carries the resim sections (POS/EVNT/…) — anchors the old artifact without a resim. Already applied to `mockup/battle.zkr` (backup at `battle.zkr.v1.bak`).
+
+### 3. Cloak recording (Iris + cloaked units) — needs one resim re-run
+
+- widget: pos rows gained a cloak bit (`Spring.GetUnitIsCloaked`); udef lines gain `"cr"` = area-cloak radius from a Cloaker-type weapon's range or a `*cloak*` custom param
+- daemon: `UnitDefInfo.cloakRadius`, `PosSample.cloaked`; UDEF section v2, row gains the radius column (fallback 350 for `cloakjammer` in the viewer); META gets real map dims from the widget (`map.dims = [w, h]` elmos) so circles can scale
+- viewer/page: units with `cloakRadius` draw a light-blue translucent field scaled by `radius/mapW`; cloaked units draw a small cyan dot beneath their icon
+- **only activates after the next full daemon re-run** (widget + packer changes); the current artifact carries no cloak bits and no META dims, so circles are skipped gracefully
+
+## Re-run instructions (one daemon run, ~15 min)
+
+```
+node dist/daemon/index.js --demo "Demo/....sdfz" --work-dir .zkr-work \
+  --out mockup/battle.zkr --data-root "D:/je/zbad steam/steamapps/common/Zero-K"
+```
+then hard-refresh the browser (http-server caches index.html/replay.js for an hour).
+
+## Still open
+
+- Backlog #6/#9/#10 (gh-pages, version bump, icon-sync docs).
+- `package.json`'s stray `node@27-alpha` dependency (shadows the system Node 16 — deliberate or drop it).
+- cnt1/cnt2 chips only count the first two teams (cosmetic; 7-team battles undercount).
+- Older viewer artifacts decoded with the fixed legacy cadence assumed `--pos-rate 1` (default); an artifact packed with `--pos-rate N` would need N× the cadence — acceptable, documented in replay.js.
 
 ## Environment notes
 
-- `node_modules/node/bin/node.exe` = Node 27 alpha (works) — use `./node_modules/node/bin/node.exe` for scripts; `node` on PATH is v16.
-- Battle data: `Demo/…Otago 1.4….sdfz`, staged data in `.zkr-work/` (junction to `D:\je\zbad steam\steamapps\common\Zero-K`), viewer served by http-server on **localhost:8081** (the 8080 Embedthis server is unrelated). Artifacts stay gitignored.
+- Run scripts/tests with `./node_modules/node/bin/node.exe` (Node 27); bare `node` is v16.
+- Battle data: `Demo/…Otago 1.4….sdfz`; `.zkr-work` staged junction → ZK install; viewer at http://localhost:8081 (8080 is an unrelated Embedthis server).

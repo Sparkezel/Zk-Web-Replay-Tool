@@ -207,7 +207,13 @@
     return new Uint8Array(await new Response(stream).arrayBuffer());
   }
 
-  function decodePos(dv, u8) {
+  /* POS probe cadence: the snapshot widget samples every 6th engine frame
+     (0.2 s). v1 sections carried no per-sample timing, so legacy artifacts
+     decode with this fixed cadence — never one sample per frame, which
+     compressed unit motion to a sixth of real time. */
+  const POS_PROBE_EVERY = 6;
+
+  function decodePos(dv, u8, version) {
     const p = { units: [], maxFrame: 0 };
     let o = 0;
     const numUnits = dv.getUint32(o, true); o += 4;
@@ -220,15 +226,23 @@
       const originZ = dv.getUint16(o, true) / 65535; o += 2;
       let x = originX, z = originZ;
       const samples = [];
+      let frame = firstFrame;
       for (let k = 0; k < sampleCount; k++) {
         x += dv.getInt16(o, true) / 65535; o += 2;
         z += dv.getInt16(o, true) / 65535; o += 2;
+        if (version >= 2) {
+          frame += dv.getInt16(o, true); o += 2;
+        } else {
+          frame = firstFrame + k * POS_PROBE_EVERY;
+        }
         const hp = u8[o] / 255; o += 1;
         const build = u8[o] / 255; o += 1;
-        samples.push({ frame: firstFrame + k, x, z, hp, build });
+        let ck = false;
+        if (version >= 2) { ck = (u8[o] & 1) !== 0; o += 1; }
+        samples.push({ frame, x, z, hp, build, ck });
       }
       p.units.push({ unitID, defID, firstFrame, samples });
-      if (firstFrame + sampleCount > p.maxFrame) p.maxFrame = firstFrame + sampleCount;
+      if (frame > p.maxFrame) p.maxFrame = frame;
     }
     return p;
   }
@@ -250,7 +264,7 @@
     return p;
   }
 
-  function decodeProj(dv, u8) {
+  function decodeProj(dv, u8, version) {
     const p = { paths: [], maxFrame: 0 };
     let o = 0;
     const n = dv.getUint32(o, true); o += 4;
@@ -266,14 +280,20 @@
       const oz = dv.getUint16(o, true) / 65535; o += 2;
       const samples = [{ frame: startFrame, x: ox, z: oz, y: oy }];
       let x = ox, z = oz;
+      let frame = startFrame;
       for (let k = 0; k < sampleCount; k++) {
         x += dv.getInt16(o, true) / 65535; o += 2;
         z += dv.getInt16(o, true) / 65535; o += 2;
         const y = dv.getInt16(o, true) / 65535; o += 2;
-        samples.push({ frame: startFrame + k + 1, x, z, y });
+        if (version >= 2) {
+          frame += dv.getInt16(o, true); o += 2;
+        } else {
+          frame = startFrame + (k + 1) * POS_PROBE_EVERY;
+        }
+        samples.push({ frame, x, z, y });
       }
       p.paths.push({ proID, weaponDefID, cls, team: ownerTeam, startFrame, samples });
-      if (samples[samples.length - 1].frame > p.maxFrame) p.maxFrame = samples[samples.length - 1].frame;
+      if (frame > p.maxFrame) p.maxFrame = frame;
     }
     return p;
   }
@@ -326,6 +346,11 @@
       try { return JSON.parse(new TextDecoder().decode(r)); } catch (e) { return null; }
     };
 
+    const versionOf = (id) => {
+      const s = sections.find((x) => x.id === id);
+      return s ? s.version : 1;
+    };
+
     return {
       containerVersion: u8[3],
       sections,
@@ -338,9 +363,9 @@
       macro: json("MACR"),
       eco: json("ECO"),
       psta: json("PSTA"),
-      pos: raw["POS"] ? decodePos(new DataView(raw["POS"].buffer, raw["POS"].byteOffset, raw["POS"].byteLength), raw["POS"]) : null,
+      pos: raw["POS"] ? decodePos(new DataView(raw["POS"].buffer, raw["POS"].byteOffset, raw["POS"].byteLength), raw["POS"], versionOf("POS")) : null,
       evnt: raw["EVNT"] ? decodeEvnt(new DataView(raw["EVNT"].buffer, raw["EVNT"].byteOffset, raw["EVNT"].byteLength), raw["EVNT"]) : null,
-      proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"]) : null,
+      proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"], versionOf("PROJ")) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
     };
   }
@@ -351,7 +376,14 @@
    * with [0..1] map-space coordinates.
    */
   function artifactToModel(artifact) {
-    const toSec = (f) => f / FPS;
+    /* Timeline anchor: ZK demos record the lobby/pick phase first (minutes of
+       ready-up + commander picks); MACR.startPlayingFrame is the frame where
+       play actually begins. Everything before it is pre-game: the replay
+       clock starts at the anchor, and pre-game chat is shown from the start
+       (its times land <= 0) instead of "playing" with the game. */
+    const anchor = artifact.macro && artifact.macro.startPlayingFrame > 0
+      ? artifact.macro.startPlayingFrame : 0;
+    const toSec = (f) => (f - anchor) / FPS;
 
     const teamByUnit = new Map();
     const defByUnit = new Map();
@@ -374,6 +406,11 @@
         canMove: row[4] === 1 ? true : row[4] === 0 ? false : undefined,
         iconType: row[5] || undefined,
         humanName: row[6] || undefined,
+        // UDEF v2 column: area-cloak field radius in elmos (Iris, Onion);
+        // ZK's Iris is the only cloaker whose radius never changed and whose
+        // def predates the column — its known in-game value is the fallback
+        cloakRadius: row.length > 7 && row[7] > 0 ? row[7]
+          : row[1] === "cloakjammer" ? 350 : undefined,
       });
     }
     const wdef = new Map();
@@ -497,7 +534,7 @@
         kind = "whisper";
         to = playerNameByNum.get(dest) || ("Player " + dest);
       }
-      chatData.push({ tm: toSec(frame), name, kind, ally, to, txt: text });
+      chatData.push({ tm: toSec(frame), name, kind, ally, to, txt: text, pre: frame <= anchor });
     }
     chatData.sort((a, b) => a.tm - b.tm);
 
@@ -512,9 +549,10 @@
         metalCost: info ? (info.metalCost ?? -1) : -1,
         kind: info && info.canMove === false ? "str" : undefined,
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
+        cloakRadius: info ? info.cloakRadius : undefined,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build })),
+        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build, ck: s.ck })),
       };
     });
 
@@ -542,7 +580,10 @@
     const projEnd = artifact.proj ? artifact.proj.maxFrame : 0;
     const linkEnd = artifact.link ? artifact.link.maxFrame : 0;
     const endTime = toSec(Math.max(endFrame, posEnd, projEnd, linkEnd));
-    const metaEnd = artifact.meta && artifact.meta.gameTime ? artifact.meta.gameTime : 0;
+    // META.gameTime is seconds from the demo start, so shift it by the anchor
+    const metaEnd = artifact.meta && artifact.meta.gameTime
+      ? Math.max(0, artifact.meta.gameTime - anchor / FPS) : 0;
+    const dims = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
 
     return {
       fps: FPS,
@@ -555,13 +596,19 @@
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
       engine: artifact.meta ? artifact.meta.engine : "",
+      /* map elmo size ([w, h] from the widget via META.map.dims) — cloak-field
+         circles scale against it; undefined on old artifacts */
+      mapW: dims && dims[0] > 0 ? dims[0] : 0,
+      mapH: dims && dims[1] > 0 ? dims[1] : (dims && dims[0] > 0 ? dims[0] : 0),
+      pregameSec: anchor / FPS,
       unitNames: udef,
       weaponNames: wdef,
     };
   }
 
-  /** Sample a unit track at time tm — coordinate + hp between probes.
-   *  Track points are {t, x, y} with y the map z-axis. */
+  /** Sample a unit track at time tm — coordinate + hp + build + cloak state
+   *  interpolated between probes. Track points are {t, x, y} with y the map
+   *  z-axis; hp/bd/ck step at the segment mid-point. */
   function trackAt(track, tm) {
     if (track.length === 0) return null;
     if (tm <= track[0].t) return track[0];
@@ -574,10 +621,13 @@
     }
     const a = track[lo], b = track[hi];
     const f = (tm - a.t) / (b.t - a.t || 1);
+    const near = f < 0.5 ? a : b;
     return {
       x: a.x + (b.x - a.x) * f,
       y: a.y + (b.y - a.y) * f,
-      hp: f < 0.5 ? a.hp : b.hp,
+      hp: near.hp,
+      bd: near.bd,
+      ck: near.ck,
     };
   }
 

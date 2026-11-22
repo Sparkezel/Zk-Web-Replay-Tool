@@ -33,6 +33,9 @@ export interface UnitDefInfo {
   iconType?: string;
   /** UnitDefs.humanName — display name for the viewer (e.g. cloakraid → Glaive) */
   humanName?: string;
+  /** area-cloak field radius in elmos (units with a Cloaker-type weapon:
+   *  Iris, Onion); the viewer draws the cloak circle at this scale */
+  cloakRadius?: number;
 }
 
 export interface PosSample {
@@ -43,6 +46,8 @@ export interface PosSample {
   hp?: number | undefined;
   /** 0..255 build progress fraction */
   build?: number | undefined;
+  /** unit currently cloaked (own cloak or inside an Iris area field) */
+  cloaked?: boolean | undefined;
 }
 
 export interface UnitTrack {
@@ -174,6 +179,7 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         canMove: ev["mv"] !== undefined ? num(ev["mv"]) === 1 : undefined,
         iconType: typeof ev["ic"] === "string" && ev["ic"] !== "" ? ev["ic"] : undefined,
         humanName: typeof ev["hn"] === "string" && ev["hn"] !== "" ? ev["hn"] : undefined,
+        cloakRadius: ev["cr"] !== undefined && ev["cr"] !== null ? num(ev["cr"]) : undefined,
       });
       return;
     }
@@ -235,6 +241,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
           z: num(row[2], 0),
           hp: frac(row[3]),
           build: frac(row[4]),
+          // 6th column is new (v1 widget lines stop at build); 1 = cloaked
+          cloaked: row.length > 5 ? num(row[5]) === 1 : undefined,
         });
       }
       return;

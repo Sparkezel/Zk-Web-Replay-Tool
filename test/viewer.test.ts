@@ -183,9 +183,12 @@ test("viewer model recovers winner, gameover and interpolated positions", async 
   assert.equal(model.END, 1500 / 30);
   const u1 = model.units.find((u) => u.id === 1)!;
   assert.ok(Math.abs(u1.track[0]!.x - 1024.5 / 16384) < 0.001);
-  const mid = ZkrReplay.trackAt(u1.track, 7 / 30);
-  assert.ok(Math.abs(mid!.x - 1124.5 / 16384) < 0.001);
-  assert.ok(Math.abs(mid!.hp - 0.8) < 0.02);
+  // sample timing is true frames now (POS v2): samples sit at 6/12/18 frames
+  // (0.2/0.4/0.6 s); interpolating mid-segment at frame 9 lands halfway
+  const mid = ZkrReplay.trackAt(u1.track, 9 / 30);
+  assert.ok(Math.abs(mid!.x - (1024.5 + 1124.5) / 2 / 16384) < 0.001);
+  const late = ZkrReplay.trackAt(u1.track, 10.5 / 30); // f = 0.75 -> later probe
+  assert.ok(Math.abs(late!.hp - 0.8) < 0.02, `hp steps toward the later probe (got ${late!.hp})`);
 });
 
 test("allyteam palettes: green->cyan->blue vs red->orange->brown, lightness-aware separation", () => {
@@ -221,4 +224,100 @@ test("hp ring colour follows the green->orange->red gradient", () => {
   const b = Number(c(0.7)!.match(/hsl\((\d+)/)![1]);
   assert.ok(a > b, "hue decreases as hp drops");
   assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
+});
+
+test("POS v2 keeps true sample timing (probe gaps) and the cloak bit", async () => {
+  // irregular gaps are the point: v1 threw the cadence away and decoders
+  // wrongly assumed one sample per frame, compressing unit motion to 1/6
+  const snap = syntheticSnapshot();
+  const u = snap.units.get(1)!;
+  u.samples = [
+    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true },
+    { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true },
+    { frame: 25, x: 1200, z: 2200, hp: 255, build: 255 },
+  ];
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const posUnit = artifact.pos!.units.find((x) => x.unitID === 1)!;
+  assert.deepEqual(posUnit.samples.map((s) => s.frame), [6, 13, 25]);
+  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, false]);
+  const model = ZkrReplay.artifactToModel(artifact);
+  const m = model.units.find((x) => x.id === 1)!;
+  assert.deepEqual(m.track.map((t) => Math.round(t.t * 30)), [6, 13, 25]);
+});
+
+test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () => {
+  // hand-pack a v1 POS section exactly as the old packer wrote it
+  // (s16 dX, s16 dZ, u8 hp, u8 build per sample)
+  const b = Buffer.alloc(64);
+  let o = 0;
+  b.writeUInt32LE(1, o); o += 4;                      // numUnits
+  b.writeUInt32LE(5, o); o += 4;                     // unitID
+  b.writeUInt16LE(10, o); o += 2;                    // defID
+  b.writeUInt32LE(100, o); o += 4;                   // firstFrame
+  b.writeUInt16LE(3, o); o += 2;                     // sampleCount
+  b.writeUInt16LE(0, o); o += 2;                     // originX
+  b.writeUInt16LE(0, o); o += 2;                     // originZ
+  for (let k = 0; k < 3; k++) {
+    b.writeInt16LE(10, o); o += 2;                   // dX
+    b.writeInt16LE(5, o); o += 2;                    // dZ
+    b.writeUInt8(255, o); o += 1;                    // hp
+    b.writeUInt8(255, o); o += 1;                    // build
+  }
+  const { writeZkr } = require("../dist/zkr/container.js");
+  const zkr = writeZkr([{ id: "POS ", version: 1, payload: new Uint8Array(b.subarray(0, o)), codec: 1 }]);
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const s = artifact.pos!.units[0]!.samples;
+  assert.deepEqual(s.map((x) => x.frame), [100, 106, 112],
+    "v1 artifacts must decode at the historical probe cadence, not one-per-frame");
+});
+
+test("artifactToModel anchors the clock at STARTPLAYING and tags pre-game chat", () => {
+  // synthetic artifact object (post-parse shape) with a pick phase of
+  // 4799 frames, matching real ZK team battles
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 160, map: { name: "Otago 1.4", dims: [16384, 16384] } },
+    macro: { startPlayingFrame: 4799 },
+    roster: { players: [], teams: [], allyteams: [], modoptions: null },
+    unitDefs: { units: [[89, "cloakjammer", 600, 600, 1, "kbotjammer", "Iris", 350]] },
+    weaponDefs: null, chat: [
+      [4, 255, 254, "User KetchupStreamer joined the battle"],
+      [483, 6, 252, "I choose: Ninse Prenchence!"],
+      [4900, 6, 254, "gl hf"],
+    ],
+    eco: null, psta: null, link: null, proj: null,
+    evnt: {
+      records: [
+        { kind: "spawn", frame: 4810, unitID: 1, int1: 89, int2: 0, int3: -1 },
+        { kind: "gameover", frame: 4900, unitID: -1, int1: 0, int2: 1, int3: -1 },
+      ],
+      maxFrame: 4900,
+    },
+    pos: {
+      units: [{
+        unitID: 1, defID: 89, firstFrame: 4810,
+        samples: [
+          { frame: 4810, x: 0.5, z: 0.5, hp: 1, build: 1, ck: true },
+          { frame: 4840, x: 0.5, z: 0.5, hp: 1, build: 1 },
+        ],
+      }],
+      maxFrame: 4840,
+    },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  // the clock starts at the anchor: the commander is born 0.37 s in, not 160 s
+  const u = model.units.find((x) => x.id === 1)!;
+  assert.ok(Math.abs(u.born - 11 / 30) < 1e-6, `born should be anchored (got ${u.born})`);
+  assert.equal(model.pregameSec, 4799 / 30);
+  // pre-game chat: tagged pre, present from t=0; in-game chat keeps positive tm
+  assert.deepEqual(model.chatData.filter((c) => c.pre).length, 2);
+  assert.ok(model.chatData[2]!.tm > 0, "in-game chat stays after the anchor");
+  assert.ok(model.chatData[1]!.tm <= 0, "pick-phase chat lands at or before 0");
+  // cloak: Iris radius + a cloaked sample propagate
+  assert.equal(u.cloakRadius, 350);
+  assert.equal(u.track[0]!.ck, true);
+  // map dims for circle scaling
+  assert.equal(model.mapW, 16384);
+  assert.equal(model.mapH, 16384);
 });

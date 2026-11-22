@@ -92,6 +92,7 @@
   .chat li .txt{color:#d7dde1}
   .chat li.c-all .txt{color:#eef1f3}
   .chat li.c-spec .txt,.chat li.c-host .txt{color:#8a949b}
+  .chat li.c-pre .txt{color:#9aa4ab;font-style:italic}
   .chat li.c-team0 .txt{color:#45e054}
   .chat li.c-team1 .txt{color:#ff453a}
   .chat li.c-whisper .txt{color:#c99ef0;font-style:italic}
@@ -304,9 +305,9 @@ function buildArtifactModel(artifact){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
-      track:u.track,
+      track:u.track,cr:u.cloakRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck}}};});
   var projectiles=m.projectiles.map(function(p){
     return {born:p.born,impact:p.end,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
@@ -323,6 +324,7 @@ function buildArtifactModel(artifact){
     chatData:m.chatData||[],
     END:m.END||1516,synthetic:false,
     links:m.links,
+    mapW:m.mapW||0,mapH:m.mapH||0,
     meta:{map:m.mapName,game:m.gameVersion,engine:m.engine}};
 }
 
@@ -385,6 +387,15 @@ function draw(model,tm){
     var x=pos.x*W,y=pos.y*H;
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
+    /* area-cloak field (Iris etc.): light-blue circle scaled by the unit's
+       in-game cloak radius against the map's elmo width */
+    if(u.cr>0&&model.mapW>0){
+      var crPx=u.cr/model.mapW*W;
+      cx.fillStyle="rgba(110,190,255,.07)";
+      cx.beginPath();cx.arc(x,y,crPx,0,7);cx.fill();
+      cx.strokeStyle="rgba(110,190,255,.42)";cx.lineWidth=1;
+      cx.beginPath();cx.arc(x,y,crPx,0,7);cx.stroke();
+    }
     var alpha=1;
     /* ghost units: vanished from tracking without a death event before the
        battle ended (wrecks / missing kills) — drawn transparent, or hidden
@@ -406,6 +417,12 @@ function draw(model,tm){
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
     cx.globalAlpha=1;
+    /* cloaked (own cloak or inside an Iris field): small cyan dot
+       beneath the icon — non-intrusive, readable at any zoom */
+    if(pos.ck){
+      cx.fillStyle="#4be3ff";
+      cx.beginPath();cx.arc(x,y+r+2.2,1.8,0,7);cx.fill();
+    }
     /* health ring: shown only when the unit has actually lost hp below its
        own peak (hurt), and its build is finished; green (full) -> orange
        (60%) -> deep red (0) */
@@ -454,7 +471,10 @@ function renderChat(model,tm){
     if(e.tm>tm)continue;
     var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper \u2192 "+(e.to||"?"):"autohost";
     var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
-    html+='<li class="'+cls+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+fmt(e.tm)+"</time></li>";
+    /* pre-game chat (lobby/pick phase, sent before STARTPLAYING): shown from
+       the first frame, tagged lobby instead of a negative time */
+    var tlabel=e.pre?"lobby":fmt(Math.max(0,e.tm));
+    html+='<li class="'+cls+(e.pre?" c-pre":"")+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+tlabel+"</time></li>";
     if(html.length>6000)break;}
   el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
   var first=el.firstChild;if(first)el.scrollTop=0;
