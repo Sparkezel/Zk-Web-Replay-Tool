@@ -79,6 +79,7 @@
   .feed li{padding:5px 12px;border-bottom:1px solid #30373b;color:var(--dim)}
   .feed li b{color:var(--txt);font-weight:600}
   .feed li.death b{color:var(--t2)}
+  .feed li.morph b{color:#8fb0c9;font-style:italic}
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
@@ -305,11 +306,11 @@ function buildArtifactModel(artifact){
   var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
   var units=m.units.map(function(u){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
-    return {id:u.id,t:u.team,born:u.born,died:u.died,metalCost:u.metalCost,
+    return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       track:u.track,cr:u.cloakRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf}}};});
   var projectiles=m.projectiles.map(function(p){
     return {born:p.born,impact:p.end,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
@@ -394,8 +395,9 @@ function draw(model,tm){
     if(!pos){
       /* real death (tracked death event): leave a subtle grey wreck marker
          at the unit's last tracked position instead of vanishing into the
-         red-dot idle clutter; governed by the "wrecks" toggle */
-      if(wrecksOn&&u.died>0&&tm>=u.died&&u.track&&u.track.length){
+         red-dot idle clutter; governed by the "wrecks" toggle. ZK morph
+         victims are skipped — the live morphed unit stands exactly there */
+      if(wrecksOn&&!u.morph&&u.died>0&&tm>=u.died&&u.track&&u.track.length){
         var wk=u.track[u.track.length-1];
         cx.globalAlpha=.28;cx.fillStyle="#767e84";
         cx.beginPath();cx.arc(wk.x*W,wk.y*H,Math.max(2.2,r*.8),0,7);cx.fill();
@@ -405,11 +407,14 @@ function draw(model,tm){
     }
     if(u.t===model.teams[0])n1++;else if(u.t===model.teams[1])n2++;
     var x=pos.x*W,y=pos.y*H;
-    /* area-cloak field (Iris etc.): drawn ONLY while the field is actually
-       on — ZK area cloakers cloak themselves while the field runs, so the
-       unit's own cloaked bit is the field state; scaled per axis against the
-       map's elmo size */
-    if(u.cr>0&&pos.ck&&model.mapW>0&&model.mapH>0){
+    /* area-cloak field (Iris, Conjurer, ...): drawn ONLY while the unit's
+       own field is actually ON. Newer artifacts carry an exact field bit
+       (the cloak_shield gadget's rules param == 2, probe row bit1); older
+       ones fall back to the own-cloak bit, which conflates a personal
+       cloak or an ally's bigger field with the unit's own field. Scaled
+       per axis against the map's elmo size */
+    var fieldOn=pos.cf!==undefined?pos.cf:pos.ck;
+    if(u.cr>0&&fieldOn&&model.mapW>0&&model.mapH>0){
       var crW=u.cr/model.mapW*W,crH=u.cr/model.mapH*H;
       cx.fillStyle="rgba(110,190,255,.07)";
       cx.beginPath();cx.ellipse(x,y,crW,crH,0,0,7);cx.fill();

@@ -94,11 +94,17 @@ export function quantizationOf(snap: SnapshotData): Quantization {
  *           repeat sample: s16 dX, s16 dZ, u8 hpFrac, u8 buildFrac
  *
  * `POS ` v2 — v1 plus real sample timing (the widget probes every 6th frame;
- * v1 decoders wrongly assumed one sample per frame, compressing unit motion
- * to 1/6 of its life) and the cloak bit:
+ *           v1 decoders wrongly assumed one sample per frame, compressing unit
+ *           motion to 1/6 of its life) and the cloak bit:
  *
  *           repeat sample: s16 dX, s16 dZ, s16 frameDelta, u8 hpFrac,
  *                          u8 buildFrac, u8 flags (bit0 = cloaked)
+ *
+ * `POS ` v3 — v2 plus the area-cloak field bit in the flags byte:
+ *                          bit1 = own field active (cloak_shield rules
+ *                          param == 2). v2 decoders must NOT read bit1 as
+ *                          a field bit: v2 artifacts predate it and their
+ *                          bit1 is always 0.
  */
 export function encodePos(snap: SnapshotData): Uint8Array {
   const mapW = snap.meta.mapW ?? 0;
@@ -127,7 +133,9 @@ export function encodePos(snap: SnapshotData): Uint8Array {
       // unknown (undefined) packs as 255 = full hp / finished build
       w.u8(Math.max(0, Math.min(255, Math.round(s.hp ?? 255))))
         .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
-      w.u8(s.cloaked ? 1 : 0);
+      // flags: bit0 = cloaked now (own/ally-field/personal), bit1 = this
+      // unit's own area-cloak field active (the viewer's field circle)
+      w.u8((s.cloaked ? 1 : 0) | (s.cloakField ? 2 : 0));
       prevX = qx;
       prevZ = qz;
       prevFrame = s.frame;
@@ -340,7 +348,7 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
   secs.push(
     { id: SECTION.UNITDEF, version: 2, payload: encodeUnitDefs(snap), codec },
     { id: SECTION.WEAPONDEF, version: 1, payload: encodeWeaponDefs(snap), codec },
-    { id: SECTION.POS, version: 2, payload: encodePos(posSnap), codec },
+    { id: SECTION.POS, version: 3, payload: encodePos(posSnap), codec },
     { id: SECTION.EVENTS, version: 1, payload: encodeEvents(snap), codec },
     { id: SECTION.PROJECTILES, version: 2, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
     { id: SECTION.LINKS, version: 1, payload: encodeLinks(snap), codec },

@@ -218,13 +218,17 @@ function widget:GameFrame(frame)
       local x, y, z = Spring.GetUnitPosition(uid)
       local hp, maxHp = Spring.GetUnitHealth(uid)
       local build = select(5, Spring.GetUnitHealth(uid))
-      -- cloak state: 1 when the unit is cloaked right now (own cloak or inside
-      -- an Iris/Onion area field) — the viewer draws a cyan dot under it
+      -- cloak bits: 1 = unit cloaked right now (own/personal/ally-field), the
+      -- viewer draws a cyan dot under it; 2 = THIS unit's area-cloak field is
+      -- active (ZK's cloak_shield gadget rules param: 2 = grown and running,
+      -- 1 = stalled/unpowered, 0 = off) — personal cloak or a bigger ally
+      -- field also set bit1's engine-cloak state, so only bit2 gates the circle
       local ck = false
       if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
+      local cf = Spring.GetUnitRulesParam(uid, "cloak_shield") == 2
       rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
         "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
-        "," .. frac(build and 1 or nil) .. "," .. (ck and 1 or 0) .. "]"
+        "," .. frac(build) .. "," .. ((ck and 1 or 0) + (cf and 2 or 0)) .. "]"
     end
   end
   if #rows > 0 then

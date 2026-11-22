@@ -60,6 +60,9 @@ export interface PosSample {
   build?: number | undefined;
   /** unit currently cloaked (own cloak or inside an Iris area field) */
   cloaked?: boolean | undefined;
+  /** this unit's area-cloak field is active (cloak_shield gadget rules
+   *  param == 2; drawn as the field circle in the viewer) */
+  cloakField?: boolean | undefined;
 }
 
 export interface UnitTrack {
@@ -225,6 +228,9 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         snap.ignoredUnits.add(unitID);
         return;
       }
+      // Spring recycles unitIDs; if this id belonged to an excluded unit
+      // before, the real spawn reclaims it (matches the widget's cleanup)
+      snap.ignoredUnits.delete(unitID);
       let track = snap.units.get(unitID);
       if (!track) {
         track = { unitID, defID, name, team, samples: [] };
@@ -259,14 +265,17 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
           unitID, defID: -1, samples: [] as PosSample[],
         };
         if (!snap.units.has(unitID)) snap.units.set(unitID, track);
+        const ckByte = row.length > 5 ? num(row[5], -1) : -1;
         track.samples.push({
           frame,
           x: num(row[1], 0),
           z: num(row[2], 0),
           hp: frac(row[3]),
           build: frac(row[4]),
-          // 6th column is new (v1 widget lines stop at build); 1 = cloaked
-          cloaked: row.length > 5 ? num(row[5]) === 1 : undefined,
+          // 6th column: bitfield (bit0 cloaked — v1 widget lines stop at
+          // build and read as plain 0/1, both interpretations agree)
+          cloaked: ckByte === -1 ? undefined : (ckByte & 1) === 1,
+          cloakField: ckByte === -1 ? undefined : (ckByte & 2) === 2,
         });
       }
       return;

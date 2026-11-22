@@ -226,24 +226,59 @@ test("hp ring colour follows the green->orange->red gradient", () => {
   assert.equal(c(null), "#9aa4aa");   // unknown hp keeps the neutral grey
 });
 
-test("POS v2 keeps true sample timing (probe gaps) and the cloak bit", async () => {
+test("POS v3 keeps true sample timing (probe gaps) and the cloak/field bits", async () => {
   // irregular gaps are the point: v1 threw the cadence away and decoders
   // wrongly assumed one sample per frame, compressing unit motion to 1/6
   const snap = syntheticSnapshot();
   const u = snap.units.get(1)!;
   u.samples = [
-    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true },
+    { frame: 6, x: 1024.5, z: 2048.25, hp: 255, build: 255, cloaked: true, cloakField: true },
     { frame: 13, x: 1090, z: 2100, hp: 255, build: 255, cloaked: true },
-    { frame: 25, x: 1200, z: 2200, hp: 255, build: 255 },
+    { frame: 25, x: 1200, z: 2200, hp: 255, build: 255, cloaked: true, cloakField: true },
   ];
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  assert.equal(artifact.pos.version, 3);
   const posUnit = artifact.pos!.units.find((x) => x.unitID === 1)!;
   assert.deepEqual(posUnit.samples.map((s) => s.frame), [6, 13, 25]);
-  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, false]);
+  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, true]);
+  assert.deepEqual(posUnit.samples.map((s) => s.cf), [true, false, true]);
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units.find((x) => x.id === 1)!;
   assert.deepEqual(m.track.map((t) => Math.round(t.t * 30)), [6, 13, 25]);
+  assert.deepEqual(m.track.map((t) => t.cf), [true, false, true]);
+});
+
+test("legacy POS v2 decodes cloaked but leaves the field bit undefined (fallback to ck)", async () => {
+  // hand-pack a v2 POS section exactly as the PR #12 packer wrote it
+  // (s16 dX, s16 dZ, s16 frameDelta, u8 hp, u8 build, u8 flags = bit0)
+  const b = Buffer.alloc(64);
+  let o = 0;
+  b.writeUInt32LE(1, o); o += 4;                      // numUnits
+  b.writeUInt32LE(5, o); o += 4;                     // unitID
+  b.writeUInt16LE(10, o); o += 2;                    // defID
+  b.writeUInt32LE(100, o); o += 4;                   // firstFrame
+  b.writeUInt16LE(2, o); o += 2;                     // sampleCount
+  b.writeUInt16LE(0, o); o += 2;                      // originX
+  b.writeUInt16LE(0, o); o += 2;                      // originZ
+  for (let k = 0; k < 2; k++) {
+    b.writeInt16LE(10, o); o += 2;                   // dX
+    b.writeInt16LE(5, o); o += 2;                    // dZ
+    b.writeInt16LE(6, o); o += 2;                     // frameDelta
+    b.writeUInt8(255, o); o += 1;                      // hp
+    b.writeUInt8(255, o); o += 1;                      // build
+    b.writeUInt8(k === 0 ? 1 : 3, o); o += 1;          // flags: bit0, v2's bit1 is garbage
+  }
+  const { writeZkr } = require("../dist/zkr/container.js");
+  const zkr = writeZkr([{ id: "POS ", version: 2, payload: new Uint8Array(b.subarray(0, o)), codec: 1 }]);
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const s = artifact.pos!.units[0]!.samples;
+  assert.deepEqual(s.map((x) => x.ck), [true, true]);
+  assert.deepEqual(s.map((x) => x.cf), [undefined, undefined],
+    "v2 bit1 is NOT a field bit: pre-#13 artifacts would lose all field circles if read");
+  const model = ZkrReplay.artifactToModel(artifact);
+  const m = model.units[0]!;
+  assert.deepEqual(m.track.map((t) => t.cf), [undefined, undefined]);
 });
 
 test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () => {
@@ -367,14 +402,24 @@ test("damageShade: full hp keeps the exact colour, dead keeps each channel at >=
   assert.equal(ZkrReplay.damageShade("#9aa4aa", 0), "rgb(116,123,128)");
 });
 
+test("damageShade quantizes hp to 16 steps (bounds the icon tint cache)", () => {
+  const col = "hsl(120, 100%, 50%)";
+  // 0.37 is not on a 16th boundary: it rounds to 6/16 = 0.375
+  assert.equal(ZkrReplay.damageShade(col, 0.37), ZkrReplay.damageShade(col, 0.375));
+  assert.notEqual(ZkrReplay.damageShade(col, 0.31), ZkrReplay.damageShade(col, 0.375), "a different 16th must shade differently");
+  const distinct = new Set<string>();
+  for (let hp = 0; hp <= 1.0001; hp += 0.01) distinct.add(ZkrReplay.damageShade(col, hp));
+  assert.equal(distinct.size, 17, "exactly one shade per 16th plus full hp keeps the cache bounded");
+});
+
 test("damageShade matches hslToRgb scaled channels (random spot checks)", () => {
   for (const hue of [4, 32, 130, 206, 342]) {
     for (const l of [0.32, 0.55, 0.82]) {
       const src = "hsl(" + hue + ",88%," + Math.round(l * 100) + "%)";
-      const hp = 0.37; // k = 0.8425
+      const hp = 0.37; // quantizes to 6/16
       const got = ZkrReplay.damageShade(src, hp);
       const expect = ZkrReplay.hslToRgb(hue, 0.88, l)
-        .map((v) => Math.round(v * (0.75 + 0.25 * hp)));
+        .map((v) => Math.round(v * (0.75 + 0.25 * 0.375)));
       assert.equal(got, "rgb(" + expect.join(",") + ")");
     }
   }
@@ -458,4 +503,36 @@ test("legacy artifacts: one contaminated proID path splits into two flights at m
       assert.ok(p.path[i].t - p.path[i - 1].t <= 0.6, "no cross-map crawl steps");
     }
   }
+});
+
+test("morph deaths read as morphed: same-team spawn on the same spot, no wreck", async () => {
+  const snap = syntheticSnapshot();
+  // fixture death: unit 2 (team 1, def 11) dies at frame 900 with its only
+  // sample at {6, (4096, 8192)}: give it a morph target — a same-team unit
+  // spawning at frame 900 at that exact position
+  snap.units.set(3, { unitID: 3, defID: 12, samples: [
+    { frame: 900, x: 4096, z: 8192, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 900, unitID: 3, int1: 12, int2: 1, int3: -1 });
+  // ...and a genuine kill with no same-spot respawn: unit 4 (team 0) dies at 400
+  snap.units.set(4, { unitID: 4, defID: 10, samples: [
+    { frame: 6, x: 100, z: 100, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 4, int1: 10, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 400, unitID: 4, int1: 1, int2: 0, int3: 42 });
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const m2 = model.units.find((x) => x.id === 2)!;
+  const m4 = model.units.find((x) => x.id === 4)!;
+  assert.equal(m2.morph, true, "death+same-spot same-team spawn within 4 s = morph");
+  assert.equal(m4.morph, false, "a kill with no respawn coincidence stays a death");
+  const morphRow = model.feedData.find((f) => f.cls === "morph")!;
+  assert.ok(morphRow, "feed has a morph row");
+  assert.match(morphRow.txt, /morphed into/);
+  assert.ok(model.feedData.some((f) => f.cls === "death" && f.txt.includes("destroyed")),
+    "the genuine kill still reads destroyed");
+  assert.ok(!model.feedData.some((f) => f.cls === "death" && f.txt.includes("Unit #2")),
+    "the morph victim is not reported destroyed");
 });

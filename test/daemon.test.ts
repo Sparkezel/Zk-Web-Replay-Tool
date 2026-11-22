@@ -82,6 +82,33 @@ test("ingest ignores terraunit spawns, probes and deaths", () => {
   // only the real unit's spawn survives as an event
   assert.deepEqual(snap.events.map((e) => e.kind), ["spawn"]);
   assert.equal(snap.events[0]!.unitID, 10);
+  // Spring recycles unitIDs: a real unit later reusing the terraunit's id
+  // must un-ignore it (the widget clears its own map on UnitDestroyed)
+  ingestLine(snap, 'ZKR {"t":"spawn","f":800,"u":9,"d":12,"n":"cloakjammer","tm":2,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":806,"p":[[9,300,300,1,1]]}');
+  ingestLine(snap, 'ZKR {"t":"death","f":900,"u":9,"k":10,"kt":1,"w":-1}');
+  assert.ok(!snap.ignoredUnits.has(9), "real spawn reclaims the recycled unitID");
+  assert.ok(snap.units.has(9));
+  assert.equal(snap.units.get(9)!.samples.length, 1);
+  assert.ok(snap.events.some((e) => e.kind === "death" && e.unitID === 9));
+});
+
+test("pos rows carry a cloak bitfield: bit0 cloaked, bit1 own field active", () => {
+  const snap = newSnapshot();
+  ingestLine(snap, 'ZKR {"t":"spawn","f":6,"u":1,"d":12,"n":"cloakjammer","tm":0,"b":-1}');
+  ingestLine(snap, 'ZKR {"t":"pos","f":6,"p":[[1,100,100,1.0,0.5,3],[1,106,100,1.0,0.5,2],[1,112,100,1.0,0.5,1],[1,118,100,1.0,0.5,0]]}');
+  const s = snap.units.get(1)!.samples;
+  assert.deepStrictEqual(s.map((x) => [x.cloaked, x.cloakField]), [
+    [true, true],   // 3 = cloaked + own field on
+    [false, true],  // 2 = own field on, decloaked (firing)
+    [true, false],  // 1 = cloaked by personal/ally cloak, field off
+    [false, false], // 0 = nothing
+  ]);
+  assert.equal(s[0]!.build, 128, "build progress reaches the snapshot (0.5 of 255)");
+  // v1 widget rows stop at build: bits undefined, not false
+  ingestLine(snap, 'ZKR {"t":"pos","f":124,"p":[[1,124,100,1.0,1]]}');
+  assert.equal(snap.units.get(1)!.samples[4]!.cloaked, undefined);
+  assert.equal(snap.units.get(1)!.samples[4]!.cloakField, undefined);
 });
 
 test("artifact roundtrip: sections, POS quantization, EVNT records", () => {

@@ -92,12 +92,15 @@
   /** healthv2 damage shading: the unit's team colour IS its health bar —
       full hp shows the exact team colour, damage darkens the colour vector
       toward 75% (never below, so a nearly-dead unit still reads as its
-      team's hue, just darker). hp is 0..1; unparseable colours pass through
-      unchanged. Building units (hp growing from 0) are not "damaged" — the
-      caller passes 1 while bd < 1 so they stay at full colour. */
+      team's hue, just darker). hp is 0..1, quantized to 16 steps: the tint
+      cache keys on the returned colour, and a shade per raw u8 hp level
+      grew the icon cache to 12k offscreen canvases on a real sweep —
+      17 reachable shades read identically and keep the cache bounded.
+      Unparseable colours / absent hp pass through unchanged. */
   function damageShade(color, hp) {
     if (hp === null || hp === undefined || !isFinite(hp)) return color;
-    const k = 0.75 + 0.25 * Math.max(0, Math.min(1, hp));
+    const h = Math.round(Math.max(0, Math.min(1, hp)) * 16) / 16;
+    const k = 0.75 + 0.25 * h;
     let rgb = null;
     const s = String(color);
     const m = /^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/.exec(s);
@@ -225,6 +228,11 @@
     if (!img || !img.complete || !img.naturalWidth || !color) return null;
     const key = (img.src || "") + "|" + color;
     if (!tintCache.has(key)) {
+      /* healthv2 feeds a shade per hp level, which would grow this cache
+         unbounded (12k+ offscreen canvases measured on a full sweep);
+         quantizing the shade below keeps live entries low, and the cap
+         guarantees the ceiling even with many icons */
+      if (tintCache.size > 600) tintCache.clear();
       const c = document.createElement("canvas");
       c.width = img.naturalWidth; c.height = img.naturalHeight;
       const g = c.getContext("2d");
@@ -254,7 +262,7 @@
   const POS_PROBE_EVERY = 6;
 
   function decodePos(dv, u8, version) {
-    const p = { units: [], maxFrame: 0 };
+    const p = { version, units: [], maxFrame: 0 };
     let o = 0;
     const numUnits = dv.getUint32(o, true); o += 4;
     for (let i = 0; i < numUnits; i++) {
@@ -277,9 +285,17 @@
         }
         const hp = u8[o] / 255; o += 1;
         const build = u8[o] / 255; o += 1;
-        let ck = false;
-        if (version >= 2) { ck = (u8[o] & 1) !== 0; o += 1; }
-        samples.push({ frame, x, z, hp, build, ck });
+        let ck = false, cf = undefined;
+        // v3 adds the own-field bit; v1/v2 artifacts predate it — their bit1
+        // is padding, so cf stays undefined and the viewer falls back to ck
+        if (version >= 3) {
+          const flags = u8[o]; o += 1;
+          ck = (flags & 1) !== 0;
+          cf = (flags & 2) !== 0;
+        } else if (version === 2) {
+          ck = (u8[o] & 1) !== 0; o += 1;
+        }
+        samples.push({ frame, x, z, hp, build, ck, cf });
       }
       p.units.push({ unitID, defID, firstFrame, samples });
       if (frame > p.maxFrame) p.maxFrame = frame;
@@ -445,6 +461,43 @@
       if (r.kind === "spawn") defByUnit.set(r.unitID, r.int1);
     }
 
+    /* ZK morphs destroy the old unit and spawn its target at the same spot
+       in the same frame; EVNT carries only death, so morphs read as
+       "destroyed" and would leave a wreck dot under the live morphed unit.
+       Mark a death as a morph when a same-team unit spawns within 4 s and
+       80 elmos of the dying unit's last tracked position. */
+    const morphIntoByUnit = new Map();
+    {
+      const dims0 = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+      const mw = dims0 && dims0[0] > 0 ? dims0[0] : 16384;
+      const mh = dims0 && dims0[1] > 0 ? dims0[1] : mw;
+      const spawnsByTeam = {};
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length) continue;
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
+          unitID: u.unitID, t: toSec(u.firstFrame),
+          x: u.samples[0].x, y: u.samples[0].z,
+        });
+      }
+      for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
+      for (const u of (artifact.pos ? artifact.pos.units : [])) {
+        if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
+        const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
+        const list = spawnsByTeam[team];
+        if (!list) continue;
+        const diedT = toSec(deathByUnit.get(u.unitID));
+        const last = u.samples[u.samples.length - 1];
+        for (const s of list) {
+          if (s.unitID === u.unitID) continue;
+          if (s.t < diedT - 4) continue;
+          if (s.t > diedT + 4) break;
+          const dx = (s.x - last.x) * mw, dz = (s.y - last.z) * mh;
+          if (dx * dx + dz * dz <= 80 * 80) { morphIntoByUnit.set(u.unitID, s.unitID); break; }
+        }
+      }
+    }
+
     const udef = new Map();
     for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) {
       udef.set(row[0], {
@@ -493,6 +546,14 @@
       const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
       if (deadDef && EXCLUDED_UNIT_DEFS.has((deadDef.name || "").toLowerCase())) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
+      if (morphIntoByUnit.has(r.unitID)) {
+        const intoName = defLabel(morphIntoByUnit.get(r.unitID), null) || "an upgraded unit";
+        feedData.push({
+          tm: toSec(r.frame), cls: "morph",
+          txt: unitName + " morphed into " + intoName,
+        });
+        continue;
+      }
       const killerName = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
       feedData.push({
         tm: toSec(r.frame), cls: "death",
@@ -602,7 +663,15 @@
         cloakRadius: info ? info.cloakRadius : undefined,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
-        track: u.samples.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build, ck: s.ck })),
+        /* ZK morph victim: no wreck marker under the live morphed unit */
+        morph: morphIntoByUnit.has(u.unitID),
+        track: u.samples.map((s) => ({
+          t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build,
+          ck: s.ck,
+          /* own area-cloak field active; undefined on artifacts packed
+             before the field bit existed — the caller falls back to ck */
+          cf: s.cf,
+        })),
       };
     }).filter((u) => !u.def || !EXCLUDED_UNIT_DEFS.has(String(u.def).toLowerCase()));
 

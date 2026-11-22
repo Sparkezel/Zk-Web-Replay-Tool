@@ -173,3 +173,28 @@ try {
   console.error("MID-GAME SEEK THREW:", e.stack ?? e);
   process.exit(5);
 }
+
+// healthv2 sweep: exercise the damage-shade branch (damageShade on real team
+// colours + the bounded tint cache) against the real artifact, past real
+// deaths/wreck markers; then restore the v1 default
+try {
+  byIdReal("hpv1").checked = false;
+  byIdReal("hpv2").checked = true;
+  const before = cxCalls;
+  for (let i = 0; i < 200; i++) {
+    simTimeMs += 16.67;
+    const q = rafQueue.splice(0);
+    for (const fn of q) fn(simTimeMs);
+  }
+  for (let t = 0; t <= 1520; t += 40) {
+    timelineEl.value = t;
+    if (timelineEl.oninput) timelineEl.oninput.call(timelineEl, { target: { value: t } });
+  }
+  console.log("healthv2 sweep OK: +", cxCalls - before, "canvas calls, guard errors:", cxErrors.length ? cxErrors.slice(0, 5) : "none");
+} catch (e) {
+  console.error("HEALTHV2 SWEEP THREW:", e.stack ?? e);
+  process.exit(7);
+} finally {
+  byIdReal("hpv1").checked = true;
+  byIdReal("hpv2").checked = false;
+}
