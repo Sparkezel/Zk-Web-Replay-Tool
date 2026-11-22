@@ -93,6 +93,7 @@ type El = Record<string, unknown> & {
   value: number;
   onclick: ((...a: unknown[]) => void) | null;
   oninput: ((...a: unknown[]) => void) | null;
+  onchange: ((...a: unknown[]) => void) | null;
 }
 
 function installStubs(serveFile: string | null): { byId: (id: string) => El; state: SimState } {
@@ -102,7 +103,7 @@ function installStubs(serveFile: string | null): { byId: (id: string) => El; sta
     width: 380, height: 120,        // canvas intrinsic size (markup-defined in the page)
     clientWidth: 800, clientHeight: 460,
     getContext: () => makeCx(state),
-    onclick: null, oninput: null,
+    onclick: null, oninput: null, onchange: null,
     classList: { add() {}, remove() {}, contains: () => false },
     children: [] as unknown[],
     querySelector: () => makeEl("q"),
@@ -205,6 +206,18 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   assert.ok(n0 >= 2, `team-0 count includes alive+ghost units (got ${n0})`);
   assert.ok(teamConstantsAreGone(), "the old two-corner counters no longer exist");
   assert.match(String(byId("clock").textContent), /01:00 \/ 01:30/, "clock follows the seek (END = 90s)");
+
+  // replay catalog: one select option per replay; switching loads the
+  // next artifact (the fetch stub serves the same fixture bytes for any
+  // URL, which is exactly what the switch path needs exercised)
+  const pick = byId("replayPick");
+  assert.ok((pick.children as unknown[]).length >= 2, "catalog select lists every replay");
+  assert.ok(pick.onclick === null, "select uses onchange");
+  pick.value = 1;
+  (pick.onchange as () => void).call(pick);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.match(byId("chip").textContent, /battle2\.zkr/, "switching installs the second artifact");
+  assert.match(String(byId("infoDur").textContent), /minutes/, "battle-result duration follows the loaded model");
 });
 
 test("page falls back to the synthetic preview when the artifact fetch fails", async () => {

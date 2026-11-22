@@ -144,7 +144,11 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
   if (src === null) {
     log.warn("no map file (.smf/.sd7/.sdz) in the staged data; viewer keeps the plain backdrop (--data-root enables map extraction)");
   } else {
-    const mapPng = path.join(path.dirname(artifactPath), "map.png");
+    /* map image is named after the artifact (battle.zkr -> battle.map.png):
+       one viewer directory now hosts SEVERAL replays, and each needs its
+       own backdrop — a fixed "map.png" would be overwritten by every resim */
+    const base = path.basename(artifactPath).replace(/\.[^.]*$/, "");
+    const mapPng = path.join(path.dirname(artifactPath), base + ".map.png");
     const dims = src.kind === "smf"
       ? extractMapImage(src.path, mapPng)
       : extractMapImageFromArchive(src.path, mapPng, { mapName: demo.roster.mapName ?? undefined });

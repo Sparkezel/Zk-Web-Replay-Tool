@@ -62,6 +62,7 @@
   .speed button.on{background:var(--accent2);border-color:var(--accent2);color:#fff}
   .clock{font-variant-numeric:tabular-nums;color:var(--txt);min-width:118px;font-size:12.5px}
   .chip{font-size:11.5px;color:var(--dim)}
+  .pick{background:#1d2225;border:1px solid var(--line);color:var(--txt);border-radius:3px;padding:3px 6px;font-size:11px;max-width:280px}
 
   /* ---- teams / players ---- */
   .team-table{width:100%;border-collapse:collapse;font-size:13px}
@@ -126,7 +127,7 @@
   <div class="mock-note">⚠ Mockup – layout exploration for the battle-result page. The replay stage renders <code>battle.zkr</code> (the pre-simulated artifact produced by the resim daemon) when placed next to this page; without it, synthetic preview data is shown.</div>
 
   <div class="head">
-    <h1>[A] Teams All Welcome #1</h1>
+    <h1 id="battleTitle">[A] Teams All Welcome #1</h1>
     <span class="badge win">Winner: Team 1</span>
     <span class="badge">Casual</span>
     <span class="badge">8 players</span>
@@ -142,12 +143,14 @@
         <div class="stage">
           <canvas id="replay" width="1180" height="460"></canvas>
           <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
-          <div class="victory" id="victory">
+          <div id="victory" class="victory">
             <div class="big">Team 1 wins</div>
             <div class="sub">allyTeam 0 · 25:16 game time</div>
           </div>
+          <div class="overlay-tl"><span id="ovMap">Otago 1.4</span> · <span id="frameInfo">frame 0</span></div>
         </div>
         <div class="controls">
+          <select id="replayPick" class="pick" title="choose a replay"></select>
           <button class="btn ghost" id="playBtn">▶ Play</button>
           <span class="clock" id="clock">00:00 / 25:16</span>
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
@@ -186,12 +189,12 @@
           <table class="meta">
             <tr><td>Title</td><td>[A] Teams All Welcome #1</td></tr>
             <tr><td>Host</td><td>Nobody (autohost)</td></tr>
-            <tr><td>Map</td><td>Otago 1.4</td></tr>
-            <tr><td>Game version</td><td>Zero-K v1.14.10.3</td></tr>
-            <tr><td>Engine version</td><td>2026.07.04</td></tr>
+            <tr><td>Map</td><td id="infoMap">Otago 1.4</td></tr>
+            <tr><td>Game version</td><td id="infoGame">Zero-K v1.14.10.3</td></tr>
+            <tr><td>Engine version</td><td id="infoEngine">2026.07.04</td></tr>
             <tr><td>Battle ID</td><td>2539874</td></tr>
             <tr><td>Started</td><td>2026-11-15 12:27 UTC</td></tr>
-            <tr><td>Duration</td><td>25 minutes</td></tr>
+            <tr><td>Duration</td><td id="infoDur">25 minutes</td></tr>
             <tr><td>Rating</td><td>Casual</td></tr>
             <tr><td>Bots / Mission</td><td>False / False</td></tr>
           </table>
@@ -413,7 +416,7 @@ function buildArtifactModel(artifact){
 var cv=document.getElementById("replay"),cx=cv.getContext("2d");
 /* map backdrop written by the daemon (extracted from the .smf's embedded
    minimap); plain background + blobs while it is unavailable */
-var mapImg=new Image();mapImg.src="map.png";
+var mapImg=new Image();mapImg.src="battle.map.png";
 function draw(model,tm){
   var W=cv.width,H=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
@@ -815,7 +818,7 @@ function renderUnitStats(model,live,tm){
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
-  document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
+  document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
   t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
@@ -824,9 +827,17 @@ function installModel(model){
 requestAnimationFrame(loop); /* start the animation loop */
 
 /* ================= artifact loading ================= */
+/* replay catalog: each entry is fetchable as <art> next to the page, with
+   its map backdrop at <art-minus-.zkr>.map.png (daemon writes one minimap
+   PNG per artifact - fixed map.png would be clobbered by every resim) */
+var REPLAYS=[
+  {label:"Teams All Welcome #1 · Otago (8 players)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
+  {label:"Comet Catcher Remake 1.8 (stress test)",art:"battle2.zkr",title:"Comet Catcher Remake 1.8"}
+];
+var curReplay=REPLAYS[0];
 function loadArtifact(url){
   return fetch(url,{cache:"no-cache"}).then(function(res){
-    if(!res.ok)throw new Error("battle.zkr not found ("+res.status+")");
+    if(!res.ok)throw new Error("artifact not found ("+res.status+")");
     return res.arrayBuffer();
   }).then(function(buf){
     return ZkrReplay.parse(new Uint8Array(buf));
@@ -836,23 +847,41 @@ function loadArtifact(url){
 function showArtifact(a){
   var model=buildArtifactModel(a);
   installModel(model);
+  /* per-replay page chrome follows the loaded artifact */
+  var h1=document.querySelector(".head h1");if(h1)h1.textContent=curReplay.title;
+  document.getElementById("ovMap").textContent=model.meta.map;
+  document.getElementById("infoMap").textContent=model.meta.map;
+  document.getElementById("infoGame").textContent=model.meta.game;
+  document.getElementById("infoEngine").textContent=model.meta.engine;
+  document.getElementById("infoDur").textContent=Math.max(1,Math.round(model.END/60))+" minutes";
   var badge=document.querySelector(".head .badge.win");
   if(badge&&model.winnerLabel)badge.textContent="Winner: "+model.winnerLabel;
-  document.getElementById("simState").textContent="artifact: ready \u00b7 "+a.sections.map(function(s){return s.id}).join(" \u00b7 ");
+  document.getElementById("simState").textContent="artifact: ready · "+a.sections.map(function(s){return s.id}).join(" · ");
 }
 
-loadArtifact("battle.zkr").then(function(a){
-  var m=ZkrReplay.artifactToModel(a);
-  if(!m.hasUnits){
+/* load one catalog entry; a failed fetch on a NON-default replay keeps the
+   currently loaded one on screen (no synthetic takeover) */
+function loadReplay(idx){
+  if(idx<0||idx>=REPLAYS.length)return;
+  curReplay=REPLAYS[idx];
+  mapImg.src=curReplay.art.replace(/\.zkr$/i,"")+".map.png";
+  loadArtifact(curReplay.art).then(function(a){
+    var m=ZkrReplay.artifactToModel(a);
+    if(!m.hasUnits){
+      installModel(buildSyntheticModel());
+      document.getElementById("simState").textContent=curReplay.art+" has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
+      return;
+    }
+    showArtifact(a);
+  }).catch(function(){
+    if(MODEL){
+      document.getElementById("simState").textContent=curReplay.art+" not found \u2014 keep the previous replay, resim to produce it";
+      return;
+    }
     installModel(buildSyntheticModel());
-    document.getElementById("simState").textContent="battle.zkr has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
-    return;
-  }
-  showArtifact(a);
-}).catch(function(){
-  installModel(buildSyntheticModel());
-  document.getElementById("simState").textContent="no battle.zkr next to the page \u2014 synthetic preview";
-});
+    document.getElementById("simState").textContent="no "+curReplay.art+" next to the page \u2014 synthetic preview";
+  });
+}
 
 /* mock re-sim button: paragraphs describe what the real daemon does */
 document.getElementById("simBtn").onclick=function(){
@@ -860,9 +889,25 @@ document.getElementById("simBtn").onclick=function(){
   var q=["downloading .sdfz \u2192 provisioning engine + Zero-K data","headless resim @ max speed\u2026","simulating\u2026 40%","simulating\u2026 80%","packing artifact"];
   var i=0;st.textContent=q[0];
   var iv=setInterval(function(){i++;if(i>=q.length){clearInterval(iv);b.disabled=false;
-      loadArtifact("battle.zkr").then(showArtifact).catch(function(){st.textContent="artifact not found \u2014 run: node dist\\daemon\\index.js --out mockup\\battle.zkr";});}
+      loadArtifact(curReplay.art).then(showArtifact).catch(function(){st.textContent="artifact not found \u2014 run the daemon with --out mockup\\"+curReplay.art;});}
     else st.textContent=q[i];},600);
 };
+
+/* catalog select: one option per replay, switch loads its artifact
+   (fetch failure keeps the previous model on screen) */
+(function(){
+  var pickEl=document.getElementById("replayPick");
+  if(!pickEl)return;
+  REPLAYS.forEach(function(rp,i){
+    var o=document.createElement("option");
+    o.value=String(i);
+    o.textContent=rp.label;
+    pickEl.appendChild(o);
+  });
+  pickEl.onchange=function(){loadReplay(+this.value);};
+  loadReplay(0);
+})();
+
 </script>
 </body>
 </html>
