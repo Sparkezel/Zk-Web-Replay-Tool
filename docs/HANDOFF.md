@@ -15,12 +15,14 @@ The snapshot widget probes every unit every 6th engine frame (0.2 s), but POS v1
 
 **Fix**: POS/PROJ sections bumped to **v2** with a per-sample `s16 frameDelta` (POS samples also gain a cloak flag byte). Legacy v1 artifacts are decoded with the historical fixed cadence (firstFrame + 6k) — so existing artifacts display correctly without a re-run.
 
-### 2. Pre-game chat — the ZK pick phase
+### 2. Pre-game chat — the ZK pick phase, and TWO CLOCKS (counter-review find)
 
-ZK team battles record a lobby/pick phase BEFORE play: this battle has a 160-second tail ("I choose:" commander picks, SPRINGIE relays) up to the demo's **STARTPLAYING** netmsg at frame 4799. The viewer clock now anchors at `MACR.startPlayingFrame` (new field, parsed from the demo stream):
+ZK team battles record a lobby/pick phase BEFORE play: ~164 s of "I choose:" commander picks and SPRINGIE relays, ending at the demo's STARTPLAYING events (frame 4799 with a 4000 ms countdown payload, then 4918 with 0). Critically, the artifact mixes two clocks:
 
-- everything (units, feed, eco, victory) is shifted — playback starts when play starts
-- chat rows recorded before the anchor are tagged `pre` and **shown from the first frame** in the chat panel, labeled "lobby"
+- **resim sections (POS/EVNT/PROJ/LINK/STBX/UDEF/WDEF)** run on *engine play frames* — the engine does not simulate during the pick phase, so their frame 0 already IS play start. NEVER anchor-subtract these.
+- **demo-derived sections (CHAT/DRAW/MACR/ECO/PSTA/META)** run on absolute demo frames and must be shifted by `MACR.startPlayingFrame` = the LATEST startplaying candidate (frame + countdown; first naive version subtracted from resim frames too and erased the game's first 160 s — caught by adversarial review, fixed, verified: END 25:23, feed from 6.7 s, lobby chat pre-shown at tm<=0).
+
+`fmt()` now clamps negatives (pre-game rows show the "lobby" label instead of a time anyway).
 
 **Migration for existing artifacts**: `node scripts/repack-zkr.mjs mockup/battle.zkr <demo.sdfz>` rebuilds the demo-derived sections (META/ROST/CHAT/MACR/…) and carries the resim sections (POS/EVNT/…) — anchors the old artifact without a resim. Already applied to `mockup/battle.zkr` (backup at `battle.zkr.v1.bak`).
 
@@ -42,9 +44,10 @@ then hard-refresh the browser (http-server caches index.html/replay.js for an ho
 ## Still open
 
 - Backlog #6/#9/#10 (gh-pages, version bump, icon-sync docs).
-- `package.json`'s stray `node@27-alpha` dependency (shadows the system Node 16 — deliberate or drop it).
+- `package.json`'s stray `node@27-alpha` dependency is an UNCOMMITTED local mod (not on any branch — a reviewer flagged it as committed, that was wrong); decide: commit deliberately or drop it.
+- Legacy v1 decode caveats (documented in replay.js): v1 sections carry no cadence metadata, so an artifact packed with `--pos-rate N` decodes N× mis-timed (v2 with true deltas is immune); `u16 sampleCount` truncates tracks > 65535 samples (≈3.6 s at 5 Hz… 2.2 h — unreachable in practice); `s16` deltas cannot represent a single-probe jump > 32768 elmos (Djinn teleports between probes would wrap).
+- Cloak radius fallback: `cloakjammer` → 350 hard-coded only when the runtime capture missed ZK's `area_cloak_radius` custom param (matched exactly now; `area_cloak_recloak_rate` etc. no longer win the `pairs()` lottery). `staticjammer` (Iris morph) has no fallback — its radius comes from the runtime capture.
 - cnt1/cnt2 chips only count the first two teams (cosmetic; 7-team battles undercount).
-- Older viewer artifacts decoded with the fixed legacy cadence assumed `--pos-rate 1` (default); an artifact packed with `--pos-rate N` would need N× the cadence — acceptable, documented in replay.js.
 
 ## Environment notes
 

@@ -100,11 +100,17 @@ export function parseDemoStream(
 
     switch (type) {
       case NetMsg.StartPlaying: {
-        // [type] — the server told everyone playing begins; the FIRST one is
-        // the game-start anchor (ZK demos show a second event later, so first
-        // wins; frame 0 is a legitimate anchor, hence the separate flag)
-        if (!startPlayingSeen) {
-          res.startPlayingFrame = frame;
+        // [type][u32 countdown ms] — the epoch where the engine's sim clock
+        // (GameFrame 0) begins is the LATEST startplaying candidate: ZK
+        // first records a variant carrying a countdown (e.g. 4000 ms), then
+        // the final one with 0. Play-relative resim frames align to that
+        // epoch, so the anchor must be the max candidate, not the first event.
+        const countdownFrames = raw.length >= 5
+          ? Math.round(dvOf(raw).getUint32(1, true) * 30 / 1000)
+          : 0;
+        const candidate = frame + countdownFrames;
+        if (!startPlayingSeen || candidate > res.startPlayingFrame) {
+          res.startPlayingFrame = candidate;
           startPlayingSeen = true;
         }
         break;

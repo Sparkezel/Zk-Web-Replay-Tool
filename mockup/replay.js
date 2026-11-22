@@ -376,14 +376,20 @@
    * with [0..1] map-space coordinates.
    */
   function artifactToModel(artifact) {
-    /* Timeline anchor: ZK demos record the lobby/pick phase first (minutes of
-       ready-up + commander picks); MACR.startPlayingFrame is the frame where
-       play actually begins. Everything before it is pre-game: the replay
-       clock starts at the anchor, and pre-game chat is shown from the start
-       (its times land <= 0) instead of "playing" with the game. */
+    /* Two clocks meet in one artifact (counter-review verified this the hard
+       way): resim sections (POS/EVNT/PROJ/LINK) run on ENGINE play frames —
+       the engine does not simulate during the lobby/pick phase, so their
+       frame 0 IS play start. Demo-derived sections (CHAT/ECO/PSTA/MACR) run
+       on absolute demo frames, which include the pick phase (minutes of
+       ready-up + commander picks in ZK teams games; MACR.startPlayingFrame
+       is the epoch where play begins). Units keep the play clock; demo data
+       is shifted by the anchor, so pre-game chat lands at tm <= 0 and is
+       pre-shown instead of playing with the game. */
     const anchor = artifact.macro && artifact.macro.startPlayingFrame > 0
       ? artifact.macro.startPlayingFrame : 0;
-    const toSec = (f) => (f - anchor) / FPS;
+    const toPlay = (f) => f / FPS;          // resim frame -> play second
+    const toDemo = (f) => (f - anchor) / FPS; // demo frame -> play second
+    const toSec = toPlay;                    // most sections here are resim/play-relative
 
     const teamByUnit = new Map();
     const defByUnit = new Map();
@@ -534,7 +540,7 @@
         kind = "whisper";
         to = playerNameByNum.get(dest) || ("Player " + dest);
       }
-      chatData.push({ tm: toSec(frame), name, kind, ally, to, txt: text, pre: frame <= anchor });
+      chatData.push({ tm: toDemo(frame), name, kind, ally, to, txt: text, pre: frame <= anchor });
     }
     chatData.sort((a, b) => a.tm - b.tm);
 
@@ -573,16 +579,17 @@
 
     const ecoPts = [];
     for (const t of (artifact.eco ? artifact.eco.teams : [])) {
-      ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toSec(s.frame), s.metalProduced]) });
+      ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toDemo(s.frame), s.metalProduced]) });
     }
 
     const posEnd = artifact.pos ? artifact.pos.maxFrame : 0;
     const projEnd = artifact.proj ? artifact.proj.maxFrame : 0;
     const linkEnd = artifact.link ? artifact.link.maxFrame : 0;
-    const endTime = toSec(Math.max(endFrame, posEnd, projEnd, linkEnd));
-    // META.gameTime is seconds from the demo start, so shift it by the anchor
-    const metaEnd = artifact.meta && artifact.meta.gameTime
-      ? Math.max(0, artifact.meta.gameTime - anchor / FPS) : 0;
+    // resim sections run on the play clock already - never anchor-shifted
+    const endTime = toPlay(Math.max(endFrame, posEnd, projEnd, linkEnd));
+    // META.gameTime is play seconds (demo header field counts from play
+    // start, matching the resim's last sim frame / 30) - never shifted
+    const metaEnd = artifact.meta && artifact.meta.gameTime ? artifact.meta.gameTime : 0;
     const dims = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
 
     return {

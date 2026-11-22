@@ -272,9 +272,12 @@ test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () =
     "v1 artifacts must decode at the historical probe cadence, not one-per-frame");
 });
 
-test("artifactToModel anchors the clock at STARTPLAYING and tags pre-game chat", () => {
-  // synthetic artifact object (post-parse shape) with a pick phase of
-  // 4799 frames, matching real ZK team battles
+test("artifactToModel anchors DEMO data at STARTPLAYING, keeps resim on the play clock", () => {
+  /* Two clocks: resim sections (POS/EVNT) are engine play frames - frame 0
+     IS play start. Demo-derived rows (CHAT/ECO) are absolute demo frames
+     including the lobby/pick phase; MACR.startPlayingFrame is where play
+     begins. Only demo data gets shifted. (Found by adversarial review:
+     naive global shifting erased the game's first 160 s.) */
   const artifact = {
     containerVersion: 1, sections: [],
     meta: { schema: 1, gameTime: 160, map: { name: "Otago 1.4", dims: [16384, 16384] } },
@@ -290,6 +293,7 @@ test("artifactToModel anchors the clock at STARTPLAYING and tags pre-game chat",
     evnt: {
       records: [
         { kind: "spawn", frame: 4810, unitID: 1, int1: 89, int2: 0, int3: -1 },
+        { kind: "death", frame: 4845, unitID: 1, int1: -1, int2: -1, int3: -1 },
         { kind: "gameover", frame: 4900, unitID: -1, int1: 0, int2: 1, int3: -1 },
       ],
       maxFrame: 4900,
@@ -306,18 +310,44 @@ test("artifactToModel anchors the clock at STARTPLAYING and tags pre-game chat",
     },
   };
   const model = ZkrReplay.artifactToModel(artifact as never);
-  // the clock starts at the anchor: the commander is born 0.37 s in, not 160 s
+  // resim units stay on the play clock: born/died are raw frames / 30
   const u = model.units.find((x) => x.id === 1)!;
-  assert.ok(Math.abs(u.born - 11 / 30) < 1e-6, `born should be anchored (got ${u.born})`);
+  assert.ok(Math.abs(u.born - 4810 / 30) < 1e-6, `resim born must stay unshifted (got ${u.born})`);
+  assert.ok(Math.abs(u.died - 4845 / 30) < 1e-6, "died unshifted too");
+  // demo chat is anchored: pick-phase rows land <= 0 and are tagged pre
+  assert.equal(model.chatData.filter((c) => c.pre).length, 2);
+  assert.ok(model.chatData[0]!.tm <= 0, "lobby chat at or before 0");
+  assert.ok(Math.abs(model.chatData[2]!.tm - 101 / 30) < 1e-6, "in-game chat shifted by the anchor");
+  // END is the play clock: max(resim frames, META.gameTime), never anchored
+  assert.equal(model.END, 4900 / 30);
   assert.equal(model.pregameSec, 4799 / 30);
-  // pre-game chat: tagged pre, present from t=0; in-game chat keeps positive tm
-  assert.deepEqual(model.chatData.filter((c) => c.pre).length, 2);
-  assert.ok(model.chatData[2]!.tm > 0, "in-game chat stays after the anchor");
-  assert.ok(model.chatData[1]!.tm <= 0, "pick-phase chat lands at or before 0");
   // cloak: Iris radius + a cloaked sample propagate
   assert.equal(u.cloakRadius, 350);
   assert.equal(u.track[0]!.ck, true);
   // map dims for circle scaling
   assert.equal(model.mapW, 16384);
   assert.equal(model.mapH, 16384);
+});
+
+test("parseDemoStream anchors at the STARTPLAYING with its countdown elapsed", () => {
+  const { parseDemoStream } = require("../dist/demo/stream.js");
+  // chunk layout: [f32 modGameTime][u32 length][type u8][payload]
+  const chunk = (mt, type, payload = Buffer.alloc(0)) => {
+    const head = Buffer.alloc(8);
+    head.writeFloatLE(mt, 0);
+    head.writeUInt32LE(1 + payload.length, 4);
+    return Buffer.concat([head, Buffer.of(type), payload]);
+  };
+  // ZK reality: first STARTPLAYING carries a u32 ms countdown, second is 0
+  const countdown = Buffer.alloc(4);
+  countdown.writeUInt32LE(4000, 0);
+  const buf = Buffer.concat([
+    chunk(159.969, 4, countdown),  // playing "begins in 4000 ms"
+    chunk(163.942, 4),             // countdown elapsed -> play starts
+    chunk(200, 7, Buffer.of(7, 254, 0x68, 0x69, 0x00)), // a chat msg
+  ]);
+  const res = parseDemoStream(buf, { demoStreamSize: buf.length }, { keepChunks: true });
+  // the anchor must be the LATEST candidate: 4918 + 0, not 4799 + 120 === 4919
+  assert.equal(res.startPlayingFrame, Math.max(4799 + 120, 4918));
+  assert.equal(res.chat.length, 1);
 });

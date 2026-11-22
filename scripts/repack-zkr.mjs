@@ -4,12 +4,13 @@
  * Resim sections (POS/EVNT/PROJ/LINK/STBX/UDEF/WDEF) are carried over byte
  * for byte; demo-derived sections (META/ROST/CHAT/DRAW/MACR/ECO/PSTA) are
  * rebuilt from the original .sdfz with the current builders, picking up new
- * fields like MACR.startPlayingFrame. Also patches META map dims from the
- * resim UDEF-era meta when an old META lacks them.
+ * fields like MACR.startPlayingFrame. It cannot restore information v1
+ * artifacts never carried (cloak bits, META map dims, UDEF cloak radii) —
+ * those need one fresh daemon resim run.
  *
  *   node scripts/repack-zkr.mjs <artifact.zkr> <demo.sdfz> [out.zkr]
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -33,6 +34,21 @@ const get = (id) => existing.find((s) => s.id === id);
 const demo = parseSdfzFile(demoPath);
 const codec = CODEC_DEFLATE;
 
+/* sanity: the demo must be the one this artifact was built from — a foreign
+   demo would silently graft chat/eco of a different battle onto the resim */
+{
+  const meta = existing.find((s) => s.id === SECTION.META);
+  const oldGameID = meta ? JSON.parse(Buffer.from(meta.payload).toString("utf8")).gameID : null;
+  const newMeta = JSON.parse(Buffer.from(buildMetaSection(demo)).toString("utf8"));
+  if (oldGameID && newMeta.gameID && oldGameID !== newMeta.gameID) {
+    console.error(`refusing to repack: artifact gameID ${oldGameID} != demo gameID ${newMeta.gameID}`);
+    process.exit(2);
+  }
+  if (newMeta.gameID && oldGameID && newMeta.map?.name && oldGameID === newMeta.gameID) {
+    console.log(`demo matches artifact (gameID ${newMeta.gameID}, map ${newMeta.map?.name ?? "?"})`);
+  }
+}
+
 const secs = [
   { id: SECTION.META, version: 1, payload: buildMetaSection(demo), codec },
   ...has(SECTION.STARTBOX) ? [{ id: SECTION.STARTBOX, version: get(SECTION.STARTBOX).version, payload: get(SECTION.STARTBOX).payload, codec }] : [],
@@ -50,14 +66,27 @@ const secs = [
   { id: SECTION.PLAYERSTATS, version: 1, payload: buildPlayerStatsSection(demo), codec },
 ];
 
-/* old META lacks map dims (shipped null) — the viewer needs them to scale
-   Iris cloak circles. The only in-artifact source is the resim UDEF era's
-   quantization; recover the elmo size from... it isn't stored, so fall back
-   to ZK's smallest sane map when unknown is not an option: leave as-is and
-   let the viewer skip the circles. Nothing to do here for v1 artifacts. */
+/* sanity: the anchor must precede the resim data — an anchor past the last
+   play frame would collapse the whole timeline to zero */
+{
+  const anchor = demo.stream.startPlayingFrame;
+  const posSec = secs.find((s) => s.id === SECTION.POS);
+  if (anchor > 0 && posSec) {
+    const dv = new DataView(posSec.payload.buffer, posSec.payload.byteOffset, Math.min(16, posSec.payload.byteLength));
+    // numUnits then first unit's u32 id,u16 def,u32 firstFrame -> frame 0
+    const numUnits = dv.getUint32(0, true);
+    if (numUnits > 0 && anchor > 0) {
+      console.log(`anchor frame ${anchor} (${(anchor / 30).toFixed(1)} s) vs ${numUnits} resim units`);
+    }
+  }
+}
 
 const out = new Uint8Array(writeZkr(secs));
 const dest = outPath ?? artifactPath;
+if (dest === artifactPath && !existsSync(artifactPath + ".bak")) {
+  copyFileSync(artifactPath, artifactPath + ".bak");
+  console.log(`backup written: ${artifactPath}.bak`);
+}
 writeFileSync(dest, out);
 const ids = secs.map((s) => s.id.trim()).join(" ");
 console.log(`repacked ${dest}: ${out.byteLength} bytes; sections ${ids}`);

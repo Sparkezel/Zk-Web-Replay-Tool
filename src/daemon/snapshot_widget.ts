@@ -90,13 +90,21 @@ local function maybeUdef(defID)
     end
   end
   if cloakRadius == nil then
+    -- ZK's area-cloak gadget carries the field radius as a dedicated param
+    -- (real def: area_cloak_radius = 350 alongside area_cloak_recloak_rate
+    -- = 800 etc - matching any "*cloak*" key is ambiguous, so match the
+    -- radius key exactly first, then *_cloak_radius suffixed keys)
     local cp = d.customParams or d.customparams or {}
-    for k, v in pairs(cp) do
-      if type(v) == "string" and string.lower(k):find("cloak", 1, true) then
-        local n = tonumber(string.match(v, "%d+"))
-        if n ~= nil and n >= 50 then cloakRadius = n break end
+    local radius = tonumber(cp["area_cloak_radius"]) or tonumber(cp.area_cloak_radius)
+    if radius == nil then
+      for k, v in pairs(cp) do
+        if type(v) == "string" and string.sub(string.lower(k), -13) == "_cloak_radius" then
+          local n = tonumber(v)
+          if n ~= nil and n >= 50 then radius = n break end
+        end
       end
     end
+    if radius ~= nil then cloakRadius = radius end
   end
   local cr = ""
   if cloakRadius ~= nil then cr = ',"cr":' .. cloakRadius end
