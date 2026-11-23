@@ -1295,6 +1295,18 @@
     };
   }
 
+  /** Contain-fit the map's rectangle into a canvas of cw x ch DEVICE px,
+   *  preserving the map's true aspect ratio (The Hole is square, Otago is
+   *  wide - both must render undistorted, letterboxed against the panel).
+   *  Returns the fitted rect {ox, oy, fw, fh}; missing dims default to a
+   *  square map. Pure and unit-tested - the page zooms/pans around it. */
+  function mapFitRect(mapW, mapH, cw, ch) {
+    const ar = mapW > 0 && mapH > 0 ? mapW / mapH : 1;
+    const fw = Math.min(cw, ch * ar);
+    const fh = Math.min(ch, cw / ar);
+    return { ox: (cw - fw) / 2, oy: (ch - fh) / 2, fw, fh };
+  }
+
   /** Sample a unit track at time tm — coordinate + hp + build + cloak state
    *  interpolated between probes. Track points are {t, x, y} with y the map
    *  z-axis; hp/bd/ck step at the segment mid-point. */
@@ -1343,7 +1355,7 @@
   }
 
   global.ZkrReplay = {
-    parse, artifactToModel, trackAt, pathAt,
+    parse, artifactToModel, trackAt, pathAt, mapFitRect,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon, outlineIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS, unitValueClass,

@@ -452,9 +452,29 @@ var cv=document.getElementById("replay"),cx=cv.getContext("2d");
 /* map backdrop written by the daemon (extracted from the .smf's embedded
    minimap); plain background + blobs while it is unavailable */
 var mapImg=new Image();mapImg.src="battle.map.png";
+/* viewport state: the map is contain-fitted to the panel (true aspect
+   ratio - The Hole renders square, never stretched), then zoom/panned
+   around that fit. z is the zoom multiplier; px/py the device-px offset
+   of the fit rect's origin (clamped in drawFrame so the map never
+   detaches from the panel: fully visible <= 1:1 zoom centers it,
+   zoomed-in panning cannot push the map edge past the panel edge) */
+var VIEW={z:1,px:0,py:0};
+function resetView(){VIEW.z=1;VIEW.px=0;VIEW.py=0;}
 function draw(model,tm){
-  var W=cv.width,H=cv.height;
-  cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
+  var Wc=cv.width,Hc=cv.height;
+  cx.fillStyle="#161b1d";cx.fillRect(0,0,Wc,Hc);
+  var fit=ZkrReplay.mapFitRect(model.mapW||0,model.mapH||0,Wc,Hc);
+  clampView(fit,Wc,Hc);
+  lastFit=fit;
+  cx.save();
+  cx.translate(fit.ox+VIEW.px,fit.oy+VIEW.py);
+  cx.scale(VIEW.z,VIEW.z);
+  /* every world-layer draw below uses the FITTED rect as its W/H: all
+     the pre-existing *W / *H math lands inside the map's transform, and
+     with the aspect now exact the single horizontal px/elmo scale is
+     true for both axes - cloak/coverage/explosion circles are real
+     circles on every map shape */
+  var W=fit.fw,H=fit.fh;
   var hasMap=!model.synthetic&&mapImg.complete&&mapImg.naturalWidth>0;
   if(!hasMap){
     model.blobs.forEach(function(b){cx.fillStyle="#20262a";
@@ -509,10 +529,11 @@ function draw(model,tm){
 
   /* ------------- under-layer: wrecks, shield fields, cloak fields -------------
      all of this renders BELOW every unit icon; radii use the single
-     horizontal px/elmo scale so fields always stay circles (the canvas
-     does not preserve the map aspect, per-axis scaling stretched them
-                 into ellipses). Artifacts without map dims (synthetic
-     fixtures) still render at the 16384-elmo default scale. */
+     px/elmo scale - with the map aspect now contain-fitted exactly
+     (draw() transforms the fitted rect), that scale is true on both
+     axes and fields stay real circles on square AND wide maps.
+     Artifacts without map dims (synthetic fixtures) still render at
+     the 16384-elmo default scale. */
   var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
   // metal spots: grey circles with a bright dotted border; a spot claimed by
   // a live mex (nearest within 60 elmos) takes the owner's team colour —
@@ -715,6 +736,15 @@ function draw(model,tm){
       cost-based size above saturates at its 9 px ceiling for every
       regular unit, so only leveled comms ever exceed it */
     if(u.commLevel)r*=Math.min(2,1+0.2*u.commLevel);
+    /* econ structures draw from thin artwork (solar panels!) and are
+      near-invisible at equal px - give them a flat bump before the
+      on-screen clamps */
+    if(u.cls==="econ")r*=1.4;
+    /* clamp the ON-SCREEN size (device px) into a readable band instead
+      of the raw backing-store px: phones run this canvas at 2-3x DPR
+      where unclamped icons land at ~2 CSS px, while big zooms would
+      turn every icon into a blob. 4.5..12 CSS px at any zoom or panel */
+    r=Math.max(4.5*DPR,Math.min(12*DPR,r*VIEW.z))/VIEW.z;
     var pos=u.posAt(tm);
     if(!pos)return;
     if(u.t!==undefined){
@@ -863,6 +893,7 @@ function draw(model,tm){
       cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
     }
   });
+  cx.restore(); /* leave the world transform before the DOM-side updates */
   renderUnitStats(model,liveStats,tm);
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
   document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
@@ -1060,6 +1091,76 @@ function fitCanvas(){
 }
 window.addEventListener("resize",function(){drawFrame();});
 
+/* ---- scrollable / zoomable stage --------------------------------------
+   wheel = zoom about the cursor; drag = pan (mouse or one finger); two
+   fingers = pinch zoom; double-click = reset. Pan is clamped so a zoomed
+   map never shows beyond its own edge, and a map fully visible on screen
+   re-centers itself (nothing to scroll at 1:1 or below). DPR-aware: the
+   readable icon clamps below are in CSS pixels on the device scale. */
+var DPR=Math.max(1,window.devicePixelRatio||1);
+function clampView(fit,cw,ch){
+  var mw=fit.fw*VIEW.z,mh=fit.fh*VIEW.z;
+  if(mw<=cw)VIEW.px=(cw-mw)/2-fit.ox;
+  else VIEW.px=Math.max(cw-mw-fit.ox,Math.min(-fit.ox,VIEW.px));
+  if(mh<=ch)VIEW.py=(ch-mh)/2-fit.oy;
+  else VIEW.py=Math.max(ch-mh-fit.oy,Math.min(-fit.oy,VIEW.py));
+}
+function cssToDevice(x){
+  var rect=cv.getBoundingClientRect?cv.getBoundingClientRect():{left:0,top:0,width:cv.width,height:cv.height};
+  if(!rect||!rect.width)return x*(cv.width/1000);
+  return (x-rect.left)*cv.width/rect.width;
+}
+function viewAt(sx,sy){ /* device px -> unzoomed fitted-map px */
+  var fit=lastFit||{ox:0,oy:0};
+  return {x:(sx-fit.ox-VIEW.px)/VIEW.z,y:(sy-fit.oy-VIEW.py)/VIEW.z};
+}
+var lastFit=null;
+function zoomAt(sx,sy,factor){
+  var fit=lastFit;if(!fit)return;
+  var before=viewAt(sx,sy);
+  VIEW.z=Math.max(1,Math.min(14,VIEW.z*factor));
+  VIEW.px=sx-fit.ox-before.x*VIEW.z;
+  VIEW.py=sy-fit.oy-before.y*VIEW.z;
+  clampView(fit,cv.width,cv.height);
+  drawFrame(); /* the governor skips paused redraws - drive one directly */
+}
+(function(){
+  var ptrs={},lastPinch=0,drag=null;
+  cv.addEventListener("wheel",function(e){
+    e.preventDefault();
+    zoomAt(cssToDevice(e.clientX),cssToDevice(e.clientY),e.deltaY<0?1.18:1/1.18);
+  },{passive:false});
+  cv.addEventListener("dblclick",function(e){resetView();drawFrame();});
+  cv.addEventListener("pointerdown",function(e){
+    ptrs[e.pointerId]=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+    if(Object.keys(ptrs).length===2){
+      var k=Object.keys(ptrs);
+      lastPinch=Math.hypot(ptrs[k[0]][0]-ptrs[k[1]][0],ptrs[k[0]][1]-ptrs[k[1]][1]);
+    }else drag=[e.pointerId,cssToDevice(e.clientX),cssToDevice(e.clientY),VIEW.px,VIEW.py];
+    e.preventDefault();
+  },{passive:false});
+  cv.addEventListener("pointermove",function(e){
+    if(!(e.pointerId in ptrs))return;
+    var cur=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+    ptrs[e.pointerId]=cur;
+    if(Object.keys(ptrs).length===2&&lastPinch>0){
+      var k=Object.keys(ptrs);
+      var d=Math.hypot(ptrs[k[0]][0]-ptrs[k[1]][0],ptrs[k[0]][1]-ptrs[k[1]][1]);
+      zoomAt((ptrs[k[0]][0]+ptrs[k[1]][0])/2,(ptrs[k[0]][1]+ptrs[k[1]][1])/2,d/lastPinch);
+      lastPinch=d;
+    }else if(drag&&drag[0]===e.pointerId){
+      var fit=lastFit;if(fit){
+        VIEW.px=drag[3]+cur[0]-drag[1];VIEW.py=drag[4]+cur[1]-drag[2];
+        clampView(fit,cv.width,cv.height);
+      }
+      drawFrame();
+    }
+  },{passive:false});
+  function endPtr(e){delete ptrs[e.pointerId];if(drag&&drag[0]===e.pointerId)drag=null;
+    if(Object.keys(ptrs).length!==2)lastPinch=0;}
+  cv.addEventListener("pointerup",endPtr);cv.addEventListener("pointercancel",endPtr);
+})();
+
 function teamLabelOf(model,team){
   var n=model.teamNames&&model.teamNames[team];
   return n?n:("Team "+(team+1));
@@ -1153,6 +1254,7 @@ function renderUnitStats(model,live,tm){
 
 function installModel(model){
   MODEL=model;
+  resetView(); /* each replay starts unzoomed and centered */
   document.getElementById("timeline").max=model.END;
   /* switching artifacts drops the render-signature caches: the counts
      alone must not decide that feed/chat/grid look "unchanged" across
