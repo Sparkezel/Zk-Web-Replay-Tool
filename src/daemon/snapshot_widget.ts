@@ -56,7 +56,35 @@ local excludedUnitIDs = {}
 -- UDEF section and decides circle vs fallback bar in the viewer
 local shieldPowerByDef = {}
 
-local function emit(json)
+-- live per-unit states (slow/EMP/disarm/fire): last-emitted snapshot per
+-- unit for sparsity, plus the overflow rows for the current probe (the
+-- flush emits them chunked under the engine's console-line cap, exactly
+-- like pos rows; each row carries its own frame)
+-- forward declaration: flushStatRows (below) emits through the same
+-- line-emitter as every other widget row — the local must exist before
+-- any function that references it is COMPILED, or the reference compiles
+-- as a nil global and blows up at the first stat flush
+local emit
+
+local lastStates = {}
+local statRows = {}
+local function flushStatRows()
+  if #statRows == 0 then return end
+  local STAT_LINE_BUDGET = 2048
+  local out, len = {}, 0
+  for i = 1, #statRows do
+    if len + #statRows[i] + 1 > STAT_LINE_BUDGET then
+      emit('{"t":"stat","p":[' .. table.concat(out, ",") .. ']}')
+      out, len = {}, 0
+    end
+    out[#out + 1] = statRows[i]
+    len = len + #statRows[i] + 1
+  end
+  if #out > 0 then emit('{"t":"stat","p":[' .. table.concat(out, ",") .. ']}') end
+  statRows = {}
+end
+
+function emit(json)
   Spring.Echo("ZKR " .. json)
 end
 
@@ -140,9 +168,16 @@ local function maybeUdef(defID)
   if shieldRadius ~= nil then
     sr = ',"sr":' .. shieldRadius .. ',"sp":' .. shieldPower
   end
+  -- anti-nuke coverage: ZK's own coverage widget reads the same param
+  -- (staticantinuke: nuke_coverage = 2500 elmos); units without it (the
+  -- missiles themselves, fake launchers) simply omit the field
+  local cpU = d.customParams or d.customparams or {}
+  local anc = tonumber(cpU.nuke_coverage)
+  local an = ""
+  if anc ~= nil then an = ',"anc":' .. anc end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. '}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. an .. '}')
 end
 
 local function maybeWdef(defID)
@@ -151,8 +186,27 @@ local function maybeWdef(defID)
   local d = WeaponDefs[defID]
   if d == nil then return end
   local cp = d.customParams or {}
+  -- explosion AOE: ZK's attack-AoE widget's precedence (gui_aoe override,
+  -- then the engine's damageAreaOfEffect); napalm ground patches carry
+  -- their own radius/duration separately (area_damage = 1)
+  local aoe = tonumber(cp.gui_aoe) or tonumber(d.damageAreaOfEffect) or 0
+  local adr, adu = 0, 0
+  -- napalm flag: ZK's own lups_napaml gadget classes a weapon as napalm by
+  -- its description (e.g. "Napalm Mortar") or lups_napalm_fx/lups_heat_fx;
+  -- area_damage ALONE also covers slow fields (missileslow) and the Dante's
+  -- black hole, which must NOT paint fire patches in the viewer
+  local nd = 0
+  if tostring(d.description or ""):lower():find("napalm", 1, true)
+     or cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil then nd = 1 end
+  if nd == 1 then
+    adr = tonumber(cp.area_damage_radius) or 0
+    adu = tonumber(cp.area_damage_duration) or 0
+    if cp.area_damage == nil then adr, adu = aoe, 15 end
+  end
   emit('{"t":"wdef","d":' .. defID .. ',"n":"' .. (d.name or "") .. '","w":"' .. (d.type or "") ..
     '","r":' .. num(d.range) .. ',"th":' .. num(d.trajectoryHeight) ..
+    ',"aoe":' .. num(aoe) .. ',"adr":' .. num(adr) .. ',"adu":' .. num(adu) ..
+    ',"nd":' .. nd ..
     ',"cp":{"isnuke":"' .. tostring(cp.isnuke or "") ..
     '","interceptor":"' .. tostring(cp.interceptor or "") .. '"}}')
 end
@@ -184,6 +238,7 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
+  lastStates[unitID] = nil
   if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
   if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
@@ -272,7 +327,20 @@ end
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
   LightningCannon = true, TorpedoLauncher = true }
 local projClassByID = {}
+-- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
+-- description contains "Napalm" or the lups heat/napalm fx is set. Area
+-- damage ALONE is not fire - the slow missile's slow field and the Dante's
+-- black hole are area damage too but must not record as napalm
+local function isNapalmWeapon(d, cp)
+  if tostring(d.description or ""):lower():find("napalm", 1, true) then return true end
+  return cp ~= nil and (cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil)
+end
 local function classifyWeapon(d, cp)
+  -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
+  -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
+  -- and the "party" filter below would silently drop it (and the DRP's own
+  -- burn weapons). Class 2 (artillery) fits the shell arc
+  if cp ~= nil and cp.area_damage == "1" and isNapalmWeapon(d, cp) then return 2 end
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
      name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
@@ -319,6 +387,7 @@ end
 
 function widget:GameFrame(frame)
   maybeSendStartboxes()
+  maybeSendMetalSpots()
   -- press /speedup every probe frame while the engine's wanted factor is below
   -- target; supplements the GameStart burst in case those presses raced server
   -- boot or got dropped. Stops pressing once wanted >= target (idempotent).
@@ -333,7 +402,20 @@ function widget:GameFrame(frame)
   -- never delivers the FeatureCreated/FeatureDestroyed callins
   if frame % 30 == 0 then pollWreckFeatures() end
   local units = Spring.GetAllUnits()
-  local rows = {}
+  -- pos rows are CHUNKED into several short lines per probe: the engine
+  -- hard-caps a single console line near 32 KB, and a large battle with
+  -- hundreds of live units blows that cap - the JSON tail gets chopped
+  -- (measured: 32798-char truncated pos lines came out as malformed on the
+  -- Comet Catcher stress replay). ~2 KB per line stays far under it; the
+  -- daemon ingest appends per line, so several pos lines per frame merge
+  -- into the same probe seamlessly.
+  local POS_LINE_BUDGET = 2048
+  local rows, rowsLen = {}, 0
+  local function flushRows()
+    if #rows == 0 then return end
+    emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')
+    rows, rowsLen = {}, 0
+  end
   for i = 1, #units do
     local uid = units[i]
     if excludedUnitIDs[uid] ~= true then
@@ -350,16 +432,47 @@ function widget:GameFrame(frame)
       local cf = cs == 2
       local csBit = cs == 1
       local sh = shieldFrac(uid, Spring.GetUnitDefID(uid))
-      rows[#rows + 1] = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
+      local row = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
         "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
         "," .. frac(build) .. "," ..
         ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0)) ..
         "," .. frac(sh) .. "]"
+      if rowsLen + #row + 1 > POS_LINE_BUDGET then flushRows() end
+      rows[#rows + 1] = row
+      rowsLen = rowsLen + #row + 1
+      -- LIVE STATES (slow / EMP shock / disarm / on fire) are sparse events,
+      -- not per-sample columns: emitted only when the bit set changes or the
+      -- slow level crosses a 1/16 step (the purple dot fades in as slow
+      -- damage stacks; EMP and disarm only matter at 100% effect)
+      local meta = lastStates[uid]
+      local slq = math.floor((tonumber(Spring.GetUnitRulesParam(uid, "slowState") or "0") + 0.03125) * 16)
+      if slq < 0 then slq = 0 end
+      if slq > 16 then slq = 16 end
+      local bits = 0
+      -- rules params come back as NUMBERS from the engine (ZK's own
+      -- unit_healthbars.lua compares == 1) — a == "1" string compare never
+      -- fires and both states silently never record
+      if tonumber(Spring.GetUnitRulesParam(uid, "on_fire") or 0) == 1 then bits = bits + 1 end
+      if tonumber(Spring.GetUnitRulesParam(uid, "disarmed") or 0) == 1 then bits = bits + 2 end
+      -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
+      -- build-up is ignored by design - the effect only reads at 100%)
+      local stunned = select(1, Spring.GetUnitIsStunned(uid))
+      if stunned == true then bits = bits + 4 end
+      if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
+        -- state semantics need no "all zero" baseline row: the decode treats
+        -- everything before the first event as healthy; but a transition BACK
+        -- to zero must be recorded, so the nz flag tracks whether the unit has
+        -- ever appeared affected
+        local wasNz = meta ~= nil and (meta.bits ~= 0 or meta.slq ~= 0)
+        if (bits ~= 0 or slq ~= 0 or wasNz) then
+          statRows[#statRows + 1] = "[" .. uid .. "," .. frame .. "," .. bits .. "," .. slq .. "]"
+        end
+        lastStates[uid] = { bits = bits, slq = slq }
+      end
     end
   end
-  if #rows > 0 then
-    emit('{"t":"pos","f":' .. frame .. ',"p":[' .. table.concat(rows, ",") .. ']}')
-  end
+  flushRows()
+  flushStatRows(frame)
   local projs = Spring.GetAllProjectiles()
   for i = 1, #projs do
     local pid = projs[i]
@@ -389,6 +502,38 @@ function widget:GameStart()
     Spring.SendCommands("speedup")
   end
   maybeSendStartboxes()
+  maybeSendMetalSpots()
+end
+
+-- map metal spots: ZK's mex placement gadget publishes them as game-rules
+-- params (the same source api_mexspot_fetcher.lua builds WG.metalSpots from)
+-- — exact positions in elmos plus per-spot metal income. Emitted once per
+-- line at start (a per-spot line stays far under the engine's console cap
+-- on spot-dense maps); maps without metal carry no mex_count param and give
+-- up after the probe window, mirroring the startbox retry.
+local mespSent = false
+function maybeSendMetalSpots()
+  if mespSent then return end
+  local count = tonumber(Spring.GetGameRulesParam("mex_count"))
+  if count == nil then
+    if Spring.GetGameFrame() > 300 then mespSent = true end
+    return
+  end
+  if count == -1 then
+    mespSent = true -- game says "no metal map" explicitly
+    return
+  end
+  if count <= 0 then return end
+  for i = 1, count do
+    local x = Spring.GetGameRulesParam("mex_x" .. i)
+    local z = Spring.GetGameRulesParam("mex_z" .. i)
+    if x ~= nil and z ~= nil then
+      local m = Spring.GetGameRulesParam("mex_metal" .. i)
+      emit('{"t":"mesp","x":' .. num(x) .. ',"z":' .. num(z) ..
+        ',"m":' .. (m ~= nil and num(m) or "0") .. '}')
+    end
+  end
+  mespSent = true
 end
 
 -- startboxes: the ZK start_boxes gadget loads them from the map/game config

@@ -258,14 +258,22 @@ function jsonSection(value: unknown): Uint8Array {
 /** META payload with the map's elmo dims patched in from the widget snapshot
  *  (the demo header only carries the map's name — dims ship as null there;
  *  the viewer needs the size to scale cloak-field circles). */
-function metaWithDims(demo: ParsedDemo, snap: SnapshotData): Uint8Array {
+function metaWithDims(demo: ParsedDemo, snap: SnapshotData, lastSimFrame?: number): Uint8Array {
   const payload = buildMetaSection(demo);
   const mapW = snap.meta.mapW ?? 0;
   const mapH = snap.meta.mapH ?? 0;
   if (mapW <= 0 || mapH <= 0) return payload;
   try {
-    const meta = JSON.parse(new TextDecoder().decode(payload)) as { map: { dims: [number, number] | null } };
+    const meta = JSON.parse(new TextDecoder().decode(payload)) as {
+      map: { dims: [number, number] | null };
+      gameTime?: number;
+    };
     meta.map.dims = [mapW, mapH];
+    if (lastSimFrame !== undefined && lastSimFrame > 0 && meta.gameTime !== undefined) {
+      // truncated test run: the timeline must end where the data ends, not
+      // at the demo header's full-length game time
+      meta.gameTime = Math.min(meta.gameTime, lastSimFrame / 30);
+    }
     return utf8(JSON.stringify(meta));
   } catch {
     return payload;
@@ -290,7 +298,7 @@ function encodeStartboxes(snap: SnapshotData): Uint8Array | null {
 function encodeUnitDefs(snap: SnapshotData): Uint8Array {
   const rows = [...snap.unitDefs.values()]
     .sort((a, b) => a.defID - b.defID)
-    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? "", d.cloakRadius ?? -1, d.shieldRadius ?? -1, d.shieldPower ?? -1]);
+    .map((d) => [d.defID, d.name, d.metalCost ?? -1, d.health ?? -1, d.canMove === undefined ? -1 : d.canMove ? 1 : 0, d.iconType ?? "", d.humanName ?? "", d.cloakRadius ?? -1, d.shieldRadius ?? -1, d.shieldPower ?? -1, d.antiNukeCoverage ?? -1]);
   return jsonSection({ schema: 1, units: rows });
 }
 
@@ -301,10 +309,32 @@ function encodeWeaponDefs(snap: SnapshotData): Uint8Array {
       return {
         id: d.defID, name: d.name, type: d.type, range: d.range ?? -1,
         class: cls, className: PROJ_CLASS_NAME[cls] ?? "dropped",
+        // v2 columns: explosion AOE + napalm ground patch (fire only: ZK's
+        // lups_napalm classification, not every area-damage weapon)
+        aoe: d.aoe ?? -1, adr: d.areaDamageRadius ?? -1, adu: d.areaDamageDuration ?? -1,
+        nd: d.napalm ? 1 : 0,
       };
     })
     .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
   return jsonSection({ schema: 1, weapons: rows });
+}
+
+/** sparse per-unit state transitions (slow / EMP / disarm / fire), sorted by
+ *  frame: [count u32][[frame u32][unitID u32][bits u8][slowQ u8]] — 11 bytes
+ *  per record; bits: 1 = on fire, 2 = disarmed, 4 = EMP-stunned; slowQ = slow * 16 */
+function encodeStates(snap: SnapshotData): Uint8Array {
+  const sorted = [...snap.states].sort((a, b) => a.frame - b.frame || a.unitID - b.unitID);
+  const out = new Uint8Array(4 + sorted.length * 11);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, sorted.length, true);
+  let o = 4;
+  for (const r of sorted) {
+    dv.setUint32(o, r.frame, true); o += 4;
+    dv.setUint32(o, r.unitID, true); o += 4;
+    out[o++] = r.bits & 0xff;
+    out[o++] = Math.max(0, Math.min(16, Math.round(r.slow * 16))) & 0xff;
+  }
+  return out;
 }
 
 const PROJ_CLASS_NAME: Record<number, string> = {
@@ -324,6 +354,10 @@ export interface PackOptions {
   projectiles?: ProjectilePreset;
   /** M1 cheap-parse demo data; when absent only resim sections are emitted */
   demo?: ParsedDemo;
+  /** truncated test run: the engine was stopped after this frame — META's
+   *  game time (which the demo header reports for the FULL game) is capped
+   *  so the viewer timeline ends where the recorded data ends */
+  lastSimFrame?: number;
 }
 
 /** Downsample unit sample lists by `rate`, always keeping the last sample. */
@@ -353,24 +387,44 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
       // META: the demo header knows the map name but not its elmo size; the
       // widget does (meta w/h) — patch the dims in so the viewer can scale
       // cloak-field circles against the real map dimensions
-      { id: SECTION.META, version: 1, payload: metaWithDims(opts.demo, snap), codec },
+      { id: SECTION.META, version: 1, payload: metaWithDims(opts.demo, snap, opts.lastSimFrame), codec },
       { id: SECTION.ROSTER, version: 1, payload: buildRosterSection(opts.demo), codec },
     );
   }
   secs.push(
-    { id: SECTION.UNITDEF, version: 3, payload: encodeUnitDefs(snap), codec },
-    { id: SECTION.WEAPONDEF, version: 1, payload: encodeWeaponDefs(snap), codec },
+    { id: SECTION.UNITDEF, version: 4, payload: encodeUnitDefs(snap), codec },
+    { id: SECTION.WEAPONDEF, version: 2, payload: encodeWeaponDefs(snap), codec },
     { id: SECTION.POS, version: 3, payload: encodePos(posSnap), codec },
     { id: SECTION.EVENTS, version: 1, payload: encodeEvents(snap), codec },
     { id: SECTION.PROJECTILES, version: 2, payload: encodeProjectiles(posSnap, opts.projectiles ?? "heavy"), codec },
     { id: SECTION.LINKS, version: 1, payload: encodeLinks(snap), codec },
   );
+  // sparse live-state transitions (slow/EMP/disarm/fire); empty on snapshots
+  // that predate the stat rows — old artifacts simply lack the section
+  if ((snap.states?.length ?? 0) > 0) {
+    secs.push({ id: SECTION.STATES, version: 1, payload: encodeStates(snap), codec });
+  }
   const startboxPayload = encodeStartboxes(snap);
   if (startboxPayload) {
     secs.splice(
       1,
       0,
       { id: SECTION.STARTBOX, version: 1, payload: startboxPayload, codec },
+    );
+  }
+  // map metal spots (grey circles under unowned mexes in the viewer);
+  // JSON section — dozens of rows, not worth a binary layout
+  if ((snap.metalSpots?.length ?? 0) > 0) {
+    const insertAt = secs.findIndex((s) => s.id === SECTION.UNITDEF);
+    secs.splice(
+      insertAt === -1 ? secs.length : insertAt,
+      0,
+      {
+        id: SECTION.METALSPOT,
+        version: 1,
+        payload: jsonSection({ schema: 1, spots: snap.metalSpots.map((s) => [s.x, s.z, s.metal ?? 0]) }),
+        codec,
+      },
     );
   }
   if (opts.demo) {

@@ -62,6 +62,7 @@
   .speed button.on{background:var(--accent2);border-color:var(--accent2);color:#fff}
   .clock{font-variant-numeric:tabular-nums;color:var(--txt);min-width:118px;font-size:12.5px}
   .chip{font-size:11.5px;color:var(--dim)}
+  .pick{background:#1d2225;border:1px solid var(--line);color:var(--txt);border-radius:3px;padding:3px 6px;font-size:11px;max-width:280px}
 
   /* ---- teams / players ---- */
   .team-table{width:100%;border-collapse:collapse;font-size:13px}
@@ -84,6 +85,16 @@
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
+  .feed li.warn b{color:#ffb84d}
+  .feed li.news b{color:#7fd0ff}
+  /* sticky poll card: pinned at the top of the feed while a vote runs */
+  .feed li.vote-sticky{position:sticky;top:0;z-index:2;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;margin:4px 6px;color:var(--txt)}
+  .feed li.vote-sticky .vt{font-weight:800;font-size:13.5px;letter-spacing:.4px}
+  .vrow{display:flex;align-items:center;gap:7px;margin:5px 0 4px}
+  .vbar{position:relative;flex:1;background:#000;border-radius:3px;height:8px;overflow:hidden}
+  .vfill{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+  .vcount{flex:none;font-size:11px;font-variant-numeric:tabular-nums;color:#cfd6da}
+  .vv .vopt{display:inline-block;margin-right:12px;font-size:11.5px;color:var(--dim)}
 
   /* ---- in-game chat ---- */
   .chat{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto;font-size:12.5px}
@@ -126,7 +137,7 @@
   <div class="mock-note">⚠ Mockup – layout exploration for the battle-result page. The replay stage renders <code>battle.zkr</code> (the pre-simulated artifact produced by the resim daemon) when placed next to this page; without it, synthetic preview data is shown.</div>
 
   <div class="head">
-    <h1>[A] Teams All Welcome #1</h1>
+    <h1 id="battleTitle">[A] Teams All Welcome #1</h1>
     <span class="badge win">Winner: Team 1</span>
     <span class="badge">Casual</span>
     <span class="badge">8 players</span>
@@ -141,13 +152,16 @@
         <h2>Animated Battle Replay</h2>
         <div class="stage">
           <canvas id="replay" width="1180" height="460"></canvas>
-          <div class="overlay-tl">Otago 1.4 · <span id="frameInfo">frame 0</span></div>
-          <div class="victory" id="victory">
+          <div id="victory" class="victory">
             <div class="big">Team 1 wins</div>
             <div class="sub">allyTeam 0 · 25:16 game time</div>
           </div>
+          <!-- one overlay only: map name follows the loaded artifact; the
+             OLD static "Otago 1.4" duplicate painted stacked on top of this -->
+          <div class="overlay-tl"><span id="ovMap">Otago 1.4</span> · <span id="frameInfo">frame 0</span></div>
         </div>
         <div class="controls">
+          <select id="replayPick" class="pick" title="choose a replay"></select>
           <button class="btn ghost" id="playBtn">▶ Play</button>
           <span class="clock" id="clock">00:00 / 25:16</span>
           <input id="timeline" type="range" min="0" max="1516" step="1" value="0">
@@ -186,12 +200,12 @@
           <table class="meta">
             <tr><td>Title</td><td>[A] Teams All Welcome #1</td></tr>
             <tr><td>Host</td><td>Nobody (autohost)</td></tr>
-            <tr><td>Map</td><td>Otago 1.4</td></tr>
-            <tr><td>Game version</td><td>Zero-K v1.14.10.3</td></tr>
-            <tr><td>Engine version</td><td>2026.07.04</td></tr>
+            <tr><td>Map</td><td id="infoMap">Otago 1.4</td></tr>
+            <tr><td>Game version</td><td id="infoGame">Zero-K v1.14.10.3</td></tr>
+            <tr><td>Engine version</td><td id="infoEngine">2026.07.04</td></tr>
             <tr><td>Battle ID</td><td>2539874</td></tr>
             <tr><td>Started</td><td>2026-11-15 12:27 UTC</td></tr>
-            <tr><td>Duration</td><td>25 minutes</td></tr>
+            <tr><td>Duration</td><td id="infoDur">25 minutes</td></tr>
             <tr><td>Rating</td><td>Casual</td></tr>
             <tr><td>Bots / Mission</td><td>False / False</td></tr>
           </table>
@@ -263,6 +277,16 @@ var MODEL = null;
 function mulberry(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
 function fmt(s){s=Math.max(0,s||0);var m=(s/60)|0;var ss=(s|0)%60;return (m<10?"0":"")+m+":"+(ss<10?"0":"")+ss}
 function teamColor(t){return ZkrReplay.teamColor(t,MODEL&&MODEL.teamMeta)}
+/* ""r,g,b"" triple of a team colour — for composing rgba() strings */
+function teamColorStr(t){
+  var s=teamColor(t);
+  var m=/^hsl\((\d+(?:\.\d+)?),\s*(\d+(?:\.\d+)?)%,\s*(\d+(?:\.\d+)?)%\)$/.exec(s);
+  if(m){var rgb=ZkrReplay.hslToRgb(Number(m[1]),Number(m[2])/100,Number(m[3])/100);
+    return Math.round(rgb[0])+","+Math.round(rgb[1])+","+Math.round(rgb[2]);}
+  var hx=/^#([0-9a-f]{6})$/i.exec(s);
+  if(hx){return [0,2,4].map(function(i){return parseInt(hx[1].substr(i,2),16);}).join(",");}
+  return "200,200,200";
+}
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
   .replace(/"/g,"&quot;")}
 
@@ -354,12 +378,14 @@ function buildArtifactModel(artifact){
     var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
-      cls:u.cls||"combat",
+      cls:u.cls||"combat",def:u.def,
       /* build fraction at the last track sample: what was actually
          invested when the unit died (nanoframe kills lost a fraction) */
       bdEnd:u.track.length?u.track[u.track.length-1].bd:undefined,
       commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
+      antiNuke:u.antiNuke||0,
+      states:u.states||[],
       sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
@@ -400,6 +426,16 @@ function buildArtifactModel(artifact){
     ecoPts:m.ecoPts,blobs:blobs,winner:m.winner,winnerLabel:m.winnerLabel,
     teamNames:m.teamNames,teamMeta:m.teamMeta,players:m.players||[],startPolys:m.startPolys,teams:teams,
     chatData:m.chatData||[],
+    /* autohost polls (resign/kick/exit) — parsed from relayed chat */
+    votes:m.votes||[],
+    /* metal-extractor units for spot ownership + the spots themselves */
+    mexUnits:units.filter(function(u){return u.def==="staticmex"}),
+    antiNukeUnits:units.filter(function(u){return u.antiNuke>0}),
+    metalSpots:m.metalSpots||[],
+    /* superweapon detonations + ground napalm (Firewalker shells, Inferno
+       warheads): painted on the map, decaying per their game durations */
+    explosions:m.explosions||[],
+    napalmRegions:m.napalm||[],
     wrecks:wrecks,
     unitStats:losses,
     wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
@@ -413,7 +449,7 @@ function buildArtifactModel(artifact){
 var cv=document.getElementById("replay"),cx=cv.getContext("2d");
 /* map backdrop written by the daemon (extracted from the .smf's embedded
    minimap); plain background + blobs while it is unavailable */
-var mapImg=new Image();mapImg.src="map.png";
+var mapImg=new Image();mapImg.src="battle.map.png";
 function draw(model,tm){
   var W=cv.width,H=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,W,H);
@@ -476,6 +512,35 @@ function draw(model,tm){
                  into ellipses). Artifacts without map dims (synthetic
      fixtures) still render at the 16384-elmo default scale. */
   var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
+  // metal spots: grey circles with a bright dotted border; a spot claimed by
+  // a live mex (nearest within 60 elmos) takes the owner's team colour —
+  // drawn at the very bottom of the under-layer, below wrecks and fields
+  if(model.metalSpots&&model.metalSpots.length){
+    var mr=Math.max(2.5,90*pxPerElmo);
+    var mw=model.mapW>0?model.mapW:16384, mh=model.mapW>0?(model.mapH>0?model.mapH:mw):mw;
+    var claimers=[];
+    (model.mexUnits||[]).forEach(function(u){var p=u.posAt(tm);if(p)claimers.push({x:p.x,y:p.y,t:u.t});});
+    cx.setLineDash([4,3]);
+    cx.lineWidth=1.4;
+    model.metalSpots.forEach(function(s){
+      var own=null,best=60*60; /* mex claims its spot within 60 elmos */
+      claimers.forEach(function(c){
+        var ex=(s.x-c.x)*mw, ey=(s.y-c.y)*mh;
+        var d2=ex*ex+ey*ey;
+        if(d2<best){best=d2;own=c;}
+      });
+      var col=own?teamColor(own.t):"#aeb6ba";
+      cx.globalAlpha=own?0.55:0.35;
+      cx.fillStyle=col;
+      cx.beginPath();cx.arc(s.x*W,s.y*H,mr,0,7);cx.fill();
+      cx.globalAlpha=0.95;
+      cx.strokeStyle=own?col:"#cfd6da"; /* brighter so it reads on grey maps */
+      cx.beginPath();cx.arc(s.x*W,s.y*H,mr,0,7);cx.stroke();
+      cx.globalAlpha=1;
+    });
+    cx.setLineDash([]);
+    cx.lineWidth=1;
+  }
   // wreck dots: alive wrecks only (features die when reclaimed), magenta
   // at half transparency to keep the field uncluttered;
   // (synthetic fallback models carry empty wreck lists)
@@ -488,6 +553,59 @@ function draw(model,tm){
     });
     cx.globalAlpha=1;
   }
+  // ground napalm (Firewalker shells, Inferno warheads): overlapping
+  // orange patches at 0.2 opacity over the area-damage duration, radius
+  // straight from the game's area_damage values (64/256 elmos)
+  (model.napalmRegions||[]).forEach(function(n){
+    if(!(tm>=n.t&&tm<=n.t+n.dur))return;
+    cx.fillStyle="rgba(255,120,30,.2)";
+    cx.beginPath();cx.arc(n.x*W,n.y*H,Math.max(2,n.r*pxPerElmo),0,7);cx.fill();
+  });
+  // superweapon detonations at in-game AOE scale: Eos red / Shockley cyan /
+  // Quake green flash fast (wall-clock ~0.5 s regardless of playback speed
+  // — "5 replay frames" at whatever speed the viewer runs), Inferno orange
+  // and Zenith purple meteors decay in sim time over 8 s
+  (model.explosions||[]).forEach(function(e){
+    var a=0;
+    if(e.fade==="fast"){
+      if(tm<e.t){e._seen=undefined;return;}
+      if(e._seen===undefined)e._seen=wallNow;
+      a=1-(wallNow-e._seen)/500;       /* ~5 rAF frames at any speed */
+      if(a<=0){if(wallNow-e._seen>2000)e._seen=undefined;return;}
+    }else{
+      if(!(tm>=e.t&&tm<=e.t+(e.dur||8)))return;
+      a=1-(tm-e.t)/(e.dur||8);          /* normal: decays in sim time */
+    }
+    var rr=Math.max(3,e.r*pxPerElmo);
+    cx.fillStyle="rgba("+e.col+","+(0.5*a).toFixed(3)+")";
+    cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.fill();
+    cx.strokeStyle="rgba("+e.col+","+a.toFixed(3)+")";
+    cx.lineWidth=1.5;
+    cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.stroke();
+    cx.lineWidth=1;
+  });
+  // anti-nuke coverage: always visible once the launcher completes (ZK's
+  // own coverage circle reads the same nuke_coverage value, 2500 elmos);
+  // an EMP-shocked launcher cannot intercept — its circle and icon flash
+  // red while the stun holds
+  (model.antiNukeUnits||[]).forEach(function(u){
+    var pos=u.posAt(tm);
+    if(!pos||(pos.bd!==undefined&&pos.bd<1))return;
+    var b=0;
+    for(var si=0;si<(u.states?u.states.length:0);si++){var s=u.states[si];if(s.t>tm)break;b=s.b;}
+    var anned=(b&4)!==0;
+    var rx=u.antiNuke*pxPerElmo;
+    if(rx<3)return;
+    // flash = alternate red / team colour; never blank the circle — a pause
+    // on the "off" phase would leave the launcher with no coverage view
+    var col=(anned&&Math.floor(wallNow/180)%2===0)?"255,50,40":teamColorStr(u.t);
+    cx.fillStyle="rgba("+col+",.16)";
+    cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
+    cx.strokeStyle="rgba("+col+",.7)";
+    cx.lineWidth=1.4;
+    cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
+    cx.lineWidth=1;
+  });
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot
   if(document.getElementById("wreckZones").checked){
@@ -620,6 +738,46 @@ function draw(model,tm){
       cx.fillStyle="#4be3ff";
       cx.beginPath();cx.arc(x,y+r+2.2,1.8,0,7);cx.fill();
     }
+    /* live states (temporary dot language, icons later): purple = slowed
+       (the dot fades IN as slow damage stacks), yellow = EMP-shocked and
+       grey = disarmed (both only once the effect fully takes hold — partial
+       build-up is invisible by design), on fire = the whole icon flashes
+       red until the burn runs out. Dots sit on their own row BELOW the
+       cloak dot and the build bar (y+r+6.8) so cloaked+slowed stays
+       readable and the 3 px bar band is not overwritten */
+    if(u.states&&u.states.length){
+      var b=0,sl=0;
+      for(var si=0;si<u.states.length;si++){var s=u.states[si];if(s.t>tm)break;b=s.b;sl=s.sl;}
+      if((b&4)!==0){ /* EMP shock */
+        cx.fillStyle="#ffd21f";
+        cx.beginPath();cx.arc(x-r+1.5,y+r+6.8,1.6,0,7);cx.fill();
+      }
+      if((b&2)!==0){ /* disarm */
+        cx.fillStyle="#9aa0a6";
+        cx.beginPath();cx.arc(x+r-1.5,y+r+6.8,1.6,0,7);cx.fill();
+      }
+      if(sl>0){ /* slow: alpha ∝ stacked slow damage */
+        cx.fillStyle="#a04bff";
+        cx.globalAlpha=Math.min(1,.25+.75*sl);
+        cx.beginPath();cx.arc(x,y+r+6.8,1.6,0,7);cx.fill();
+        cx.globalAlpha=1;
+      }
+      if((b&1)!==0){ /* on fire: whole icon flashes red */
+        if(Math.floor(wallNow/150)%2===0){
+          cx.fillStyle="rgba(255,48,20,.55)";
+          cx.beginPath();cx.arc(x,y,r+1.5,0,7);cx.fill();
+        }
+      }
+      /* EMP'd anti-nuke: the icon flashes red in step with the coverage
+         circle — a stunned launcher cannot intercept, that must be visible
+         from the icon layer too */
+      if(u.antiNuke>0&&(b&4)!==0&&Math.floor(wallNow/180)%2===0){
+        cx.strokeStyle="rgba(255,50,40,.9)";
+        cx.lineWidth=1.5;
+        cx.beginPath();cx.arc(x,y,r+1.5,0,7);cx.stroke();
+        cx.lineWidth=1;
+      }
+    }
     /* fallback shield charge bar (right of the icon, full icon height, 3 px):
        shown when area-shield circles are toggled off for this unit, and
        ALWAYS for personal-shield units (thug/felon/commander shield module
@@ -659,36 +817,123 @@ function draw(model,tm){
   else vic.classList.remove("show");
 }
 
-/* event feed up to current time */
-function renderFeed(model,tm){
-  var el=document.getElementById("feed");var html="";
-  for(var i=model.feedData.length-1;i>=0;i--){var e=model.feedData[i];
-    if(e.tm>tm)continue;
-    html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
-    if(html.length>4000)break;}
-  el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
-  var first=el.firstChild;if(first)el.scrollTop=0;
+/* how many rows of an ascending-sorted-by-tm list are in play at tm */
+function countUpTo(arr,tm){
+  var lo=0,hi=arr.length;
+  while(lo<hi){var mid=(lo+hi)>>1;if(arr[mid].tm<=tm)lo=mid+1;else hi=mid;}
+  return lo;
 }
 
-/* in-game chat up to current time; entries: {tm,name,kind,ally,txt} */
+/* vote subject -> display flavour: resign takes the resigned side's team
+   colour, kick shows the target's nick in that player's colour, anything
+   else (exit/force/spec poll) stays neutral white */
+function voteKindInfo(model,subject){
+  var rm=/^resign(?:\s+team)?\s+(\d+)/i.exec(subject);
+  if(rm){
+    var side=Number(rm[1])-1;if(side<0)side=0;
+    var team=null;
+    (model.players||[]).forEach(function(p){if(team===null&&p.ally===side&&p.team!==undefined)team=p.team;});
+    return {color:team!==null?teamColor(team):"#ffffff"};
+  }
+  var km=/^kick\s+(.+)$/i.exec(subject);
+  if(km){
+    var nick=km[1];
+    var p=(model.players||[]).filter(function(x){return x.name===nick;})[0];
+    return {color:p!==undefined?teamColor(p.team):"#ffffff"};
+  }
+  return {color:"#ffffff"};
+}
+
+/* sticky cards for polls currently running at tm, pinned above the feed */
+function voteCards(model,tm){
+  var out="";
+  (model.votes||[]).forEach(function(v){
+    /* endTm === null marks an unresolved poll; a resolved pre-game poll
+       (negative endTm, before STARTPLAYING) never pins a card in-game */
+    if(!(tm>=v.startTm&&(v.endTm===null||tm<v.endTm)))return;
+    var info=voteKindInfo(model,v.subject);
+    var pct=v.needed>0?Math.min(1,v.yes/v.needed):0;
+    /* autohost counts a player's LAST cast only (recasts replace the
+       previous choice); show the same, not every raw cast */
+    var lastCast={};
+    v.voters.forEach(function(x){
+      if(x.tm>tm)return;
+      var prev=lastCast[x.from];
+      if(prev===undefined||x.tm>=prev.tm)lastCast[x.from]=x;
+    });
+    var yes=[],no=[];
+    Object.keys(lastCast).forEach(function(k){
+      var x=lastCast[k];
+      var p=(model.players||[]).filter(function(pl){return pl.name===x.name;})[0];
+      var col=p!==undefined?teamColor(p.team):"#cfd6da";
+      (x.yes?yes:no).push('<span style="color:'+col+'">'+esc(x.name)+"</span>");
+    });
+    out+='<li class="vote-sticky">'+
+      '<div class="vt" style="color:'+info.color+'">'+esc(v.subject.toUpperCase())+"</div>"+
+      '<div class="vrow"><div class="vbar"><div class="vfill" style="width:'+Math.round(pct*100)+"%;background:"+info.color+'"></div></div><span class="vcount">'+v.yes+"/"+v.needed+"</span></div>"+
+      '<div class="vv"><span class="vopt">✓ '+ (yes.length?yes.join(", "):"—") +"</span>"+
+      '<span class="vopt">✗ '+ (no.length?no.join(", "):"—") +"</span></div>"+
+      "</li>";
+  });
+  return out;
+}
+
+/* event feed up to current time; the signature skips identical re-renders so
+   the panel keeps the user's scroll position while playing or paused */
+function renderFeed(model,tm){
+  var el=document.getElementById("feed");
+  if(!el)return;
+  var n=countUpTo(model.feedData,tm);
+  var chatN=model.chatData?countUpTo(model.chatData,tm):0;
+  var sig=n+":"+chatN;
+  if(el._sig===sig)return;
+  el._sig=sig;
+  var html="";
+  for(var i=n-1;i>=0;i--){
+    var e=model.feedData[i];
+    html+='<li class="'+e.cls+'"><b>'+e.txt+'</b><time>'+fmt(e.tm)+"</time></li>";
+    if(html.length>4400)break;
+  }
+  html=voteCards(model,tm)+html;
+  var keep=el.scrollTop;
+  el.innerHTML=html||'<li style="color:#5b666d">No events yet \u2014 press Play.</li>';
+  el.scrollTop=keep;
+}
+
+/* in-game chat up to current time; signature-skipped like the feed so the
+   scroll position survives playback (the old version re-anchored to the
+   top on every frame, which read as "locked at the newest message") */
 function renderChat(model,tm){
-  var el=document.getElementById("chat");var html="";
-  for(var i=model.chatData.length-1;i>=0;i--){var e=model.chatData[i];
-    if(e.tm>tm)continue;
+  var el=document.getElementById("chat");
+  if(!el)return;
+  var n=countUpTo(model.chatData,tm);
+  var sig=String(n)+":"+(model.feedData?countUpTo(model.feedData,tm):0);
+  if(el._sig===sig)return;
+  el._sig=sig;
+  var html="";
+  for(var i=n-1;i>=0;i--){
+    var e=model.chatData[i];
     var label=e.kind==="all"?"all":e.kind==="team"?"team":e.kind==="spec"?"spec":e.kind==="whisper"?"whisper \u2192 "+(e.to||"?"):"autohost";
     var cls="c-"+e.kind+(e.kind==="team"?" c-team"+(e.ally||0):"");
     /* pre-game chat (lobby/pick phase, sent before STARTPLAYING): shown from
        the first frame, tagged lobby instead of a negative time */
     var tlabel=e.pre?"lobby":fmt(Math.max(0,e.tm));
     html+='<li class="'+cls+(e.pre?" c-pre":"")+'"><b>'+esc(e.name)+'</b> <span class="dest">('+label+')</span>: <span class="txt">'+esc(e.txt)+'</span><time>'+tlabel+"</time></li>";
-    if(html.length>6000)break;}
+    if(html.length>6400)break;}
+  var keep=el.scrollTop;
   el.innerHTML=html||'<li style="color:#5b666d">No chat yet \u2014 press Play.</li>';
-  var first=el.firstChild;if(first)el.scrollTop=0;
+  el.scrollTop=keep;
 }
 
 /* economy chart up to tm; artifact ecoPts: [{team,pts:[[s,val]..]}], synthetic: [[s,t1,t2]] */
 var ec=document.getElementById("eco"),ex=ec.getContext("2d");
 function drawEco(model,tm){
+  /* the history line to tm gains a couple of points per wall-minute: drawing
+     it every frame is pure waste. One stroke per whole second of replay time
+     looks identical — the eco is not a per-frame visual */
+  var bucket=Math.floor(tm);
+  if(ex._ecoBucket===bucket&&ex._ecoModel===model)return;
+  ex._ecoBucket=bucket;ex._ecoModel=model;
   ex.clearRect(0,0,ec.width,ec.height);
   var series=[];
   if(model.ecoPts.length&&model.ecoPts[0].team!==undefined){
@@ -720,11 +965,32 @@ speeds.forEach(function(s){var b=document.createElement("button");
 var pb=document.getElementById("playBtn");
 pb.onclick=function(){if(!MODEL)return;playing=!playing;if(t>=MODEL.END)t=0;pb.textContent=playing?"\u23f8 Pause":"\u25b6 Play";};
 document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
-function drawFrame(){if(!MODEL)return;fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
+/* wall-clock ms at draw time — explosion flashes and state flickers decay
+   by REAL time so their look is identical at every replay speed */
+var wallNow=0;
+function drawFrame(){if(!MODEL)return;wallNow=performance.now();fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
 var last=performance.now();
+/* frame governor: the rAF loop is what taxes weak CPUs.
+   - paused and the time not moved (no seek): nothing changed, draw nothing —
+     a paused page goes from 60 full redraws/s to zero;
+   - playing on a machine that cannot finish a frame in ~20 ms: render every
+     OTHER tick. The replay clock still advances every tick (playback speed is
+     unchanged), only canvas frames are dropped — exactly what a "drop frames
+     at high speed" strategy should do. */
+var lastDrawnT=null,lastDrawMs=0,oddTick=false;
 function loop(now){var dt=(now-last)/1000;last=now;
   if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
-  drawFrame();requestAnimationFrame(loop);}
+  var moved=playing||t!==lastDrawnT;
+  if(moved){
+    oddTick=!oddTick;
+    if(!(lastDrawMs>20&&oddTick)){
+      var t0=performance.now();
+      drawFrame();
+      lastDrawMs=performance.now()-t0;
+    }
+    lastDrawnT=t;
+  }
+  requestAnimationFrame(loop);}
 
 /* canvas backing store follows the CSS box (DPR-aware) - drawing is fully
    proportional on W/H, so circles stay circles at any panel width */
@@ -786,7 +1052,23 @@ function lossStatsAt(model,team,tm){
 function renderUnitStats(model,live,tm){
   var el=document.getElementById("unitCounts");
   if(!el)return;
-  var teams=model.teams||[];
+  /* DOM innerHTML rebuilds are the expensive part (30 rows × colour math ×
+     60 fps = needless reflow): re-render at most once per wall second of
+     replay time, and skip identical pushes via a content signature */
+  var bucket=Math.floor(tm);
+  var sig=tm<1e-6?"init":String(bucket)+":"+(MODEL?MODEL.units.length:0)+":"+(curReplay?curReplay.art:"");
+  if(el._statSig===sig)return;
+  el._statSig=sig;
+  var teams=(model.teams||[]).slice();
+  /* team order, allyteam first: roster side of the same player sits beside
+     their ally teammates (winner rows group together) instead of the raw
+     team number scattering sides across the grid */
+  var allyOf={};
+  (model.players||[]).forEach(function(p){allyOf[p.team]=p.ally;});
+  teams.sort(function(a,b){
+    var aa=allyOf[a]===undefined?99:allyOf[a],ab=allyOf[b]===undefined?99:allyOf[b];
+    return aa-ab||a-b;
+  });
   var rows=teams.map(function(t){
     var st=live[t]||{n:0,combat:0,econ:0,other:0};
     var ls=model.synthetic?{n:0,v:0}:lossStatsAt(model,t,tm);
@@ -815,18 +1097,66 @@ function renderUnitStats(model,live,tm){
 function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
-  document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering battle.zkr ("+model.units.length+" units)";
+  /* switching artifacts drops the render-signature caches: the counts
+     alone must not decide that feed/chat/grid look "unchanged" across
+     replays — the per-player grid's sig at t=0 is the constant "init"
+     on every model, so without this it keeps the previous replay's rows
+     until the first seek */
+  ["feed","chat","unitCounts"].forEach(function(id){var el=document.getElementById(id);if(el){el._sig=null;el._statSig=null;}});
+  document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
+  if(!model.synthetic)warnMissingIcons(model);
   t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
+}
+
+/* icons load lazily on first draw; a failed/missing icon file settles with
+   complete=true and no pixels. Once every icon type the model uses has had
+   a moment to settle, name the units that fell back to backup circles in
+   the feed — otherwise an un-synced icon dir just silently degrades */
+function warnMissingIcons(model){
+  setTimeout(function(){
+    var miss=new Set();
+    model.units.forEach(function(u){
+      if(!u.icon)return;
+      var im=ZkrReplay.iconFor(u.icon);
+      if(!im||(im.complete&&!im.naturalWidth))miss.add(u.icon);
+    });
+    if(!miss.size)return;
+    var perIcon={};
+    model.units.forEach(function(u){
+      if(u.icon&&miss.has(u.icon)&&u.name)(perIcon[u.icon]=perIcon[u.icon]||[]).push(u.name);
+    });
+    var perIconSeen={};
+    var groups=[...miss].map(function(ic){
+      var names=(perIcon[ic]||[]).filter(function(n){if(perIconSeen[ic+n])return false;perIconSeen[ic+n]=1;return true;});
+      return names.length?names.join("/"):"("+ic+")";
+    });
+    model.feedData.push({tm:0,cls:"warn",
+      txt:"Missing unit icons (shown as backup circles): "+groups.join(", ")});
+    model.feedData.sort(function(a,b){return a.tm-b.tm;});
+    var el=document.getElementById("feed");if(el)el._sig=null;
+    /* the governor skips draws while paused and the timeline is untouched,
+       so a page left auto-paused after load would never show the warn —
+       force one frame if the user has not started playing yet */
+    if(MODEL===model && !playing) drawFrame();
+  },2500);
 }
 
 requestAnimationFrame(loop); /* start the animation loop */
 
 /* ================= artifact loading ================= */
+/* replay catalog: each entry is fetchable as <art> next to the page, with
+   its map backdrop at <art-minus-.zkr>.map.png (daemon writes one minimap
+   PNG per artifact - fixed map.png would be clobbered by every resim) */
+var REPLAYS=[
+  {label:"Teams All Welcome #1 · Otago (8 players)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
+  {label:"Comet Catcher Remake 1.8 (stress test)",art:"battle2.zkr",title:"Comet Catcher Remake 1.8"}
+];
+var curReplay=REPLAYS[0];
 function loadArtifact(url){
   return fetch(url,{cache:"no-cache"}).then(function(res){
-    if(!res.ok)throw new Error("battle.zkr not found ("+res.status+")");
+    if(!res.ok)throw new Error("artifact not found ("+res.status+")");
     return res.arrayBuffer();
   }).then(function(buf){
     return ZkrReplay.parse(new Uint8Array(buf));
@@ -836,23 +1166,41 @@ function loadArtifact(url){
 function showArtifact(a){
   var model=buildArtifactModel(a);
   installModel(model);
+  /* per-replay page chrome follows the loaded artifact */
+  var h1=document.querySelector(".head h1");if(h1)h1.textContent=curReplay.title;
+  document.getElementById("ovMap").textContent=model.meta.map;
+  document.getElementById("infoMap").textContent=model.meta.map;
+  document.getElementById("infoGame").textContent=model.meta.game;
+  document.getElementById("infoEngine").textContent=model.meta.engine;
+  document.getElementById("infoDur").textContent=Math.max(1,Math.round(model.END/60))+" minutes";
   var badge=document.querySelector(".head .badge.win");
   if(badge&&model.winnerLabel)badge.textContent="Winner: "+model.winnerLabel;
-  document.getElementById("simState").textContent="artifact: ready \u00b7 "+a.sections.map(function(s){return s.id}).join(" \u00b7 ");
+  document.getElementById("simState").textContent="artifact: ready · "+a.sections.map(function(s){return s.id}).join(" · ");
 }
 
-loadArtifact("battle.zkr").then(function(a){
-  var m=ZkrReplay.artifactToModel(a);
-  if(!m.hasUnits){
+/* load one catalog entry; a failed fetch on a NON-default replay keeps the
+   currently loaded one on screen (no synthetic takeover) */
+function loadReplay(idx){
+  if(idx<0||idx>=REPLAYS.length)return;
+  curReplay=REPLAYS[idx];
+  mapImg.src=curReplay.art.replace(/\.zkr$/i,"")+".map.png";
+  loadArtifact(curReplay.art).then(function(a){
+    var m=ZkrReplay.artifactToModel(a);
+    if(!m.hasUnits){
+      installModel(buildSyntheticModel());
+      document.getElementById("simState").textContent=curReplay.art+" has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
+      return;
+    }
+    showArtifact(a);
+  }).catch(function(){
+    if(MODEL){
+      document.getElementById("simState").textContent=curReplay.art+" not found \u2014 keep the previous replay, resim to produce it";
+      return;
+    }
     installModel(buildSyntheticModel());
-    document.getElementById("simState").textContent="battle.zkr has no unit tracks \u2014 resim with the engine for full animation; synthetic preview";
-    return;
-  }
-  showArtifact(a);
-}).catch(function(){
-  installModel(buildSyntheticModel());
-  document.getElementById("simState").textContent="no battle.zkr next to the page \u2014 synthetic preview";
-});
+    document.getElementById("simState").textContent="no "+curReplay.art+" next to the page \u2014 synthetic preview";
+  });
+}
 
 /* mock re-sim button: paragraphs describe what the real daemon does */
 document.getElementById("simBtn").onclick=function(){
@@ -860,9 +1208,25 @@ document.getElementById("simBtn").onclick=function(){
   var q=["downloading .sdfz \u2192 provisioning engine + Zero-K data","headless resim @ max speed\u2026","simulating\u2026 40%","simulating\u2026 80%","packing artifact"];
   var i=0;st.textContent=q[0];
   var iv=setInterval(function(){i++;if(i>=q.length){clearInterval(iv);b.disabled=false;
-      loadArtifact("battle.zkr").then(showArtifact).catch(function(){st.textContent="artifact not found \u2014 run: node dist\\daemon\\index.js --out mockup\\battle.zkr";});}
+      loadArtifact(curReplay.art).then(showArtifact).catch(function(){st.textContent="artifact not found \u2014 run the daemon with --out mockup\\"+curReplay.art;});}
     else st.textContent=q[i];},600);
 };
+
+/* catalog select: one option per replay, switch loads its artifact
+   (fetch failure keeps the previous model on screen) */
+(function(){
+  var pickEl=document.getElementById("replayPick");
+  if(!pickEl)return;
+  REPLAYS.forEach(function(rp,i){
+    var o=document.createElement("option");
+    o.value=String(i);
+    o.textContent=rp.label;
+    pickEl.appendChild(o);
+  });
+  pickEl.onchange=function(){loadReplay(+this.value);};
+  loadReplay(0);
+})();
+
 </script>
 </body>
 </html>

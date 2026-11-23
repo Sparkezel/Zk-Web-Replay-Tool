@@ -14,6 +14,16 @@ export interface WeaponDefInfo {
   type?: string;
   range?: number;
   trajectoryHeight?: number;
+  /** explosion area of effect in elmos (gui_aoe override, then the engine's
+   *  damageAreaOfEffect — the same precedence as ZK's attack-AoE widget) */
+  aoe?: number;
+  /** napalm ground patch radius in elmos (area damage weapons) */
+  areaDamageRadius?: number;
+  /** napalm ground patch duration in seconds */
+  areaDamageDuration?: number;
+  /** ZK's own napalm classification (description / lups fx), NOT merely
+   *  area damage — slow fields and black holes are not fire */
+  napalm?: boolean;
   customParams?: Record<string, string>;
 }
 
@@ -46,6 +56,14 @@ const BEAM_TYPES = new Set(["BeamLaser", "LaserCannon"]);
 
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
+
+  // ground napalm (ZK's own classification: description / lups fx, not merely
+  // any area damage) is always recorded BEFORE the junk-name list — ZK
+  // prefixes weapon names with the unit key, so legit napalm weapons like
+  // Firewalker's `jumparty_napalm_sprayer` or disco's rave weapons match
+  // the "party" pattern and would otherwise be silently dropped.
+  if (w.napalm) return 2;
+
   if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;
 
   const type = w.type ?? "";

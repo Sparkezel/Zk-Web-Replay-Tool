@@ -41,7 +41,7 @@ function pageSnapshot() {
     unitDefs: new Map([
       [10, { defID: 10, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
       [11, { defID: 11, name: "solar", humanName: "Solar Collector", metalCost: 55, health: 150, canMove: false, iconType: "energysolar" }],
-      [12, { defID: 12, name: "msp", humanName: "Strike Flea", metalCost: 90, health: 100, canMove: true, iconType: "spiderscout" }],
+      [12, { defID: 12, name: "staticantinuke", humanName: "Antinuke", metalCost: 900, health: 2000, canMove: false, iconType: "antinuke", antiNukeCoverage: 2500 }],
     ]),
     weaponDefs: new Map(),
     events: [
@@ -53,6 +53,13 @@ function pageSnapshot() {
     gameOvers: [{ frame: 2700, winners: [0] }],
     projectiles: new Map(),
     links: new Map(),
+    /* live states on unit 1 (all three bits + half slow at f200): the draw
+       branches for the state dots and the on-fire red flash must run in the
+       page harness without throwing */
+    states: [
+      { unitID: 1, frame: 200, bits: 7, slow: 0.5 },
+      { unitID: 4, frame: 100, bits: 4, slow: 0 },
+    ],
   };
 }
 
@@ -93,6 +100,7 @@ type El = Record<string, unknown> & {
   value: number;
   onclick: ((...a: unknown[]) => void) | null;
   oninput: ((...a: unknown[]) => void) | null;
+  onchange: ((...a: unknown[]) => void) | null;
 }
 
 function installStubs(serveFile: string | null): { byId: (id: string) => El; state: SimState } {
@@ -102,7 +110,7 @@ function installStubs(serveFile: string | null): { byId: (id: string) => El; sta
     width: 380, height: 120,        // canvas intrinsic size (markup-defined in the page)
     clientWidth: 800, clientHeight: 460,
     getContext: () => makeCx(state),
-    onclick: null, oninput: null,
+    onclick: null, oninput: null, onchange: null,
     classList: { add() {}, remove() {}, contains: () => false },
     children: [] as unknown[],
     querySelector: () => makeEl("q"),
@@ -138,6 +146,18 @@ function installStubs(serveFile: string | null): { byId: (id: string) => El; sta
   return { byId, state };
 }
 
+/** runPage's fixed waits can lose a race against the streamed inflate
+ * (parse() awaits a DecompressionStream pipeline with thousands of microtask
+ * hops) on slow CI machines — poll for install completion with a deadline
+ * instead of betting on wall-clock sleep durations. */
+async function waitFor(cond: () => boolean, deadlineMs = 4000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > deadlineMs) return; // let the assert report the stale value
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 function extractInlineScript(): string {
   const html = readFileSync(path.join("mockup", "index.html"), "utf8");
   const m = /<script>\s*([\s\S]*)<\/script>\s*<\/body>/m.exec(html);
@@ -160,7 +180,9 @@ async function runPage(serveFile: string | null): Promise<{ byId: (id: string) =
   const src = extractInlineScript();
   // indirect eval: the page script runs in global scope exactly as in a browser
   (0, eval)(src);
-  for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 5));
+  /* the eval tail IIFE kicks off loadReplay(0); wait for installModel
+     (every install path writes the chip) instead of a fixed sleep */
+  await waitFor(() => byId("chip").textContent !== "");
 
   // press Play and run ~10 seconds of wall-clock frames
   const playBtn = byId("playBtn");
@@ -205,6 +227,20 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   assert.ok(n0 >= 2, `team-0 count includes alive+ghost units (got ${n0})`);
   assert.ok(teamConstantsAreGone(), "the old two-corner counters no longer exist");
   assert.match(String(byId("clock").textContent), /01:00 \/ 01:30/, "clock follows the seek (END = 90s)");
+
+  // replay catalog: one select option per replay; switching loads the
+  // next artifact (the fetch stub serves the same fixture bytes for any
+  // URL, which is exactly what the switch path needs exercised)
+  const pick = byId("replayPick");
+  assert.ok((pick.children as unknown[]).length >= 2, "catalog select lists every replay");
+  assert.ok(pick.onclick === null, "select uses onchange");
+  pick.value = 1;
+  (pick.onchange as () => void).call(pick);
+  // the switch re-runs the full fetch -> streamed inflate -> installModel
+  // chain; wait for it rather than racing a fixed 20 ms sleep
+  await waitFor(() => /battle2\.zkr/.test(String(byId("chip").textContent)));
+  assert.match(byId("chip").textContent, /battle2\.zkr/, "switching installs the second artifact");
+  assert.match(String(byId("infoDur").textContent), /minutes/, "battle-result duration follows the loaded model");
 });
 
 test("page falls back to the synthetic preview when the artifact fetch fails", async () => {

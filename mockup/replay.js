@@ -280,6 +280,9 @@
     if (!iconBase || !iconType || typeof Image === "undefined") return null;
     if (!iconCache.has(iconType)) {
       const im = new Image();
+      /* a 404 (icon file not synced from game data) settles with
+         complete=true and naturalWidth=0 — the page detects that and
+         names the backup-circle units in the feed */
       im.src = iconBase + encodeURIComponent(iconType) + ".png";
       iconCache.set(iconType, im);
     }
@@ -291,27 +294,39 @@
      plain multiply keeps the black lines black while the grey interiors take
      the team hue. Results are cached offscreen per (src, colour). */
   const tintCache = new Map();
+  const TINT_CACHE_MAX = 1500;
   function tintIcon(img, color) {
     if (!img || !img.complete || !img.naturalWidth || !color) return null;
     const key = (img.src || "") + "|" + color;
-    if (!tintCache.has(key)) {
-      /* healthv2 feeds a shade per hp level, which would grow this cache
-         unbounded (12k+ offscreen canvases measured on a full sweep);
-         quantizing the shade below keeps live entries low, and the cap
-         guarantees the ceiling even with many icons */
-      if (tintCache.size > 600) tintCache.clear();
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const g = c.getContext("2d");
-      g.drawImage(img, 0, 0);
-      g.globalCompositeOperation = "multiply";
-      g.fillStyle = color;
-      g.fillRect(0, 0, c.width, c.height);
-      g.globalCompositeOperation = "destination-in";
-      g.drawImage(img, 0, 0);
+    if (tintCache.has(key)) {
+      /* LRU touch: re-insert as newest so a full hpv2 sweep evicts the
+         genuinely-cold canvases instead of mass-clearing (the old clear-all
+         at >600 entries caused periodic re-tint storms = the Otago stutter) */
+      const c = tintCache.get(key);
+      tintCache.delete(key);
       tintCache.set(key, c);
+      return c;
     }
-    return tintCache.get(key);
+    /* healthv2 feeds a shade per hp level, which would grow this cache
+       unbounded (12k+ offscreen canvases measured on a full sweep);
+       quantizing the shade (damageShade) keeps live entries low, and the
+       LRU cap guarantees the ceiling even with many icons */
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = "multiply";
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "destination-in";
+    g.drawImage(img, 0, 0);
+    tintCache.set(key, c);
+    /* evict oldest (first inserted) — a bounded amortized cost per frame
+       instead of the old nuke-everything */
+    if (tintCache.size > TINT_CACHE_MAX) {
+      tintCache.delete(tintCache.keys().next().value);
+    }
+    return c;
   }
 
   async function inflateSection(codec, payload) {
@@ -444,6 +459,25 @@
     return p;
   }
 
+  /** sparse per-unit state transitions (slow/EMP/disarm/fire):
+   *  [frame u32][unitID u32][bits u8][slowQ u8]; bits 1=fire, 2=disarm,
+   *  4=EMP-stunned, slowQ = slowFrac * 16. Only transitions are recorded —
+   *  a unit with no records was never affected. */
+  function decodeStates(dv, u8) {
+    const p = { records: [] };
+    if (u8.length < 4) return p;
+    let o = 0;
+    const n = dv.getUint32(o, true); o += 4;
+    for (let i = 0; i < n; i++) {
+      const frame = dv.getUint32(o, true); o += 4;
+      const unitID = dv.getUint32(o, true); o += 4;
+      const bits = dv.getUint8(o); o += 1;
+      const slowQ = dv.getUint8(o); o += 1;
+      p.records.push({ frame, unitID, bits, slow: slowQ / 16 });
+    }
+    return p;
+  }
+
   async function parse(buf) {
     const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
     if (u8.length < 4 || u8[0] !== 0x5a || u8[1] !== 0x4b || u8[2] !== 0x52) {
@@ -484,6 +518,7 @@
       meta: json("META"),
       roster: json("ROST"),
       startboxesData: json("STBX"),
+      metalSpots: json("MESP"),
       unitDefs: json("UDEF"),
       weaponDefs: json("WDEF"),
       chat: json("CHAT"),
@@ -494,6 +529,7 @@
       evnt: raw["EVNT"] ? decodeEvnt(new DataView(raw["EVNT"].buffer, raw["EVNT"].byteOffset, raw["EVNT"].byteLength), raw["EVNT"]) : null,
       proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"], versionOf("PROJ")) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
+      states: raw["STAT"] ? decodeStates(new DataView(raw["STAT"].buffer, raw["STAT"].byteOffset, raw["STAT"].byteLength), raw["STAT"]) : null,
     };
   }
 
@@ -541,6 +577,13 @@
     if (defByUnit.size === 0) for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "spawn") defByUnit.set(r.unitID, r.int1);
     }
+    /* tracks with no recorded spawn event — real units always get one, so a
+       spawn-less track is an engine-side helper (the terraform-era defID-0
+       crutches seen on the stress artifact); the units table drops them */
+    const spawnedUnitIds = new Set();
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind === "spawn") spawnedUnitIds.add(r.unitID);
+    }
 
     const udef = new Map();
     for (const row of (artifact.unitDefs ? artifact.unitDefs.units : [])) {
@@ -560,6 +603,9 @@
         // fallback charge bar only) and its max charge (shieldPower)
         shieldRadius: row.length > 8 && row[8] > 0 ? row[8] : undefined,
         shieldPower: row.length > 9 && row[9] > 0 ? row[9] : undefined,
+        // UDEF v4 column: anti-nuke interception radius (ZK nuke_coverage;
+        // ZK's own coverage widget reads the same value)
+        antiNukeCoverage: row.length > 10 && row[10] > 0 ? row[10] : undefined,
       });
     }
     const defNameOfUnit = (unitID) => {
@@ -834,12 +880,77 @@
         kind = "whisper";
         to = playerNameByNum.get(dest) || ("Player " + dest);
       }
-      chatData.push({ tm: toDemo(frame), name, kind, ally, to, txt: text, pre: frame <= anchor });
+      chatData.push({ tm: toDemo(frame), name, kind, ally, to, txt: text, pre: frame <= anchor, from });
     }
     chatData.sort((a, b) => a.tm - b.tm);
 
+    /* Autohost relay votes: the poll state lives in the RELAYED chat, with
+       every change announced as a "Poll: <subject>? [!y=Y/T, !n=N/T]" line
+       and "[END:SUCCESS/FAILED]" at resolution; players cast with
+       "!vote 1" (yes) / "!vote 2" (no). Parsed here from the raw rows, so
+       no extra recording exists or is needed; one poll runs at a time, and
+       a vote only counts for the poll that was active when it was cast. */
+    const votes = [];
+    {
+      let active = null;
+      for (const row of (artifact.chat || [])) {
+        const text = String(row[3] || "");
+        const tm = toDemo(row[0]);
+        const pm = /^Poll: (.*?)(?: ?\[(.+)\])$/.exec(text);
+        if (pm) {
+          const subject = pm[1].replace(/\?+$/, "").trim();
+          const inner = pm[2];
+          const end = /^END:(SUCCESS|FAILED)/.exec(inner);
+          if (end) {
+            if (active && active.subject === subject) {
+              active.endTm = tm;
+              active.success = end[1] === "SUCCESS";
+              active = null;
+            }
+            continue;
+          }
+          const y = /!y=(\d+)\/(\d+)/.exec(inner);
+          const n = /!n=(\d+)\/(\d+)/.exec(inner);
+          if (active === null || active.subject !== subject) {
+            /* a state line for a NEW subject supersedes any poll still
+               open: autohost runs one poll at a time, so an orphaned
+               endTm:null would pin its card forever — resolve it here
+               instead (success stays unknown) */
+            if (active) { active.endTm = tm; active.success = undefined; }
+            active = { subject, yes: 0, no: 0, needed: 1, startTm: tm, endTm: null, success: undefined, voters: [] };
+            votes.push(active);
+          }
+          if (y) { active.yes = Number(y[1]); active.needed = Number(y[2]); }
+          if (n) { active.no = Number(n[1]); }
+          continue;
+        }
+        const vm = /^!vote\s+([12])$/.exec(text);
+        if (vm && active) {
+          active.voters.push({
+            tm, from: row[1],
+            name: playerNameByNum.get(row[1]) || ("Player " + row[1]),
+            yes: vm[1] === "1",
+          });
+        }
+      }
+    }
+
+    /* sparse per-unit state transitions (slow / EMP / disarm / on-fire);
+     * grouped per unit and pre-converted to seconds — the arrays are tiny
+     * and already in frame order, a linear scan per drawn unit is free */
+    const statesByUnit = new Map();
+    for (const r of (artifact.states ? artifact.states.records : [])) {
+      if (!statesByUnit.has(r.unitID)) statesByUnit.set(r.unitID, []);
+      statesByUnit.get(r.unitID).push({ t: toSec(r.frame), b: r.bits, sl: r.slow });
+    }
+
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
+      /* defID unresolvable in UDEF AND no spawn event: engine-side helper
+         (terraform-era construction crutches — real units always spawn),
+         renders as a forever-alive ghost circle, so drop it like terraunit.
+         Kept when no UDEF section exists (lightweight fixtures). */
+      if (info === undefined && udef.size > 0 && !spawnedUnitIds.has(u.unitID)) return null;
       let hpMax = 0;
       for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
       const commLevel = commLevelOfDef(info ? info.name : undefined);
@@ -863,6 +974,12 @@
            smaller personal shields only feed the fallback charge bar */
         shieldRadius: info ? info.shieldRadius : undefined,
         shieldPower: info ? info.shieldPower : undefined,
+        /* anti-nuke interception radius in elmos — the viewer paints the
+         * coverage circle of every completed antinuke, always */
+        antiNuke: info ? info.antiNukeCoverage : undefined,
+        /* sparse state track: [{t, b, sl}] — b bits: 1 fire, 2 disarm, 4 EMP;
+         * sl = slow fraction (the purple dot fades in as slow stacks) */
+        states: statesByUnit.get(u.unitID) ?? [],
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
@@ -879,7 +996,7 @@
           sh: s.sh,
         })),
       };
-    }).filter((u) => !isExcludedDef(u.def));
+    }).filter((u) => u && !isExcludedDef(u.def));
 
     /* Wreck features (recorded from the next resim on): Spring spawns a
        *_dead/*_heap feature where a unit died and destroys it when it is
@@ -949,6 +1066,64 @@
       projectiles.push(mkPath(seg));
     }
 
+    /* ---- superweapon events, missile explosions, ground napalm ---- */
+    /* a superweapon nanoframe appearing is THE news of the game: the def
+       names are ZK's own (raveparty/zenith/mahlazer/striderdetriment) plus
+       the strategic nuke launcher (staticnuke, "Trinity") */
+    const SUPERWEAPON_DEFS = new Set(["raveparty", "zenith", "mahlazer", "striderdetriment", "staticnuke"]);
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind !== "spawn") continue;
+      const info = udef.get(r.int1);
+      if (info && SUPERWEAPON_DEFS.has(info.name)) {
+        feedData.push({
+          tm: toSec(r.frame), cls: "news",
+          txt: (info.humanName || info.name) + " has begun construction!",
+        });
+      }
+    }
+
+    /* Eos / Shockley / Quake / Inferno: the stockpiled missile UNITS stage
+       at the map corner between the launch command and liftoff, so their
+       death position must NOT anchor the blast (and a silenced silo would
+       paint a fake one at the corner). The real impact is the warhead
+       PROJECTILE's last sample — the wdef names are tacnuke_weapon etc.,
+       so match on the base name. Radii: WDEF aoe when recorded, else the
+       fixed game values (tacnuke 192, empmissile 280, seismic 640,
+       napalmmissile 512 elmos).
+       fade "fast" = a wall-clock flash (~5 frames at any speed);
+       "normal" = decays in sim seconds at the stated duration. */
+    const EXPLOSION_DEFS = {
+      tacnuke: { col: "255,72,56", r: 192, fade: "fast", dur: 0 },
+      empmissile: { col: "72,214,255", r: 280, fade: "fast", dur: 0 },
+      seismic: { col: "88,255,128", r: 640, fade: "fast", dur: 0 },
+      napalmmissile: { col: "255,138,40", r: 512, fade: "normal", dur: 8 },
+    };
+    const explosions = [];
+    /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
+       napalm patches are FIRE only — ZK's lups_napalm classification
+       (weapon description / fx; the internal def names carry _napalm_ too,
+       which doubles as the fallback for artifacts recorded before the nd
+       flag existed). Slow fields (missileslow) and the Dante's black hole
+       are area damage but NOT fire; they do not paint. Firewalker shells
+       64 elmos / 16 s, Inferno warheads 256 / 45 s */
+    const napalm = [];
+    for (const p of projectiles) {
+      const w = wdef.get(p.weaponDefID);
+      if (!w || !p.path.length) continue;
+      const imp = p.path[p.path.length - 1];
+      const ex = EXPLOSION_DEFS[String(w.name || "").replace(/_weapon$/, "")];
+      if (ex) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex.r, col: ex.col, fade: ex.fade, dur: ex.dur });
+      }
+      if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
+      }
+      const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));
+      if (isFire && (w.adr ?? 0) > 0) {
+        napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
+      }
+    }
+
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({
       djinnID: l.djinnID, lampID: l.lampID, team: l.team,
       open: toSec(l.openFrame),
@@ -961,6 +1136,18 @@
       ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toDemo(s.frame), s.metalProduced]) });
     }
 
+    /* resolved votes leave a line in the feed history; pre-game lobby polls
+       (endTm < 0, resolved before STARTPLAYING) leave no in-game line */
+    for (const row of votes) {
+      if (row.endTm !== null && row.endTm >= 0) {
+        feedData.push({
+          tm: row.endTm, cls: "vote",
+          txt: "Vote: " + row.subject + " — " + (row.success === undefined ? "ended" : row.success ? "passed" : "failed"),
+        });
+      }
+    }
+    feedData.sort((a, b) => a.tm - b.tm);
+
     const posEnd = artifact.pos ? artifact.pos.maxFrame : 0;
     const projEnd = artifact.proj ? artifact.proj.maxFrame : 0;
     const linkEnd = artifact.link ? artifact.link.maxFrame : 0;
@@ -970,6 +1157,14 @@
     // start, matching the resim's last sim frame / 30) - never shifted
     const metaEnd = artifact.meta && artifact.meta.gameTime ? artifact.meta.gameTime : 0;
     const dims = artifact.meta && artifact.meta.map ? artifact.meta.map.dims : null;
+
+    /* map metal spots (MESP section, written by the widget from the ZK mex
+       gadget's rules params); elmos -> map fractions for canvas drawing */
+    const mespDimW = dims && dims[0] > 0 ? dims[0] : 16384;
+    const mespDimH = dims && dims[1] > 0 ? dims[1] : mespDimW;
+    const metalSpots = (artifact.metalSpots && Array.isArray(artifact.metalSpots.spots) ? artifact.metalSpots.spots : [])
+      .filter((s) => Array.isArray(s) && s.length >= 2 && isFinite(s[0]) && isFinite(s[1]))
+      .map((s) => ({ x: s[0] / mespDimW, y: s[1] / mespDimH, metal: s[2] > 0 ? s[2] : undefined }));
 
     return {
       fps: FPS,
@@ -981,6 +1176,10 @@
       winner, winnerLabel,
       startPolys,
       teamNames, teamMeta, players, chatData,
+      votes, metalSpots,
+      /* superweapon detonations (Eos/Shockley/Quake/Inferno + Zenith
+         meteors) and ground napalm patches — page paints both on the map */
+      explosions, napalm,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",

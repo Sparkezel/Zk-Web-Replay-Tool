@@ -703,6 +703,76 @@ test("commander morph reads chassis + level, cancelled nanoframes read cancelled
   assert.equal(m6.metalValue, 1150, "level-1 value = 1100 base + first morph cost");
 });
 
+
+test("states, antinuke coverage, missile explosions, napalm and superweapon news decode", async () => {
+  const snap = syntheticSnapshot();
+  // anti-nuke launcher with ZK's real coverage (staticantinuke 2500 elmos)
+  snap.unitDefs.set(20, { defID: 20, name: "staticantinuke", metalCost: 900, health: 2000, canMove: false, iconType: "antinuke", humanName: "Antinuke", antiNukeCoverage: 2500 });
+  snap.units.set(11, { unitID: 11, defID: 20, samples: [
+    { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 11, int1: 20, int2: 0, int3: -1 });
+  // a Firewalker shell: ZK-classified napalm weapon -> ground napalm at
+  // impact (after the classifier fix the recorded flag — not bare area
+  // damage — gates the class, matching the widget's nd column)
+  snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16, napalm: true });
+  snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
+    samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
+  // corner until liftoff, so its death must NOT anchor the blast — the
+  // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
+  // sample. Unit 12 below is the regression probe: it dies at the corner.
+  snap.unitDefs.set(21, { defID: 21, name: "tacnuke", metalCost: 0, health: 100, canMove: true, iconType: "cruisemissilesmall", humanName: "Eos" });
+  snap.units.set(12, { unitID: 12, defID: 21, samples: [
+    { frame: 100, x: 16384, z: 16384, hp: 255, build: 255 },
+    { frame: 294, x: 16384, z: 16384, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 });
+  snap.weaponDefs.set(31, { defID: 31, name: "tacnuke_weapon", type: "MissileLauncher", range: 900, aoe: 192 });
+  snap.projectiles.set(102, { proID: 102, weaponDefID: 31, projClass: 4, ownerTeam: 1, startFrame: 294,
+    samples: [{ frame: 294, x: 8192, z: 8192, y: 200 }, { frame: 300, x: 9000, z: 9100, y: 0 }] });
+  // superweapon news: a Zenith nanoframe appearing
+  snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
+  snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
+  // live states: unit 1 fully EMP-stunned and slowed to 3/16 at frame 120
+  snap.states = [{ unitID: 1, frame: 120, bits: 4, slow: 3 / 16 }];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+
+  // states travel through pack -> parse with the slow fraction intact
+  const st = model.units.find((u) => u.id === 1)!.states;
+  assert.equal(st.length, 1, "state transition recorded");
+  assert.equal(st[0]!.b, 4, "EMP bit");
+  assert.ok(Math.abs(st[0]!.sl - 3 / 16) < 1e-9, "slow fraction survives the u8 quantization");
+  assert.equal(st[0]!.t, 4, "state time in play-seconds");
+
+  // anti-nuke coverage straight from the def
+  assert.equal(model.units.find((u) => u.id === 11)!.antiNuke, 2500);
+
+  // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
+  // radius from WDEF aoe; the missile unit's corner death must NOT paint one
+  assert.equal(model.explosions.length, 1, "only the flight's explosion — no corner blast from the unit death");
+  const eos = model.explosions.find((e) => e.r === 192);
+  assert.ok(eos, "Eos explosion present");
+  assert.equal(eos!.fade, "fast");
+  assert.ok(Math.abs(eos!.t - 10) < 0.01, "detonation at the warhead impact (frame 300/30)");
+  assert.ok(Math.abs(eos!.x - 9000 / 16384) < 0.01 && Math.abs(eos!.y - 9100 / 16384) < 0.01,
+    "explosion at the flight's impact sample, not the missile unit's staging corner (16384/16384)");
+
+  // ground napalm from the shell's impact, game radius/duration
+  const np = model.napalm.find((n) => n.r === 64);
+  assert.ok(np, "napalm patch present");
+  assert.equal(np!.dur, 16);
+  assert.ok(Math.abs(np!.t - 56 / 30) < 0.05,
+    "napalm starts at the impact (frames 50/56 -> last sample)");
+
+  // superweapon construction news in the feed
+  assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),
+    "superweapon news line");
+});
+
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
   assert.equal(ZkrReplay.unitValueClass("energysolar", "energy_med"), "econ");
   assert.equal(ZkrReplay.unitValueClass("staticmex", "mex"), "econ");
@@ -715,6 +785,80 @@ test("unitValueClass buckets defs into econ/other/combat for the stats grid", ()
   assert.equal(ZkrReplay.unitValueClass("cloakraid", "kbotraider"), "combat");
   assert.equal(ZkrReplay.unitValueClass("turretaaclose", "defenseaa"), "combat");
   assert.equal(ZkrReplay.unitValueClass("funnelweb", "mobiletachyon"), "combat");
+});
+
+test("autohost polls parse into votes: counts, resolution, per-poll voter attribution", () => {
+  // exact shapes observed in the real demo's relayed chat: Poll state lines
+  // end with [!y=a/b, !n=c/d] or [END:...]; players cast with "!vote 1|2"
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 600, map: { name: "M", dims: [10000, 9000] } },
+    chat: [
+      [1000, 6, 254, "SPRINGIE:<ninse>!poll resign"],
+      [1100, 255, 254, "Poll: Resign team 2? [!y=0/3, !n=0/3]"],
+      [1200, 6, 254, "!vote 1"],
+      [1300, 3, 254, "!vote 2"],
+      [1400, 255, 254, "Poll: Resign team 2? [!y=1/3, !n=1/3]"],
+      [2200, 255, 254, "Poll: Resign team 2? [!y=3/3, !n=1/3]"],
+      [2400, 255, 254, "Poll: Resign team 2? [END:SUCCESS]"],
+      [2500, 9, 255, "!vote 1"],        // after resolution: belongs to nothing
+      [2700, 255, 254, "Team 2 resigned"],
+      // second poll: recasts, then superseded by a third poll mid-run
+      [2800, 255, 254, "Poll: Kick hallo hallo? [!y=0/2, !n=0/2]"],
+      [2900, 6, 254, "!vote 2"],
+      [2950, 6, 254, "!vote 1"],        // ninse recasts yes (ZK keeps the last cast)
+      [3000, 3, 254, "!vote 1"],        // hallohallo votes yes too
+      [3100, 255, 254, "Poll: Exit the game [!y=0/9, !n=0/9]"],   // supersedes
+      // third poll never resolves: stays endTm-null (unresolved), no feed line
+    ],
+    roster: {
+      players: [
+        { name: "ninse", script: "player6", team: 3, spectator: false },
+        { name: "hallohallo", script: "player3", team: 5, spectator: false },
+      ],
+      teams: [{ num: 3, allyteam: 1 }, { num: 5, allyteam: 1 }],
+    },
+    metalSpots: { schema: 1, spots: [[2816, 2816, 2], [1000, 7777, 1.5]] },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  assert.equal(model.votes.length, 3, "one poll per subject: resolved, superseded, unresolved");
+  const v = model.votes[0]!;
+  assert.equal(v.subject, "Resign team 2");
+  assert.equal(v.yes, 3);
+  assert.equal(v.no, 1);
+  assert.equal(v.needed, 3);
+  assert.equal(v.success, true);
+  assert.ok(Math.abs(v.startTm - 1100 / 30) < 1e-6, "poll starts at its first state line");
+  assert.ok(Math.abs(v.endTm - 2400 / 30) < 1e-6, "poll ends at its END line");
+  assert.equal(v.voters.length, 2, "votes cast while the poll ran are attributed");
+  assert.equal(v.voters.find((x) => x.yes)!.name, "ninse", "!vote 1 line carries the caster's name");
+  assert.equal(v.voters.find((x) => !x.yes)!.name, "hallohallo");
+  assert.ok(!v.voters.some((x) => x.tm > v.endTm), "a vote after resolution never joins the poll");
+  assert.ok(model.feedData.some((f) => f.cls === "vote" && /Resign team 2 — passed/.test(f.txt)),
+    "resolved poll leaves a feed line");
+
+  // superseded poll: a new subject cutting in resolves the previous one,
+  // success unknown — neither "passed" nor "failed" lands in the feed
+  const v2 = model.votes[1]!;
+  assert.equal(v2.subject, "Kick hallo hallo");
+  assert.ok(Math.abs(v2.endTm! - 3100 / 30) < 1e-6, "superseded poll ends at the next poll's first state line");
+  assert.equal(v2.success, undefined);
+  assert.equal(v2.voters.length, 3, "recasts are ALL recorded raw; the card's last-cast rule is render-side");
+  assert.ok(model.feedData.some((f) => f.cls === "vote" && /Kick hallo hallo — ended/.test(f.txt)),
+    "superseded poll closes with an ENDED feed line, never passed/failed");
+
+  // unresolved poll: endTm null (NEVER a negative sentinel — pre-game polls
+  // resolve with genuinely negative times and would pin a card forever)
+  const v3 = model.votes[2]!;
+  assert.equal(v3.subject, "Exit the game");
+  assert.strictEqual(v3.endTm, null, "never-resolved poll keeps the null sentinel");
+  assert.ok(!model.feedData.some((f) => f.cls === "vote" && /Exit the game/.test(f.txt)),
+    "unresolved poll leaves no feed line");
+
+  // metal spots normalize to map fractions
+  assert.equal(model.metalSpots.length, 2);
+  assert.ok(Math.abs(model.metalSpots[0]!.x - 0.2816) < 1e-6);
+  assert.ok(Math.abs(model.metalSpots[1]!.y - 7777 / 9000) < 1e-6);
 });
 
 test("model.players carries every roster player's elo/level with command counts", () => {
