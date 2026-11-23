@@ -980,3 +980,27 @@ test("model.players carries every roster player's elo/level with command counts"
   // sorted by allyteam then team: the first three rows are allyteam 0
   assert.ok(model.players.findIndex((p: { name: string }) => p.name === "WM1enjoyer") === 3);
 });
+
+test("mapFitRect contain-fits the map at its true aspect ratio", () => {
+  // The Hole is square: in a wide 16:9 panel it must letterbox, not stretch
+  const sq = ZkrReplay.mapFitRect(16384, 16384, 1600, 900);
+  assert.equal(sq.fw, 900, "square map fits to the panel height");
+  assert.equal(sq.fh, 900);
+  assert.equal(sq.ox, 350, "equal side bars");
+  assert.equal(sq.oy, 0);
+  // Otago is wide: in a square panel it letterboxes top/bottom
+  const wide = ZkrReplay.mapFitRect(32768, 16384, 900, 900);
+  assert.equal(wide.fw, 900);
+  assert.equal(wide.fh, 450);
+  assert.equal(wide.ox, 0);
+  assert.equal(wide.oy, 225);
+  // wide map in an exactly-matching panel fills it edge to edge
+  const exact = ZkrReplay.mapFitRect(32768, 16384, 1600, 800);
+  assert.deepEqual({ ox: exact.ox, oy: exact.oy, fw: exact.fw, fh: exact.fh },
+    { ox: 0, oy: 0, fw: 1600, fh: 800 });
+  // missing dims (synthetic fixtures) fall back to a square fit
+  const fb = ZkrReplay.mapFitRect(0, 0, 800, 500);
+  assert.equal(fb.fw, 500);
+  assert.equal(fb.fh, 500);
+  assert.equal(fb.ox, 150);
+});
