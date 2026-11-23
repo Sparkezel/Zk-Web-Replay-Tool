@@ -1082,11 +1082,14 @@
       }
     }
 
-    /* Eos / Shockley / Quake / Inferno are stockpile UNITS: their death IS
-       the detonation, at the last tracked position. Radii = the def's
-       explosion areaOfEffect (tacnuke 192, empmissile 280, seismic 640,
-       napalmmissile 512 elmos) — fixed values from the game defs, so the
-       viewer does not depend on WDEF carrying them.
+    /* Eos / Shockley / Quake / Inferno: the stockpiled missile UNITS stage
+       at the map corner between the launch command and liftoff, so their
+       death position must NOT anchor the blast (and a silenced silo would
+       paint a fake one at the corner). The real impact is the warhead
+       PROJECTILE's last sample — the wdef names are tacnuke_weapon etc.,
+       so match on the base name. Radii: WDEF aoe when recorded, else the
+       fixed game values (tacnuke 192, empmissile 280, seismic 640,
+       napalmmissile 512 elmos).
        fade "fast" = a wall-clock flash (~5 frames at any speed);
        "normal" = decays in sim seconds at the stated duration. */
     const EXPLOSION_DEFS = {
@@ -1096,13 +1099,6 @@
       napalmmissile: { col: "255,138,40", r: 512, fade: "normal", dur: 8 },
     };
     const explosions = [];
-    for (const u of units) {
-      const ex = EXPLOSION_DEFS[u.def];
-      if (ex && u.died > 0 && u.track.length) {
-        const pos = u.track[u.track.length - 1];
-        explosions.push({ t: u.died, x: pos.x, y: pos.y, r: ex.r, col: ex.col, fade: ex.fade, dur: ex.dur });
-      }
-    }
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
        napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
@@ -1115,6 +1111,10 @@
       const w = wdef.get(p.weaponDefID);
       if (!w || !p.path.length) continue;
       const imp = p.path[p.path.length - 1];
+      const ex = EXPLOSION_DEFS[String(w.name || "").replace(/_weapon$/, "")];
+      if (ex) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex.r, col: ex.col, fade: ex.fade, dur: ex.dur });
+      }
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
       }

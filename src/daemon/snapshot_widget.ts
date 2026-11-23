@@ -327,15 +327,23 @@ end
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
   LightningCannon = true, TorpedoLauncher = true }
 local projClassByID = {}
+-- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
+-- description contains "Napalm" or the lups heat/napalm fx is set. Area
+-- damage ALONE is not fire - the slow missile's slow field and the Dante's
+-- black hole are area damage too but must not record as napalm
+local function isNapalmWeapon(d, cp)
+  if tostring(d.description or ""):lower():find("napalm", 1, true) then return true end
+  return cp ~= nil and (cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil)
+end
 local function classifyWeapon(d, cp)
+  -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
+  -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
+  -- and the "party" filter below would silently drop it (and the DRP's own
+  -- burn weapons). Class 2 (artillery) fits the shell arc
+  if cp ~= nil and cp.area_damage == "1" and isNapalmWeapon(d, cp) then return 2 end
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
      name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
-  -- ground napalm (area damage: Firewalker shells, Inferno warheads) MUST be
-  -- recorded whatever its weapon type — the shell is a short-range cannon that
-  -- the range heuristics below would drop, and the viewer paints the patch
-  -- at the flight's impact. Class 2 (artillery) fits the arc
-  if cp ~= nil and cp.area_damage == "1" then return 2 end
   local wtype = d.type or ""
   if DROPPED_TYPES[wtype] then return 0 end
   local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil
@@ -441,8 +449,11 @@ function widget:GameFrame(frame)
       if slq < 0 then slq = 0 end
       if slq > 16 then slq = 16 end
       local bits = 0
-      if (Spring.GetUnitRulesParam(uid, "on_fire") or "0") == "1" then bits = bits + 1 end
-      if (Spring.GetUnitRulesParam(uid, "disarmed") or "0") == "1" then bits = bits + 2 end
+      -- rules params come back as NUMBERS from the engine (ZK's own
+      -- unit_healthbars.lua compares == 1) — a == "1" string compare never
+      -- fires and both states silently never record
+      if tonumber(Spring.GetUnitRulesParam(uid, "on_fire") or 0) == 1 then bits = bits + 1 end
+      if tonumber(Spring.GetUnitRulesParam(uid, "disarmed") or 0) == 1 then bits = bits + 2 end
       -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
       -- build-up is ignored by design - the effect only reads at 100%)
       local stunned = select(1, Spring.GetUnitIsStunned(uid))

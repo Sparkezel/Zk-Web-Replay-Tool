@@ -596,8 +596,9 @@ function draw(model,tm){
     var anned=(b&4)!==0;
     var rx=u.antiNuke*pxPerElmo;
     if(rx<3)return;
-    var col=anned?"255,50,40":teamColorStr(u.t);
-    if(anned&&Math.floor(wallNow/180)%2!==0)return;
+    // flash = alternate red / team colour; never blank the circle — a pause
+    // on the "off" phase would leave the launcher with no coverage view
+    var col=(anned&&Math.floor(wallNow/180)%2===0)?"255,50,40":teamColorStr(u.t);
     cx.fillStyle="rgba("+col+",.16)";
     cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
     cx.strokeStyle="rgba("+col+",.7)";
@@ -741,23 +742,24 @@ function draw(model,tm){
        (the dot fades IN as slow damage stacks), yellow = EMP-shocked and
        grey = disarmed (both only once the effect fully takes hold — partial
        build-up is invisible by design), on fire = the whole icon flashes
-       red until the burn runs out. Dots sit beside the cloak dot so all
-       states stay readable on one unit */
+       red until the burn runs out. Dots sit on their own row BELOW the
+       cloak dot and the build bar (y+r+6.8) so cloaked+slowed stays
+       readable and the 3 px bar band is not overwritten */
     if(u.states&&u.states.length){
       var b=0,sl=0;
       for(var si=0;si<u.states.length;si++){var s=u.states[si];if(s.t>tm)break;b=s.b;sl=s.sl;}
       if((b&4)!==0){ /* EMP shock */
         cx.fillStyle="#ffd21f";
-        cx.beginPath();cx.arc(x-r+1.5,y+r+2.5,1.6,0,7);cx.fill();
+        cx.beginPath();cx.arc(x-r+1.5,y+r+6.8,1.6,0,7);cx.fill();
       }
       if((b&2)!==0){ /* disarm */
         cx.fillStyle="#9aa0a6";
-        cx.beginPath();cx.arc(x+r-1.5,y+r+2.5,1.6,0,7);cx.fill();
+        cx.beginPath();cx.arc(x+r-1.5,y+r+6.8,1.6,0,7);cx.fill();
       }
       if(sl>0){ /* slow: alpha ∝ stacked slow damage */
         cx.fillStyle="#a04bff";
         cx.globalAlpha=Math.min(1,.25+.75*sl);
-        cx.beginPath();cx.arc(x,y+r+2.5,1.6,0,7);cx.fill();
+        cx.beginPath();cx.arc(x,y+r+6.8,1.6,0,7);cx.fill();
         cx.globalAlpha=1;
       }
       if((b&1)!==0){ /* on fire: whole icon flashes red */
@@ -765,6 +767,15 @@ function draw(model,tm){
           cx.fillStyle="rgba(255,48,20,.55)";
           cx.beginPath();cx.arc(x,y,r+1.5,0,7);cx.fill();
         }
+      }
+      /* EMP'd anti-nuke: the icon flashes red in step with the coverage
+         circle — a stunned launcher cannot intercept, that must be visible
+         from the icon layer too */
+      if(u.antiNuke>0&&(b&4)!==0&&Math.floor(wallNow/180)%2===0){
+        cx.strokeStyle="rgba(255,50,40,.9)";
+        cx.lineWidth=1.5;
+        cx.beginPath();cx.arc(x,y,r+1.5,0,7);cx.stroke();
+        cx.lineWidth=1;
       }
     }
     /* fallback shield charge bar (right of the icon, full icon height, 3 px):
@@ -1087,8 +1098,11 @@ function installModel(model){
   MODEL=model;
   document.getElementById("timeline").max=model.END;
   /* switching artifacts drops the render-signature caches: the counts
-     alone must not decide that feed/chat look "unchanged" across replays */
-  ["feed","chat"].forEach(function(id){var el=document.getElementById(id);if(el)el._sig=null;});
+     alone must not decide that feed/chat/grid look "unchanged" across
+     replays — the per-player grid's sig at t=0 is the constant "init"
+     on every model, so without this it keeps the previous replay's rows
+     until the first seek */
+  ["feed","chat","unitCounts"].forEach(function(id){var el=document.getElementById(id);if(el){el._sig=null;el._statSig=null;}});
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
@@ -1122,6 +1136,10 @@ function warnMissingIcons(model){
       txt:"Missing unit icons (shown as backup circles): "+groups.join(", ")});
     model.feedData.sort(function(a,b){return a.tm-b.tm;});
     var el=document.getElementById("feed");if(el)el._sig=null;
+    /* the governor skips draws while paused and the timeline is untouched,
+       so a page left auto-paused after load would never show the warn —
+       force one frame if the user has not started playing yet */
+    if(MODEL===model && !playing) drawFrame();
   },2500);
 }
 

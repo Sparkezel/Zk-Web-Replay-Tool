@@ -53,8 +53,8 @@ export interface UnitDefInfo {
   shieldRadius?: number;
   /** Shield-type weapon max charge ("shieldPower") */
   shieldPower?: number;
-  /** anti-nuke interception radius in elmos (staticantinuke/whirlwind:
-   *  ZK nuke_coverage customparam, e.g. 2500); the viewer always paints the
+  /** anti-nuke interception radius in elmos (staticantinuke is the only
+   *  nuke_coverage carrier in ZK: 2500); the viewer always paints the
    *  coverage circle of a completed antinuke */
   antiNukeCoverage?: number;
 }

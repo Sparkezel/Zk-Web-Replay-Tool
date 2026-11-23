@@ -712,18 +712,26 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
   ] });
   snap.events.push({ kind: "spawn", frame: 6, unitID: 11, int1: 20, int2: 0, int3: -1 });
-  // an Eos tactical nuke: a stockpile UNIT whose death IS the detonation
+  // a Firewalker shell: ZK-classified napalm weapon -> ground napalm at
+  // impact (after the classifier fix the recorded flag — not bare area
+  // damage — gates the class, matching the widget's nd column)
+  snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16, napalm: true });
+  snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
+    samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
+  // corner until liftoff, so its death must NOT anchor the blast — the
+  // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
+  // sample. Unit 12 below is the regression probe: it dies at the corner.
   snap.unitDefs.set(21, { defID: 21, name: "tacnuke", metalCost: 0, health: 100, canMove: true, iconType: "cruisemissilesmall", humanName: "Eos" });
   snap.units.set(12, { unitID: 12, defID: 21, samples: [
-    { frame: 100, x: 8192, z: 8192, hp: 255, build: 255 },
-    { frame: 294, x: 9500, z: 9500, hp: 255, build: 255 },
+    { frame: 100, x: 16384, z: 16384, hp: 255, build: 255 },
+    { frame: 294, x: 16384, z: 16384, hp: 255, build: 255 },
   ] });
   snap.events.push({ kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 });
   snap.events.push({ kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 });
-  // a Firewalker shell: area-damage projectile -> ground napalm at impact
-  snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16 });
-  snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
-    samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  snap.weaponDefs.set(31, { defID: 31, name: "tacnuke_weapon", type: "MissileLauncher", range: 900, aoe: 192 });
+  snap.projectiles.set(102, { proID: 102, weaponDefID: 31, projClass: 4, ownerTeam: 1, startFrame: 294,
+    samples: [{ frame: 294, x: 8192, z: 8192, y: 200 }, { frame: 300, x: 9000, z: 9100, y: 0 }] });
   // superweapon news: a Zenith nanoframe appearing
   snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
@@ -743,12 +751,15 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // anti-nuke coverage straight from the def
   assert.equal(model.units.find((u) => u.id === 11)!.antiNuke, 2500);
 
-  // Eos detonation at the last tracked position, in-game AOE radius
+  // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
+  // radius from WDEF aoe; the missile unit's corner death must NOT paint one
+  assert.equal(model.explosions.length, 1, "only the flight's explosion — no corner blast from the unit death");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
-  assert.ok(Math.abs(eos!.t - 10) < 0.01, "detonation at the death frame (300/30)");
-  assert.ok(eos!.x > 0.5 && eos!.y > 0.5, "detonation at the last track sample");
+  assert.ok(Math.abs(eos!.t - 10) < 0.01, "detonation at the warhead impact (frame 300/30)");
+  assert.ok(Math.abs(eos!.x - 9000 / 16384) < 0.01 && Math.abs(eos!.y - 9100 / 16384) < 0.01,
+    "explosion at the flight's impact sample, not the missile unit's staging corner (16384/16384)");
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);

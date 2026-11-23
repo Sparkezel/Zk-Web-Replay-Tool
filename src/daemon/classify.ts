@@ -56,12 +56,15 @@ const BEAM_TYPES = new Set(["BeamLaser", "LaserCannon"]);
 
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
-  if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;
 
-  // ground napalm (area damage: Firewalker shells, Inferno warheads) is
-  // always recorded — the viewer paints the patch at the flight's impact,
-  // and the range heuristics below would drop short-range cannons
-  if ((w.areaDamageRadius ?? 0) > 0) return 2;
+  // ground napalm (ZK's own classification: description / lups fx, not merely
+  // any area damage) is always recorded BEFORE the junk-name list — ZK
+  // prefixes weapon names with the unit key, so legit napalm weapons like
+  // Firewalker's `jumparty_napalm_sprayer` or disco's rave weapons match
+  // the "party" pattern and would otherwise be silently dropped.
+  if (w.napalm) return 2;
+
+  if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;
 
   const type = w.type ?? "";
   if (DROPPED_TYPES.has(type)) return 0;
