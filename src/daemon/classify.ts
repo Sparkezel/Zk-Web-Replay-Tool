@@ -14,6 +14,13 @@ export interface WeaponDefInfo {
   type?: string;
   range?: number;
   trajectoryHeight?: number;
+  /** explosion area of effect in elmos (gui_aoe override, then the engine's
+   *  damageAreaOfEffect — the same precedence as ZK's attack-AoE widget) */
+  aoe?: number;
+  /** napalm ground patch radius in elmos (area_damage = 1 weapons) */
+  areaDamageRadius?: number;
+  /** napalm ground patch duration in seconds */
+  areaDamageDuration?: number;
   customParams?: Record<string, string>;
 }
 
@@ -47,6 +54,11 @@ const BEAM_TYPES = new Set(["BeamLaser", "LaserCannon"]);
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
   if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;
+
+  // ground napalm (area damage: Firewalker shells, Inferno warheads) is
+  // always recorded — the viewer paints the patch at the flight's impact,
+  // and the range heuristics below would drop short-range cannons
+  if ((w.areaDamageRadius ?? 0) > 0) return 2;
 
   const type = w.type ?? "";
   if (DROPPED_TYPES.has(type)) return 0;

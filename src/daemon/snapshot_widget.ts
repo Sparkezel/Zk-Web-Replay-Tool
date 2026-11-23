@@ -56,7 +56,35 @@ local excludedUnitIDs = {}
 -- UDEF section and decides circle vs fallback bar in the viewer
 local shieldPowerByDef = {}
 
-local function emit(json)
+-- live per-unit states (slow/EMP/disarm/fire): last-emitted snapshot per
+-- unit for sparsity, plus the overflow rows for the current probe (the
+-- flush emits them chunked under the engine's console-line cap, exactly
+-- like pos rows; each row carries its own frame)
+-- forward declaration: flushStatRows (below) emits through the same
+-- line-emitter as every other widget row — the local must exist before
+-- any function that references it is COMPILED, or the reference compiles
+-- as a nil global and blows up at the first stat flush
+local emit
+
+local lastStates = {}
+local statRows = {}
+local function flushStatRows()
+  if #statRows == 0 then return end
+  local STAT_LINE_BUDGET = 2048
+  local out, len = {}, 0
+  for i = 1, #statRows do
+    if len + #statRows[i] + 1 > STAT_LINE_BUDGET then
+      emit('{"t":"stat","p":[' .. table.concat(out, ",") .. ']}')
+      out, len = {}, 0
+    end
+    out[#out + 1] = statRows[i]
+    len = len + #statRows[i] + 1
+  end
+  if #out > 0 then emit('{"t":"stat","p":[' .. table.concat(out, ",") .. ']}') end
+  statRows = {}
+end
+
+function emit(json)
   Spring.Echo("ZKR " .. json)
 end
 
@@ -140,9 +168,16 @@ local function maybeUdef(defID)
   if shieldRadius ~= nil then
     sr = ',"sr":' .. shieldRadius .. ',"sp":' .. shieldPower
   end
+  -- anti-nuke coverage: ZK's own coverage widget reads the same param
+  -- (staticantinuke: nuke_coverage = 2500 elmos); units without it (the
+  -- missiles themselves, fake launchers) simply omit the field
+  local cpU = d.customParams or d.customparams or {}
+  local anc = tonumber(cpU.nuke_coverage)
+  local an = ""
+  if anc ~= nil then an = ',"anc":' .. anc end
   emit('{"t":"udef","d":' .. defID .. ',"n":"' .. d.name .. '","m":' .. num(d.metalCost) ..
     ',"hp":' .. num(d.health) .. ',"mv":' .. (d.canMove and 1 or 0) ..
-    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. '}')
+    ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. an .. '}')
 end
 
 local function maybeWdef(defID)
@@ -151,8 +186,18 @@ local function maybeWdef(defID)
   local d = WeaponDefs[defID]
   if d == nil then return end
   local cp = d.customParams or {}
+  -- explosion AOE: ZK's attack-AoE widget's precedence (gui_aoe override,
+  -- then the engine's damageAreaOfEffect); napalm ground patches carry
+  -- their own radius/duration separately (area_damage = 1)
+  local aoe = tonumber(cp.gui_aoe) or tonumber(d.damageAreaOfEffect) or 0
+  local adr, adu = 0, 0
+  if cp.area_damage ~= nil then
+    adr = tonumber(cp.area_damage_radius) or 0
+    adu = tonumber(cp.area_damage_duration) or 0
+  end
   emit('{"t":"wdef","d":' .. defID .. ',"n":"' .. (d.name or "") .. '","w":"' .. (d.type or "") ..
     '","r":' .. num(d.range) .. ',"th":' .. num(d.trajectoryHeight) ..
+    ',"aoe":' .. num(aoe) .. ',"adr":' .. num(adr) .. ',"adu":' .. num(adu) ..
     ',"cp":{"isnuke":"' .. tostring(cp.isnuke or "") ..
     '","interceptor":"' .. tostring(cp.interceptor or "") .. '"}}')
 end
@@ -184,6 +229,7 @@ function widget:UnitCreated(unitID, unitDefID, unitTeam, builderID)
 end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
+  lastStates[unitID] = nil
   if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
   if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
@@ -276,6 +322,11 @@ local function classifyWeapon(d, cp)
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
      name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
+  -- ground napalm (area damage: Firewalker shells, Inferno warheads) MUST be
+  -- recorded whatever its weapon type — the shell is a short-range cannon that
+  -- the range heuristics below would drop, and the viewer paints the patch
+  -- at the flight's impact. Class 2 (artillery) fits the arc
+  if cp ~= nil and cp.area_damage == "1" then return 2 end
   local wtype = d.type or ""
   if DROPPED_TYPES[wtype] then return 0 end
   local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil
@@ -372,9 +423,36 @@ function widget:GameFrame(frame)
       if rowsLen + #row + 1 > POS_LINE_BUDGET then flushRows() end
       rows[#rows + 1] = row
       rowsLen = rowsLen + #row + 1
+      -- LIVE STATES (slow / EMP shock / disarm / on fire) are sparse events,
+      -- not per-sample columns: emitted only when the bit set changes or the
+      -- slow level crosses a 1/16 step (the purple dot fades in as slow
+      -- damage stacks; EMP and disarm only matter at 100% effect)
+      local meta = lastStates[uid]
+      local slq = math.floor((tonumber(Spring.GetUnitRulesParam(uid, "slowState") or "0") + 0.03125) * 16)
+      if slq < 0 then slq = 0 end
+      if slq > 16 then slq = 16 end
+      local bits = 0
+      if (Spring.GetUnitRulesParam(uid, "on_fire") or "0") == "1" then bits = bits + 1 end
+      if (Spring.GetUnitRulesParam(uid, "disarmed") or "0") == "1" then bits = bits + 2 end
+      -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
+      -- build-up is ignored by design - the effect only reads at 100%)
+      local stunned = select(1, Spring.GetUnitIsStunned(uid))
+      if stunned == true then bits = bits + 4 end
+      if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
+        -- state semantics need no "all zero" baseline row: the decode treats
+        -- everything before the first event as healthy; but a transition BACK
+        -- to zero must be recorded, so the nz flag tracks whether the unit has
+        -- ever appeared affected
+        local wasNz = meta ~= nil and (meta.bits ~= 0 or meta.slq ~= 0)
+        if (bits ~= 0 or slq ~= 0 or wasNz) then
+          statRows[#statRows + 1] = "[" .. uid .. "," .. frame .. "," .. bits .. "," .. slq .. "]"
+        end
+        lastStates[uid] = { bits = bits, slq = slq }
+      end
     end
   end
   flushRows()
+  flushStatRows(frame)
   local projs = Spring.GetAllProjectiles()
   for i = 1, #projs do
     local pid = projs[i]

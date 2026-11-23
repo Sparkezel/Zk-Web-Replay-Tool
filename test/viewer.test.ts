@@ -703,6 +703,65 @@ test("commander morph reads chassis + level, cancelled nanoframes read cancelled
   assert.equal(m6.metalValue, 1150, "level-1 value = 1100 base + first morph cost");
 });
 
+
+test("states, antinuke coverage, missile explosions, napalm and superweapon news decode", async () => {
+  const snap = syntheticSnapshot();
+  // anti-nuke launcher with ZK's real coverage (staticantinuke 2500 elmos)
+  snap.unitDefs.set(20, { defID: 20, name: "staticantinuke", metalCost: 900, health: 2000, canMove: false, iconType: "antinuke", humanName: "Antinuke", antiNukeCoverage: 2500 });
+  snap.units.set(11, { unitID: 11, defID: 20, samples: [
+    { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 11, int1: 20, int2: 0, int3: -1 });
+  // an Eos tactical nuke: a stockpile UNIT whose death IS the detonation
+  snap.unitDefs.set(21, { defID: 21, name: "tacnuke", metalCost: 0, health: 100, canMove: true, iconType: "cruisemissilesmall", humanName: "Eos" });
+  snap.units.set(12, { unitID: 12, defID: 21, samples: [
+    { frame: 100, x: 8192, z: 8192, hp: 255, build: 255 },
+    { frame: 294, x: 9500, z: 9500, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 });
+  // a Firewalker shell: area-damage projectile -> ground napalm at impact
+  snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16 });
+  snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
+    samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  // superweapon news: a Zenith nanoframe appearing
+  snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
+  snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
+  // live states: unit 1 fully EMP-stunned and slowed to 3/16 at frame 120
+  snap.states = [{ unitID: 1, frame: 120, bits: 4, slow: 3 / 16 }];
+
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+
+  // states travel through pack -> parse with the slow fraction intact
+  const st = model.units.find((u) => u.id === 1)!.states;
+  assert.equal(st.length, 1, "state transition recorded");
+  assert.equal(st[0]!.b, 4, "EMP bit");
+  assert.ok(Math.abs(st[0]!.sl - 3 / 16) < 1e-9, "slow fraction survives the u8 quantization");
+  assert.equal(st[0]!.t, 4, "state time in play-seconds");
+
+  // anti-nuke coverage straight from the def
+  assert.equal(model.units.find((u) => u.id === 11)!.antiNuke, 2500);
+
+  // Eos detonation at the last tracked position, in-game AOE radius
+  const eos = model.explosions.find((e) => e.r === 192);
+  assert.ok(eos, "Eos explosion present");
+  assert.equal(eos!.fade, "fast");
+  assert.ok(Math.abs(eos!.t - 10) < 0.01, "detonation at the death frame (300/30)");
+  assert.ok(eos!.x > 0.5 && eos!.y > 0.5, "detonation at the last track sample");
+
+  // ground napalm from the shell's impact, game radius/duration
+  const np = model.napalm.find((n) => n.r === 64);
+  assert.ok(np, "napalm patch present");
+  assert.equal(np!.dur, 16);
+  assert.ok(Math.abs(np!.t - 56 / 30) < 0.05,
+    "napalm starts at the impact (frames 50/56 -> last sample)");
+
+  // superweapon construction news in the feed
+  assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),
+    "superweapon news line");
+});
+
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
   assert.equal(ZkrReplay.unitValueClass("energysolar", "energy_med"), "econ");
   assert.equal(ZkrReplay.unitValueClass("staticmex", "mex"), "econ");

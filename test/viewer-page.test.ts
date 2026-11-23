@@ -41,7 +41,7 @@ function pageSnapshot() {
     unitDefs: new Map([
       [10, { defID: 10, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
       [11, { defID: 11, name: "solar", humanName: "Solar Collector", metalCost: 55, health: 150, canMove: false, iconType: "energysolar" }],
-      [12, { defID: 12, name: "msp", humanName: "Strike Flea", metalCost: 90, health: 100, canMove: true, iconType: "spiderscout" }],
+      [12, { defID: 12, name: "staticantinuke", humanName: "Antinuke", metalCost: 900, health: 2000, canMove: false, iconType: "antinuke", antiNukeCoverage: 2500 }],
     ]),
     weaponDefs: new Map(),
     events: [
@@ -53,6 +53,13 @@ function pageSnapshot() {
     gameOvers: [{ frame: 2700, winners: [0] }],
     projectiles: new Map(),
     links: new Map(),
+    /* live states on unit 1 (all three bits + half slow at f200): the draw
+       branches for the state dots and the on-fire red flash must run in the
+       page harness without throwing */
+    states: [
+      { unitID: 1, frame: 200, bits: 7, slow: 0.5 },
+      { unitID: 4, frame: 100, bits: 4, slow: 0 },
+    ],
   };
 }
 

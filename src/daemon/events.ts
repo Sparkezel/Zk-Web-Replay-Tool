@@ -53,6 +53,21 @@ export interface UnitDefInfo {
   shieldRadius?: number;
   /** Shield-type weapon max charge ("shieldPower") */
   shieldPower?: number;
+  /** anti-nuke interception radius in elmos (staticantinuke/whirlwind:
+   *  ZK nuke_coverage customparam, e.g. 2500); the viewer always paints the
+   *  coverage circle of a completed antinuke */
+  antiNukeCoverage?: number;
+}
+
+/** sparse live-state transition per unit: slow (fades in as it stacks),
+ *  EMP shock / disarm (only fully taking effect reads) and on-fire */
+export interface StateRecord {
+  unitID: number;
+  frame: number;
+  /** 1 = on fire, 2 = disarmed, 4 = EMP-stunned (100% effect only) */
+  bits: number;
+  /** slow fraction 0..1, quantized to 1/16 steps by the widget */
+  slow: number;
 }
 
 export interface PosSample {
@@ -137,6 +152,8 @@ export interface SnapshotData {
   gameOvers: Array<{ frame: number; winners: number[] }>;
   /** map metal spots (from the mex placement gadget's game-rules params) */
   metalSpots: Array<{ x: number; z: number; metal?: number }>;
+  /** sparse per-unit state transitions (slow / EMP / disarm / fire) */
+  states: StateRecord[];
   startboxes?: StartboxData;
 }
 
@@ -153,6 +170,7 @@ export function newSnapshot(): SnapshotData {
     weaponDefs: new Map(),
     gameOvers: [],
     metalSpots: [],
+    states: [],
   };
 }
 
@@ -216,6 +234,7 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         cloakRadius: ev["cr"] !== undefined && ev["cr"] !== null ? num(ev["cr"]) : undefined,
         shieldRadius: ev["sr"] !== undefined && ev["sr"] !== null ? num(ev["sr"]) : undefined,
         shieldPower: ev["sp"] !== undefined && ev["sp"] !== null ? num(ev["sp"]) : undefined,
+        antiNukeCoverage: ev["anc"] !== undefined && ev["anc"] !== null ? num(ev["anc"]) : undefined,
       });
       return;
     }
@@ -227,6 +246,10 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         type: String(ev["w"] ?? ev["type"] ?? ""),
         range: ev["r"] !== undefined ? num(ev["r"]) : undefined,
         trajectoryHeight: ev["th"] !== undefined ? num(ev["th"]) : undefined,
+        // v2 columns: explosion AOE and the napalm ground patch (area damage)
+        aoe: ev["aoe"] !== undefined ? num(ev["aoe"]) : undefined,
+        areaDamageRadius: ev["adr"] !== undefined ? num(ev["adr"]) : undefined,
+        areaDamageDuration: ev["adu"] !== undefined ? num(ev["adu"]) : undefined,
         customParams: (ev["cp"] ?? undefined) as Record<string, string> | undefined,
       });
       return;
@@ -330,6 +353,21 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         z: num(ev["z"], 0),
         metal: ev["m"] !== undefined && ev["m"] !== null ? num(ev["m"], 0) : undefined,
       });
+      return;
+    }
+    case "stat": {
+      // sparse per-unit state transitions, batched by the widget per probe:
+      // p = [[unitID, frame, bits, slowQ], ...]; bits 1=fire 2=disarm 4=EMP,
+      // slowQ is the 1/16-quantized slow fraction
+      for (const row of (ev["p"] ?? []) as Array<[number, number, number, number]>) {
+        if (!Array.isArray(row) || row.length < 4) continue;
+        snap.states.push({
+          unitID: num(row[0], -1),
+          frame: num(row[1], 0),
+          bits: num(row[2], 0),
+          slow: num(row[3], 0) / 16,
+        });
+      }
       return;
     }
     case "wrk": {

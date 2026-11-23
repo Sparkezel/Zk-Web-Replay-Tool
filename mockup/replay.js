@@ -459,6 +459,25 @@
     return p;
   }
 
+  /** sparse per-unit state transitions (slow/EMP/disarm/fire):
+   *  [frame u32][unitID u32][bits u8][slowQ u8]; bits 1=fire, 2=disarm,
+   *  4=EMP-stunned, slowQ = slowFrac * 16. Only transitions are recorded —
+   *  a unit with no records was never affected. */
+  function decodeStates(dv, u8) {
+    const p = { records: [] };
+    if (u8.length < 4) return p;
+    let o = 0;
+    const n = dv.getUint32(o, true); o += 4;
+    for (let i = 0; i < n; i++) {
+      const frame = dv.getUint32(o, true); o += 4;
+      const unitID = dv.getUint32(o, true); o += 4;
+      const bits = dv.getUint8(o); o += 1;
+      const slowQ = dv.getUint8(o); o += 1;
+      p.records.push({ frame, unitID, bits, slow: slowQ / 16 });
+    }
+    return p;
+  }
+
   async function parse(buf) {
     const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
     if (u8.length < 4 || u8[0] !== 0x5a || u8[1] !== 0x4b || u8[2] !== 0x52) {
@@ -510,6 +529,7 @@
       evnt: raw["EVNT"] ? decodeEvnt(new DataView(raw["EVNT"].buffer, raw["EVNT"].byteOffset, raw["EVNT"].byteLength), raw["EVNT"]) : null,
       proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"], versionOf("PROJ")) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
+      states: raw["STAT"] ? decodeStates(new DataView(raw["STAT"].buffer, raw["STAT"].byteOffset, raw["STAT"].byteLength), raw["STAT"]) : null,
     };
   }
 
@@ -583,6 +603,9 @@
         // fallback charge bar only) and its max charge (shieldPower)
         shieldRadius: row.length > 8 && row[8] > 0 ? row[8] : undefined,
         shieldPower: row.length > 9 && row[9] > 0 ? row[9] : undefined,
+        // UDEF v4 column: anti-nuke interception radius (ZK nuke_coverage;
+        // ZK's own coverage widget reads the same value)
+        antiNukeCoverage: row.length > 10 && row[10] > 0 ? row[10] : undefined,
       });
     }
     const defNameOfUnit = (unitID) => {
@@ -912,6 +935,15 @@
       }
     }
 
+    /* sparse per-unit state transitions (slow / EMP / disarm / on-fire);
+     * grouped per unit and pre-converted to seconds — the arrays are tiny
+     * and already in frame order, a linear scan per drawn unit is free */
+    const statesByUnit = new Map();
+    for (const r of (artifact.states ? artifact.states.records : [])) {
+      if (!statesByUnit.has(r.unitID)) statesByUnit.set(r.unitID, []);
+      statesByUnit.get(r.unitID).push({ t: toSec(r.frame), b: r.bits, sl: r.slow });
+    }
+
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
       /* defID unresolvable in UDEF AND no spawn event: engine-side helper
@@ -942,6 +974,12 @@
            smaller personal shields only feed the fallback charge bar */
         shieldRadius: info ? info.shieldRadius : undefined,
         shieldPower: info ? info.shieldPower : undefined,
+        /* anti-nuke interception radius in elmos — the viewer paints the
+         * coverage circle of every completed antinuke, always */
+        antiNuke: info ? info.antiNukeCoverage : undefined,
+        /* sparse state track: [{t, b, sl}] — b bits: 1 fire, 2 disarm, 4 EMP;
+         * sl = slow fraction (the purple dot fades in as slow stacks) */
+        states: statesByUnit.get(u.unitID) ?? [],
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
@@ -1028,6 +1066,60 @@
       projectiles.push(mkPath(seg));
     }
 
+    /* ---- superweapon events, missile explosions, ground napalm ---- */
+    /* a superweapon nanoframe appearing is THE news of the game: the def
+       names are ZK's own (raveparty/zenith/mahlazer/striderdetriment) plus
+       the strategic nuke launcher (staticnuke, "Trinity") */
+    const SUPERWEAPON_DEFS = new Set(["raveparty", "zenith", "mahlazer", "striderdetriment", "staticnuke"]);
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind !== "spawn") continue;
+      const info = udef.get(r.int1);
+      if (info && SUPERWEAPON_DEFS.has(info.name)) {
+        feedData.push({
+          tm: toSec(r.frame), cls: "news",
+          txt: (info.humanName || info.name) + " has begun construction!",
+        });
+      }
+    }
+
+    /* Eos / Shockley / Quake / Inferno are stockpile UNITS: their death IS
+       the detonation, at the last tracked position. Radii = the def's
+       explosion areaOfEffect (tacnuke 192, empmissile 280, seismic 640,
+       napalmmissile 512 elmos) — fixed values from the game defs, so the
+       viewer does not depend on WDEF carrying them.
+       fade "fast" = a wall-clock flash (~5 frames at any speed);
+       "normal" = decays in sim seconds at the stated duration. */
+    const EXPLOSION_DEFS = {
+      tacnuke: { col: "255,72,56", r: 192, fade: "fast", dur: 0 },
+      empmissile: { col: "72,214,255", r: 280, fade: "fast", dur: 0 },
+      seismic: { col: "88,255,128", r: 640, fade: "fast", dur: 0 },
+      napalmmissile: { col: "255,138,40", r: 512, fade: "normal", dur: 8 },
+    };
+    const explosions = [];
+    for (const u of units) {
+      const ex = EXPLOSION_DEFS[u.def];
+      if (ex && u.died > 0 && u.track.length) {
+        const pos = u.track[u.track.length - 1];
+        explosions.push({ t: u.died, x: pos.x, y: pos.y, r: ex.r, col: ex.col, fade: ex.fade, dur: ex.dur });
+      }
+    }
+    /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
+       napalm patches are area-damage weapons (Firewalker shells 64 elmos /
+       16 s, Inferno warheads 256 / 45 s in the game defs) appearing at the
+       projectile's last sample (impact) */
+    const napalm = [];
+    for (const p of projectiles) {
+      const w = wdef.get(p.weaponDefID);
+      if (!w || !p.path.length) continue;
+      const imp = p.path[p.path.length - 1];
+      if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
+      }
+      if ((w.adr ?? 0) > 0) {
+        napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
+      }
+    }
+
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({
       djinnID: l.djinnID, lampID: l.lampID, team: l.team,
       open: toSec(l.openFrame),
@@ -1081,6 +1173,9 @@
       startPolys,
       teamNames, teamMeta, players, chatData,
       votes, metalSpots,
+      /* superweapon detonations (Eos/Shockley/Quake/Inferno + Zenith
+         meteors) and ground napalm patches — page paints both on the map */
+      explosions, napalm,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
