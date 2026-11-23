@@ -781,9 +781,10 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
     "Trinity explosion from staticnuke_crblmssl at its impact");
   // in-flight markers: only the Trinity warhead and the antinuke interceptor
-  // carry one (drawn as a slight team-coloured border at the flight head)
-  assert.equal(model.projectiles.find((p) => p.icon === "nuke")!.weaponDefID, 33,
-    "staticnuke_crblmssl flight gets the nuke.png marker");
+  // carry one (drawn as a slight team-coloured border at the flight head);
+  // the warhead uses the missile's own nuke_missile icon, not the structure's
+  assert.equal(model.projectiles.find((p) => p.icon === "nuke_missile")!.weaponDefID, 33,
+    "staticnuke_crblmssl flight gets the nuke_missile.png marker");
   assert.equal(model.projectiles.find((p) => p.icon === "antinuke_proj")!.weaponDefID, 34,
     "the antinuke interceptor flight gets the antinuke_proj.png marker");
   assert.ok(model.projectiles.filter((p) => p.icon).length === 2,

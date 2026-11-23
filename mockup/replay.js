@@ -1082,13 +1082,15 @@
          antinuke's interceptor — everything else stays as the plain
          trail + blip. ZK prefixes names with the unit key
          (staticnuke_crblmssl / staticantinuke_amd_rocket), so substring
-         match; "staticantinuke" deliberately checked first. */
+         match; "staticantinuke" deliberately checked first. The warhead
+         uses the missile's own icon (nuke_missile.png, converted from
+         ZK's icons/nuke_missile.dds), NOT the Trinity structure's. */
       const wf = wdef.get(p.weaponDefID);
       let flIcon;
       if (wf) {
         const wname = String(wf.name || "").toLowerCase();
         if (wname.includes("staticantinuke")) flIcon = "antinuke_proj";
-        else if (wname.includes("staticnuke")) flIcon = "nuke";
+        else if (wname.includes("staticnuke")) flIcon = "nuke_missile";
       }
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
