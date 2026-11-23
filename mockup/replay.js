@@ -1082,22 +1082,27 @@
       }
     }
 
-    /* Eos / Shockley / Quake / Inferno: the stockpiled missile UNITS stage
-       at the map corner between the launch command and liftoff, so their
-       death position must NOT anchor the blast (and a silenced silo would
-       paint a fake one at the corner). The real impact is the warhead
-       PROJECTILE's last sample — the wdef names are tacnuke_weapon etc.,
-       so match on the base name. Radii: WDEF aoe when recorded, else the
-       fixed game values (tacnuke 192, empmissile 280, seismic 640,
-       napalmmissile 512 elmos).
+    /* Eos / Shockley / Quake / Inferno / Trinity: the stockpiled missile
+       UNITS stage at the map corner between the launch command and liftoff,
+       so their death position must NOT anchor the blast (and a silenced
+       silo would paint a fake one at the corner). The real impact is the
+       warhead PROJECTILE's last sample. ZK prefixes each weapon name with
+       the unit key and sometimes suffixes its own ("empmissile_emp_weapon",
+       "seismic_seismic_weapon", "staticnuke_crblmssl"), so match by
+       substring, never by equality — an exact match silently drops all
+       Shockley/Quake/Trinity detonations on real artifacts. Radii: WDEF
+       aoe when recorded, else the fixed game values (tacnuke 96, emp 140,
+       seismic 320, napalmmissile 256, Trinity 960 elmos).
        fade "fast" = a wall-clock flash (~5 frames at any speed);
        "normal" = decays in sim seconds at the stated duration. */
-    const EXPLOSION_DEFS = {
-      tacnuke: { col: "255,72,56", r: 192, fade: "fast", dur: 0 },
-      empmissile: { col: "72,214,255", r: 280, fade: "fast", dur: 0 },
-      seismic: { col: "88,255,128", r: 640, fade: "fast", dur: 0 },
-      napalmmissile: { col: "255,138,40", r: 512, fade: "normal", dur: 8 },
-    };
+    const EXPLOSION_DEFS = [
+      ["tacnuke", { col: "255,72,56", r: 96, fade: "fast", dur: 0 }],
+      ["empmissile", { col: "72,214,255", r: 140, fade: "fast", dur: 0 }],
+      ["seismic", { col: "88,255,128", r: 320, fade: "fast", dur: 0 }],
+      ["napalmmissile", { col: "255,138,40", r: 256, fade: "normal", dur: 8 }],
+      /* Trinity, the strategic nuke launcher - same red, its 960-elmo blast */
+      ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0 }],
+    ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
        napalm patches are FIRE only — ZK's lups_napalm classification
@@ -1111,9 +1116,9 @@
       const w = wdef.get(p.weaponDefID);
       if (!w || !p.path.length) continue;
       const imp = p.path[p.path.length - 1];
-      const ex = EXPLOSION_DEFS[String(w.name || "").replace(/_weapon$/, "")];
+      const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().includes(n));
       if (ex) {
-        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex.r, col: ex.col, fade: ex.fade, dur: ex.dur });
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur });
       }
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
