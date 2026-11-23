@@ -329,6 +329,37 @@
     return c;
   }
 
+  /** The nuke / antinuke-interceptor in-flight markers: the icon drawn as
+   *  a slight team-coloured BORDER only — no inner filling (a fully tinted
+   *  icon reads as a solid blob gliding along the trail). The tinted icon
+   *  is erased in the interior with a shrunken copy of itself
+   *  (destination-out), leaving its own silhouette as the border ring.
+   *  Shares tintIcon's LRU cache. */
+  function outlineIcon(img, color) {
+    if (!img || !img.complete || !img.naturalWidth || !color) return null;
+    const key = (img.src || "") + "|" + color + "|out";
+    if (tintCache.has(key)) {
+      const c = tintCache.get(key);
+      tintCache.delete(key);
+      tintCache.set(key, c);
+      return c;
+    }
+    const tinted = tintIcon(img, color);
+    if (!tinted) return null;
+    const c = document.createElement("canvas");
+    c.width = tinted.width; c.height = tinted.height;
+    const g = c.getContext("2d");
+    g.drawImage(tinted, 0, 0);
+    g.globalCompositeOperation = "destination-out";
+    const s = 0.66; /* erase the middle 66% -> ~17% silhouette border/side */
+    g.drawImage(tinted, c.width * (1 - s) / 2, c.height * (1 - s) / 2, c.width * s, c.height * s);
+    tintCache.set(key, c);
+    if (tintCache.size > TINT_CACHE_MAX) {
+      tintCache.delete(tintCache.keys().next().value);
+    }
+    return c;
+  }
+
   async function inflateSection(codec, payload) {
     if (codec === 0) return payload;
     if (codec !== 1) throw new Error("section codec " + codec + " is not supported in the browser; pack viewer artifacts with deflate");
@@ -1046,9 +1077,22 @@
     const PROJ_REUSE_GAP_FRAMES = 18;
     const projectiles = [];
     for (const p of (artifact.proj ? artifact.proj.paths : [])) {
+      /* two flights get their own on-map marker (drawn as a slight
+         team-coloured border by the page): the Trinity warhead and the
+         antinuke's interceptor — everything else stays as the plain
+         trail + blip. ZK prefixes names with the unit key
+         (staticnuke_crblmssl / staticantinuke_amd_rocket), so substring
+         match; "staticantinuke" deliberately checked first. */
+      const wf = wdef.get(p.weaponDefID);
+      let flIcon;
+      if (wf) {
+        const wname = String(wf.name || "").toLowerCase();
+        if (wname.includes("staticantinuke")) flIcon = "antinuke_proj";
+        else if (wname.includes("staticnuke")) flIcon = "nuke";
+      }
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
-        weaponDefID: p.weaponDefID, team: p.team,
+        weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
         born: toSec(seg[0].frame),
         end: toSec(seg[seg.length - 1].frame),
         path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
@@ -1248,7 +1292,7 @@
 
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
-    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon, outlineIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS, unitValueClass,
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,

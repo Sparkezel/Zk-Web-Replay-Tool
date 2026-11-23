@@ -780,6 +780,14 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   const trinity = model.explosions.find((e) => e.r === 960);
   assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
     "Trinity explosion from staticnuke_crblmssl at its impact");
+  // in-flight markers: only the Trinity warhead and the antinuke interceptor
+  // carry one (drawn as a slight team-coloured border at the flight head)
+  assert.equal(model.projectiles.find((p) => p.icon === "nuke")!.weaponDefID, 33,
+    "staticnuke_crblmssl flight gets the nuke.png marker");
+  assert.equal(model.projectiles.find((p) => p.icon === "antinuke_proj")!.weaponDefID, 34,
+    "the antinuke interceptor flight gets the antinuke_proj.png marker");
+  assert.ok(model.projectiles.filter((p) => p.icon).length === 2,
+    "Eos/Shockley flights stay plain trails — no projectile-look marker");
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);
