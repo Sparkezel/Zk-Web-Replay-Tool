@@ -329,6 +329,37 @@
     return c;
   }
 
+  /** The nuke / antinuke-interceptor in-flight markers: the icon drawn as
+   *  a slight team-coloured BORDER only — no inner filling (a fully tinted
+   *  icon reads as a solid blob gliding along the trail). The tinted icon
+   *  is erased in the interior with a shrunken copy of itself
+   *  (destination-out), leaving its own silhouette as the border ring.
+   *  Shares tintIcon's LRU cache. */
+  function outlineIcon(img, color) {
+    if (!img || !img.complete || !img.naturalWidth || !color) return null;
+    const key = (img.src || "") + "|" + color + "|out";
+    if (tintCache.has(key)) {
+      const c = tintCache.get(key);
+      tintCache.delete(key);
+      tintCache.set(key, c);
+      return c;
+    }
+    const tinted = tintIcon(img, color);
+    if (!tinted) return null;
+    const c = document.createElement("canvas");
+    c.width = tinted.width; c.height = tinted.height;
+    const g = c.getContext("2d");
+    g.drawImage(tinted, 0, 0);
+    g.globalCompositeOperation = "destination-out";
+    const s = 0.66; /* erase the middle 66% -> ~17% silhouette border/side */
+    g.drawImage(tinted, c.width * (1 - s) / 2, c.height * (1 - s) / 2, c.width * s, c.height * s);
+    tintCache.set(key, c);
+    if (tintCache.size > TINT_CACHE_MAX) {
+      tintCache.delete(tintCache.keys().next().value);
+    }
+    return c;
+  }
+
   async function inflateSection(codec, payload) {
     if (codec === 0) return payload;
     if (codec !== 1) throw new Error("section codec " + codec + " is not supported in the browser; pack viewer artifacts with deflate");
@@ -1045,10 +1076,45 @@
        artifacts packed before the daemon-side fix render correctly too. */
     const PROJ_REUSE_GAP_FRAMES = 18;
     const projectiles = [];
+    /* the sent strategic missiles get ZK's own incoming-strike visualisa-
+     * tion (target circle + coloured head dot): Eos red, Shockley blue,
+     * Zeno purple, Quake green, Inferno orange - Trinity shares Eos's
+     * red. ZK names weapon defs "<unitkey>_<tag>", so match on the unit
+     * KEY (the first underline token), never the whole string: the
+     * Scylla's tactical-nuke torpedo is subtacmissile_tacnuke and a
+     * substring match would give every torpedo launch a strategic-strike
+     * target circle + fake Eos detonation (counter-review H1). */
+    const MISSILE_COLORS = [
+      ["tacnuke", "255,72,56"],
+      ["empmissile", "72,214,255"],
+      ["missileslow", "168,96,255"],
+      ["seismic", "88,255,128"],
+      ["napalmmissile", "255,138,40"],
+      ["staticnuke", "255,72,56"],
+    ];
     for (const p of (artifact.proj ? artifact.proj.paths : [])) {
+      /* two flights get their own on-map marker (drawn as a slight
+         team-coloured border by the page): the Trinity warhead and the
+         antinuke's interceptor — everything else stays as the plain
+         trail + blip. Key match on the unit-key prefix
+         (staticnuke_crblmssl / staticantinuke_amd_rocket). The warhead
+         uses the missile's own icon (nuke_missile.png, converted from
+         ZK's icons/nuke_missile.dds), NOT the Trinity structure's. */
+      const wf = wdef.get(p.weaponDefID);
+      let flIcon;
+      let mcol;
+      let maoe = 0;
+      if (wf) {
+        const wkey = String(wf.name || "").toLowerCase().split("_")[0];
+        if (wkey === "staticantinuke") flIcon = "antinuke_proj";
+        else if (wkey === "staticnuke") flIcon = "nuke_missile";
+        const mc = MISSILE_COLORS.find(([n]) => wkey === n);
+        if (mc) { mcol = mc[1]; maoe = wf.aoe ?? 0; }
+      }
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
-        weaponDefID: p.weaponDefID, team: p.team,
+        weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
+        mcol, maoe,
         born: toSec(seg[0].frame),
         end: toSec(seg[seg.length - 1].frame),
         path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
@@ -1087,10 +1153,10 @@
        so their death position must NOT anchor the blast (and a silenced
        silo would paint a fake one at the corner). The real impact is the
        warhead PROJECTILE's last sample. ZK prefixes each weapon name with
-       the unit key and sometimes suffixes its own ("empmissile_emp_weapon",
-       "seismic_seismic_weapon", "staticnuke_crblmssl"), so match by
-       substring, never by equality — an exact match silently drops all
-       Shockley/Quake/Trinity detonations on real artifacts. Radii: WDEF
+       the unit key and often its own ("empmissile_emp_weapon",
+       "seismic_seismic_weapon", "staticnuke_crblmssl"), so match on the
+       unit KEY (the first underline token) - a substring would trap the
+       Scylla's subtacmissile_tacnuke torpedo as an Eos strike. Radii: WDEF
        aoe when recorded, else the fixed game values (tacnuke 96, emp 140,
        seismic 320, napalmmissile 256, Trinity 960 elmos).
        fade "fast" = a wall-clock flash (~5 frames at any speed);
@@ -1112,18 +1178,48 @@
        are area damage but NOT fire; they do not paint. Firewalker shells
        64 elmos / 16 s, Inferno warheads 256 / 45 s */
     const napalm = [];
+    /* an antinuke intercept kills the warhead MID-AIR, and the warhead's
+       flight would mark the intercept point as the strike - painting a
+       fake full-radius ground detonation (counter-review M2). Altitude
+       cannot tell it from a normal impact (tracked flights routinely end
+       far above ground: the last probe precedes impact); what identifies
+       a kill is the INTERCEPTOR: an amd_rocket flight whose own END
+       coincides, in time and space, with the warhead's end - measured on
+       The Hole, every real pair lands in the SAME probe frame (dt 0.00 s)
+       at 19-256 elmos, while a missed rocket's target survives and its
+       flight ends far away much later. */
+    const ICEPT_SPAN_SEC = 0.3, ICEPT_RADIUS = 300;
+    const rocketEnds = projectiles
+      .filter((p) => {
+        const w = wdef.get(p.weaponDefID);
+        return w && String(w.name || "").toLowerCase().split("_")[0] === "staticantinuke" && p.path.length;
+      })
+      .map((p) => ({ t: p.end, x: p.path[p.path.length - 1].x, z: p.path[p.path.length - 1].z }));
+    for (const p of projectiles) {
+      if (!p.mcol || !p.path.length) continue;
+      const imp = p.path[p.path.length - 1];
+      if (rocketEnds.some((r) => Math.abs(r.t - p.end) <= ICEPT_SPAN_SEC
+        && Math.hypot((r.x - imp.x) * wmw, (r.z - imp.z) * wmh) <= ICEPT_RADIUS)) {
+        p.intercepted = true;
+      }
+    }
     for (const p of projectiles) {
       const w = wdef.get(p.weaponDefID);
       if (!w || !p.path.length) continue;
       const imp = p.path[p.path.length - 1];
-      const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().includes(n));
-      if (ex) {
+      const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().split("_")[0] === n);
+      if (ex && !p.intercepted) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur });
       }
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
       }
       const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));
+      /* fire shells' last PROBE sample can sit hundreds of elmos above
+         impact (measured: real Firewalker/Kodachi/Dante flights end at
+         15-700 elmos), so the mid-air-intercept gate applies ONLY to the
+         strategic warheads (their tracked impacts all end at ~0), never
+         to ground fire */
       if (isFire && (w.adr ?? 0) > 0) {
         napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
       }
@@ -1248,7 +1344,7 @@
 
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt,
-    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon, outlineIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS, unitValueClass,
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
