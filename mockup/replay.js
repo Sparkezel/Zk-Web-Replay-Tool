@@ -280,6 +280,9 @@
     if (!iconBase || !iconType || typeof Image === "undefined") return null;
     if (!iconCache.has(iconType)) {
       const im = new Image();
+      /* a 404 (icon file not synced from game data) settles with
+         complete=true and naturalWidth=0 — the page detects that and
+         names the backup-circle units in the feed */
       im.src = iconBase + encodeURIComponent(iconType) + ".png";
       iconCache.set(iconType, im);
     }
@@ -291,27 +294,39 @@
      plain multiply keeps the black lines black while the grey interiors take
      the team hue. Results are cached offscreen per (src, colour). */
   const tintCache = new Map();
+  const TINT_CACHE_MAX = 1500;
   function tintIcon(img, color) {
     if (!img || !img.complete || !img.naturalWidth || !color) return null;
     const key = (img.src || "") + "|" + color;
-    if (!tintCache.has(key)) {
-      /* healthv2 feeds a shade per hp level, which would grow this cache
-         unbounded (12k+ offscreen canvases measured on a full sweep);
-         quantizing the shade below keeps live entries low, and the cap
-         guarantees the ceiling even with many icons */
-      if (tintCache.size > 600) tintCache.clear();
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const g = c.getContext("2d");
-      g.drawImage(img, 0, 0);
-      g.globalCompositeOperation = "multiply";
-      g.fillStyle = color;
-      g.fillRect(0, 0, c.width, c.height);
-      g.globalCompositeOperation = "destination-in";
-      g.drawImage(img, 0, 0);
+    if (tintCache.has(key)) {
+      /* LRU touch: re-insert as newest so a full hpv2 sweep evicts the
+         genuinely-cold canvases instead of mass-clearing (the old clear-all
+         at >600 entries caused periodic re-tint storms = the Otago stutter) */
+      const c = tintCache.get(key);
+      tintCache.delete(key);
       tintCache.set(key, c);
+      return c;
     }
-    return tintCache.get(key);
+    /* healthv2 feeds a shade per hp level, which would grow this cache
+       unbounded (12k+ offscreen canvases measured on a full sweep);
+       quantizing the shade (damageShade) keeps live entries low, and the
+       LRU cap guarantees the ceiling even with many icons */
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const g = c.getContext("2d");
+    g.drawImage(img, 0, 0);
+    g.globalCompositeOperation = "multiply";
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "destination-in";
+    g.drawImage(img, 0, 0);
+    tintCache.set(key, c);
+    /* evict oldest (first inserted) — a bounded amortized cost per frame
+       instead of the old nuke-everything */
+    if (tintCache.size > TINT_CACHE_MAX) {
+      tintCache.delete(tintCache.keys().next().value);
+    }
+    return c;
   }
 
   async function inflateSection(codec, payload) {

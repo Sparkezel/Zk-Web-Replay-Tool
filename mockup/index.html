@@ -85,12 +85,14 @@
   .feed li.kill b{color:var(--gold)}
   .feed time{float:right;font-variant-numeric:tabular-nums;color:#5b666d}
   .feed li.hit{background:rgba(224,90,78,.05)}
+  .feed li.warn b{color:#ffb84d}
   /* sticky poll card: pinned at the top of the feed while a vote runs */
   .feed li.vote-sticky{position:sticky;top:0;z-index:2;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;margin:4px 6px;color:var(--txt)}
   .feed li.vote-sticky .vt{font-weight:800;font-size:13.5px;letter-spacing:.4px}
-  .vbar{position:relative;background:#000;border-radius:3px;height:8px;margin:5px 0 4px;overflow:hidden}
+  .vrow{display:flex;align-items:center;gap:7px;margin:5px 0 4px}
+  .vbar{position:relative;flex:1;background:#000;border-radius:3px;height:8px;overflow:hidden}
   .vfill{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
-  .vcount{position:absolute;right:6px;top:-1px;font-size:10.5px;color:#cfd6da;text-shadow:0 1px 2px #000}
+  .vcount{flex:none;font-size:11px;font-variant-numeric:tabular-nums;color:#cfd6da}
   .vv .vopt{display:inline-block;margin-right:12px;font-size:11.5px;color:var(--dim)}
 
   /* ---- in-game chat ---- */
@@ -757,7 +759,7 @@ function voteCards(model,tm){
     });
     out+='<li class="vote-sticky">'+
       '<div class="vt" style="color:'+info.color+'">'+esc(v.subject.toUpperCase())+"</div>"+
-      '<div class="vbar"><div class="vfill" style="width:'+Math.round(pct*100)+"%;background:"+info.color+'"></div><span class="vcount">'+v.yes+"/"+v.needed+"</span></div>"+
+      '<div class="vrow"><div class="vbar"><div class="vfill" style="width:'+Math.round(pct*100)+"%;background:"+info.color+'"></div></div><span class="vcount">'+v.yes+"/"+v.needed+"</span></div>"+
       '<div class="vv"><span class="vopt">✓ '+ (yes.length?yes.join(", "):"—") +"</span>"+
       '<span class="vopt">✗ '+ (no.length?no.join(", "):"—") +"</span></div>"+
       "</li>";
@@ -815,6 +817,12 @@ function renderChat(model,tm){
 /* economy chart up to tm; artifact ecoPts: [{team,pts:[[s,val]..]}], synthetic: [[s,t1,t2]] */
 var ec=document.getElementById("eco"),ex=ec.getContext("2d");
 function drawEco(model,tm){
+  /* the history line to tm gains a couple of points per wall-minute: drawing
+     it every frame is pure waste. One stroke per whole second of replay time
+     looks identical — the eco is not a per-frame visual */
+  var bucket=Math.floor(tm);
+  if(ex._ecoBucket===bucket&&ex._ecoModel===model)return;
+  ex._ecoBucket=bucket;ex._ecoModel=model;
   ex.clearRect(0,0,ec.width,ec.height);
   var series=[];
   if(model.ecoPts.length&&model.ecoPts[0].team!==undefined){
@@ -848,9 +856,27 @@ pb.onclick=function(){if(!MODEL)return;playing=!playing;if(t>=MODEL.END)t=0;pb.t
 document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFrame();};
 function drawFrame(){if(!MODEL)return;fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
 var last=performance.now();
+/* frame governor: the rAF loop is what taxes weak CPUs.
+   - paused and the time not moved (no seek): nothing changed, draw nothing —
+     a paused page goes from 60 full redraws/s to zero;
+   - playing on a machine that cannot finish a frame in ~20 ms: render every
+     OTHER tick. The replay clock still advances every tick (playback speed is
+     unchanged), only canvas frames are dropped — exactly what a "drop frames
+     at high speed" strategy should do. */
+var lastDrawnT=null,lastDrawMs=0,oddTick=false;
 function loop(now){var dt=(now-last)/1000;last=now;
   if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
-  drawFrame();requestAnimationFrame(loop);}
+  var moved=playing||t!==lastDrawnT;
+  if(moved){
+    oddTick=!oddTick;
+    if(!(lastDrawMs>20&&oddTick)){
+      var t0=performance.now();
+      drawFrame();
+      lastDrawMs=performance.now()-t0;
+    }
+    lastDrawnT=t;
+  }
+  requestAnimationFrame(loop);}
 
 /* canvas backing store follows the CSS box (DPR-aware) - drawing is fully
    proportional on W/H, so circles stay circles at any panel width */
@@ -912,7 +938,23 @@ function lossStatsAt(model,team,tm){
 function renderUnitStats(model,live,tm){
   var el=document.getElementById("unitCounts");
   if(!el)return;
-  var teams=model.teams||[];
+  /* DOM innerHTML rebuilds are the expensive part (30 rows × colour math ×
+     60 fps = needless reflow): re-render at most once per wall second of
+     replay time, and skip identical pushes via a content signature */
+  var bucket=Math.floor(tm);
+  var sig=tm<1e-6?"init":String(bucket)+":"+(MODEL?MODEL.units.length:0)+":"+(curReplay?curReplay.art:"");
+  if(el._statSig===sig)return;
+  el._statSig=sig;
+  var teams=(model.teams||[]).slice();
+  /* team order, allyteam first: roster side of the same player sits beside
+     their ally teammates (winner rows group together) instead of the raw
+     team number scattering sides across the grid */
+  var allyOf={};
+  (model.players||[]).forEach(function(p){allyOf[p.team]=p.ally;});
+  teams.sort(function(a,b){
+    var aa=allyOf[a]===undefined?99:allyOf[a],ab=allyOf[b]===undefined?99:allyOf[b];
+    return aa-ab||a-b;
+  });
   var rows=teams.map(function(t){
     var st=live[t]||{n:0,combat:0,econ:0,other:0};
     var ls=model.synthetic?{n:0,v:0}:lossStatsAt(model,t,tm);
@@ -947,7 +989,37 @@ function installModel(model){
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
+  if(!model.synthetic)warnMissingIcons(model);
   t=0;pb.textContent="\u25b6 Play";playing=false;drawFrame();
+}
+
+/* icons load lazily on first draw; a failed/missing icon file settles with
+   complete=true and no pixels. Once every icon type the model uses has had
+   a moment to settle, name the units that fell back to backup circles in
+   the feed — otherwise an un-synced icon dir just silently degrades */
+function warnMissingIcons(model){
+  setTimeout(function(){
+    var miss=new Set();
+    model.units.forEach(function(u){
+      if(!u.icon)return;
+      var im=ZkrReplay.iconFor(u.icon);
+      if(!im||(im.complete&&!im.naturalWidth))miss.add(u.icon);
+    });
+    if(!miss.size)return;
+    var perIcon={};
+    model.units.forEach(function(u){
+      if(u.icon&&miss.has(u.icon)&&u.name)(perIcon[u.icon]=perIcon[u.icon]||[]).push(u.name);
+    });
+    var perIconSeen={};
+    var groups=[...miss].map(function(ic){
+      var names=(perIcon[ic]||[]).filter(function(n){if(perIconSeen[ic+n])return false;perIconSeen[ic+n]=1;return true;});
+      return names.length?names.join("/"):"("+ic+")";
+    });
+    model.feedData.push({tm:0,cls:"warn",
+      txt:"Missing unit icons (shown as backup circles): "+groups.join(", ")});
+    model.feedData.sort(function(a,b){return a.tm-b.tm;});
+    var el=document.getElementById("feed");if(el)el._sig=null;
+  },2500);
 }
 
 requestAnimationFrame(loop); /* start the animation loop */
