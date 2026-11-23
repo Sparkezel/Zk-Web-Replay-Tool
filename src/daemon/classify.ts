@@ -17,10 +17,13 @@ export interface WeaponDefInfo {
   /** explosion area of effect in elmos (gui_aoe override, then the engine's
    *  damageAreaOfEffect — the same precedence as ZK's attack-AoE widget) */
   aoe?: number;
-  /** napalm ground patch radius in elmos (area_damage = 1 weapons) */
+  /** napalm ground patch radius in elmos (area damage weapons) */
   areaDamageRadius?: number;
   /** napalm ground patch duration in seconds */
   areaDamageDuration?: number;
+  /** ZK's own napalm classification (description / lups fx), NOT merely
+   *  area damage — slow fields and black holes are not fire */
+  napalm?: boolean;
   customParams?: Record<string, string>;
 }
 

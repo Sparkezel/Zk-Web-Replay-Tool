@@ -246,10 +246,13 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         type: String(ev["w"] ?? ev["type"] ?? ""),
         range: ev["r"] !== undefined ? num(ev["r"]) : undefined,
         trajectoryHeight: ev["th"] !== undefined ? num(ev["th"]) : undefined,
-        // v2 columns: explosion AOE and the napalm ground patch (area damage)
+        // v2 columns: explosion AOE and the napalm ground patch (area
+        // damage gated to actual napalm weapons — ZK's own lups_napalm
+        // classification; slow fields and the Dante black hole are NOT fire)
         aoe: ev["aoe"] !== undefined ? num(ev["aoe"]) : undefined,
         areaDamageRadius: ev["adr"] !== undefined ? num(ev["adr"]) : undefined,
         areaDamageDuration: ev["adu"] !== undefined ? num(ev["adu"]) : undefined,
+        napalm: ev["nd"] !== undefined ? num(ev["nd"]) === 1 : undefined,
         customParams: (ev["cp"] ?? undefined) as Record<string, string> | undefined,
       });
       return;

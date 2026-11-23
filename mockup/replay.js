@@ -1104,9 +1104,12 @@
       }
     }
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
-       napalm patches are area-damage weapons (Firewalker shells 64 elmos /
-       16 s, Inferno warheads 256 / 45 s in the game defs) appearing at the
-       projectile's last sample (impact) */
+       napalm patches are FIRE only — ZK's lups_napalm classification
+       (weapon description / fx; the internal def names carry _napalm_ too,
+       which doubles as the fallback for artifacts recorded before the nd
+       flag existed). Slow fields (missileslow) and the Dante's black hole
+       are area damage but NOT fire; they do not paint. Firewalker shells
+       64 elmos / 16 s, Inferno warheads 256 / 45 s */
     const napalm = [];
     for (const p of projectiles) {
       const w = wdef.get(p.weaponDefID);
@@ -1115,7 +1118,8 @@
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
       }
-      if ((w.adr ?? 0) > 0) {
+      const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));
+      if (isFire && (w.adr ?? 0) > 0) {
         napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
       }
     }

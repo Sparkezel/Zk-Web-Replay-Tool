@@ -309,8 +309,10 @@ function encodeWeaponDefs(snap: SnapshotData): Uint8Array {
       return {
         id: d.defID, name: d.name, type: d.type, range: d.range ?? -1,
         class: cls, className: PROJ_CLASS_NAME[cls] ?? "dropped",
-        // v2 columns: explosion AOE + napalm ground patch (area damage)
+        // v2 columns: explosion AOE + napalm ground patch (fire only: ZK's
+        // lups_napalm classification, not every area-damage weapon)
         aoe: d.aoe ?? -1, adr: d.areaDamageRadius ?? -1, adu: d.areaDamageDuration ?? -1,
+        nd: d.napalm ? 1 : 0,
       };
     })
     .sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
