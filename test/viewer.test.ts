@@ -732,6 +732,18 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(31, { defID: 31, name: "tacnuke_weapon", type: "MissileLauncher", range: 900, aoe: 192 });
   snap.projectiles.set(102, { proID: 102, weaponDefID: 31, projClass: 4, ownerTeam: 1, startFrame: 294,
     samples: [{ frame: 294, x: 8192, z: 8192, y: 200 }, { frame: 300, x: 9000, z: 9100, y: 0 }] });
+  // prefixed warhead names from the real The Hole artifact: empmissile_emp_weapon
+  // (Shockley) and staticnuke_crblmssl (Trinity) must match despite the unit-key
+  // prefix / double suffix; the antinuke's interceptor rocket must NOT paint
+  snap.weaponDefs.set(32, { defID: 32, name: "empmissile_emp_weapon", type: "MissileLauncher", range: 900, aoe: 140 });
+  snap.projectiles.set(103, { proID: 103, weaponDefID: 32, projClass: 4, ownerTeam: 1, startFrame: 354,
+    samples: [{ frame: 354, x: 1000, z: 1000, y: 200 }, { frame: 360, x: 2000, z: 2000, y: 0 }] });
+  snap.weaponDefs.set(33, { defID: 33, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
+  snap.projectiles.set(104, { proID: 104, weaponDefID: 33, projClass: 3, ownerTeam: 0, startFrame: 414,
+    samples: [{ frame: 414, x: 3000, z: 3000, y: 200 }, { frame: 420, x: 4000, z: 4000, y: 0 }] });
+  snap.weaponDefs.set(34, { defID: 34, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
+  snap.projectiles.set(105, { proID: 105, weaponDefID: 34, projClass: 3, ownerTeam: 1, startFrame: 474,
+    samples: [{ frame: 474, x: 5000, z: 5000, y: 200 }, { frame: 480, x: 6000, z: 6000, y: 0 }] });
   // superweapon news: a Zenith nanoframe appearing
   snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
@@ -753,13 +765,21 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
   // radius from WDEF aoe; the missile unit's corner death must NOT paint one
-  assert.equal(model.explosions.length, 1, "only the flight's explosion — no corner blast from the unit death");
+  assert.equal(model.explosions.length, 3,
+    "exactly the Eos/Shockley/Trinity warhead flights paint one - no corner blast from the unit death, none from the antinuke interceptor");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
   assert.ok(Math.abs(eos!.t - 10) < 0.01, "detonation at the warhead impact (frame 300/30)");
   assert.ok(Math.abs(eos!.x - 9000 / 16384) < 0.01 && Math.abs(eos!.y - 9100 / 16384) < 0.01,
     "explosion at the flight's impact sample, not the missile unit's staging corner (16384/16384)");
+  // prefixed real-world weapon names must still anchor their blast
+  const shockley = model.explosions.find((e) => e.col === "72,214,255");
+  assert.ok(shockley && Math.abs(shockley!.t - 12) < 0.01 && shockley!.r === 140,
+    "Shockley explosion from the unit-key-prefixed empmissile_emp_weapon at its impact");
+  const trinity = model.explosions.find((e) => e.r === 960);
+  assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
+    "Trinity explosion from staticnuke_crblmssl at its impact");
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);
