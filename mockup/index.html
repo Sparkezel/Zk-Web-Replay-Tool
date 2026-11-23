@@ -595,9 +595,11 @@ function draw(model,tm){
   // at the impact point a HOLLOW circle shows the blast AOE, ringed by a
   // shrinking second circle that counts down to impact (full radius at
   // launch, reaches 0 at contact). Eos red, Shockley blue, Zeno purple,
-  // Quake green, Inferno orange, Trinity shares the red
+  // Quake green, Inferno orange, Trinity shares the red. A warhead the
+  // antinuke killed MID-AIR (its flight end coincides with an antinuke
+  // rocket's end) has no strike to mark - neither circle paints
   model.projectiles.forEach(function(pr){
-    if(!pr.mcol||!(pr.maoe>0))return;
+    if(!pr.mcol||!(pr.maoe>0)||pr.intercepted)return;
     if(!(tm>=pr.born&&tm<pr.impact))return;
     var rr=pr.maoe*pxPerElmo;
     if(rr<3)return;
@@ -760,7 +762,10 @@ function draw(model,tm){
     else if(u.antiNuke>0&&(b&4)!==0&&Math.floor(wallNow/180)%2===0)flash="#ff3228";
     var mCol=flash||col;
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
-    var tinted=img?ZkrReplay.tintIcon(img,mCol):null;
+    /* the antinuke draws its ring marker below - skip the (discarded)
+       icon tint entirely for it (counter-review L3: one wasted tint +
+       cache entry per frame otherwise) */
+    var tinted=img&&!u.antiNuke?ZkrReplay.tintIcon(img,mCol):null;
     if(u.antiNuke>0){
       /* the antinuke marker: a slight team-coloured RING, no inner
          filling — coverage is what matters and a filled icon/tinted blob

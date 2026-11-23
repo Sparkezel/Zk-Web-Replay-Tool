@@ -744,6 +744,21 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(34, { defID: 34, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
   snap.projectiles.set(105, { proID: 105, weaponDefID: 34, projClass: 3, ownerTeam: 1, startFrame: 474,
     samples: [{ frame: 474, x: 5000, z: 5000, y: 200 }, { frame: 480, x: 6000, z: 6000, y: 0 }] });
+  // the Scylla's tactical-nuke torpedo: its wdef name CONTAINS "tacnuke"
+  // (subtacmissile_tacnuke) - the unit-key match must NOT classify it as
+  // an Eos strike (counter-review H1)
+  snap.weaponDefs.set(35, { defID: 35, name: "subtacmissile_tacnuke", type: "Cannon", range: 1200, trajectoryHeight: 50, aoe: 256 });
+  snap.projectiles.set(106, { proID: 106, weaponDefID: 35, projClass: 2, ownerTeam: 0, startFrame: 534,
+    samples: [{ frame: 534, x: 2000, z: 2000, y: 100 }, { frame: 540, x: 2500, z: 2500, y: 0 }] });
+  // a Trinity the antinuke killed MID-AIR: the warhead's flight end and an
+  // antinuke rocket's end coincide in time and space - no ground
+  // detonation, no strike circle (counter-review M2)
+  snap.weaponDefs.set(36, { defID: 36, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
+  snap.projectiles.set(107, { proID: 107, weaponDefID: 36, projClass: 3, ownerTeam: 0, startFrame: 594,
+    samples: [{ frame: 594, x: 7000, z: 7000, y: 500 }, { frame: 600, x: 7500, z: 7500, y: 350 }] });
+  snap.weaponDefs.set(37, { defID: 37, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
+  snap.projectiles.set(108, { proID: 108, weaponDefID: 37, projClass: 3, ownerTeam: 1, startFrame: 595,
+    samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 601, x: 7520, z: 7490, y: 340 }] });
   // superweapon news: a Zenith nanoframe appearing
   snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
@@ -787,19 +802,39 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "staticnuke_crblmssl flight gets the nuke_missile.png marker");
   assert.equal(model.projectiles.find((p) => p.icon === "antinuke_proj")!.weaponDefID, 34,
     "the antinuke interceptor flight gets the antinuke_proj.png marker");
-  assert.ok(model.projectiles.filter((p) => p.icon).length === 2,
-    "Eos/Shockley flights stay plain trails — no projectile-look marker");
+  assert.ok(model.projectiles.filter((p) => p.icon).length === 4,
+    "Eos/Shockley flights stay plain trails; the interceptor pair and both Trinities carry markers");
   // incoming-strike visualisation: the five silo missiles (+ Trinity) carry
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 3, "Eos + Shockley + Trinity flights carry strike colours");
+  assert.ok(missAF.length === 4, "Eos + Shockley + both Trinities carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
   assert.equal(missAF.find((p) => p.weaponDefID === 33)!.mcol, "255,72,56", "Trinity red");
   assert.ok(model.projectiles.find((p) => p.weaponDefID === 34)!.mcol === undefined,
     "the antinuke interceptor carries no strike colour");
+  // the Scylla torpedo (subtacmissile_tacnuke) must NOT read as a strike
+  const scylla = model.projectiles.find((p) => p.weaponDefID === 35)!;
+  assert.ok(scylla.mcol === undefined && scylla.icon === undefined,
+    "the unit-key match ignores the tacnuke inside subtacmissile_tacnuke");
+  assert.ok(!model.explosions.some((e) => e.r === 256),
+    "no Eos-style detonation painted at the torpedo impact");
+  // the intercepted Trinity: coloured for its flight, but its end
+  // coincides with the antinuke rocket's -> no ground detonation, no target
+  const intercepted = model.projectiles.find((p) => p.weaponDefID === 36)!;
+  assert.equal(intercepted.mcol, "255,72,56", "the intercepted warhead still flies red");
+  assert.equal(intercepted.intercepted, true, "its flight end matches the antinuke rocket's");
+  assert.ok(model.explosions.filter((e) => e.r === 960 && Math.abs(e.t - 20) < 0.01).length === 0,
+    "no ground detonation for the mid-air kill");
+  const clean = model.projectiles.find((p) => p.weaponDefID === 33)!;
+  assert.ok(clean.intercepted === undefined,
+    "a warhead whose end matches no rocket detonates normally");
+  // the earlier interceptor flight (105) ends far from any warhead end -
+  // it must not mark anything
+  assert.ok(model.projectiles.filter((p) => p.intercepted).length === 1,
+    "exactly the paired warhead reads as intercepted");
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);
