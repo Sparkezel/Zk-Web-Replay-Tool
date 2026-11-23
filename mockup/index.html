@@ -390,7 +390,9 @@ function buildArtifactModel(artifact){
       posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
   var projectiles=m.projectiles.map(function(p){
-    return {born:p.born,impact:p.end,icon:p.icon,team:p.team,
+    var ip=p.path[p.path.length-1];
+    return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
+      ix:ip.x,iy:ip.z,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
         var s=ZkrReplay.pathAt(p.path,tm);
         var pr=ZkrReplay.pathAt(p.path,Math.max(p.born,tm-0.5));
@@ -587,6 +589,26 @@ function draw(model,tm){
     cx.strokeStyle="rgba("+e.col+","+a.toFixed(3)+")";
     cx.lineWidth=1.5;
     cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.stroke();
+    cx.lineWidth=1;
+  });
+  // incoming strategic missiles - ZK's own incoming-strike visualisation:
+  // at the impact point a HOLLOW circle shows the blast AOE, ringed by a
+  // shrinking second circle that counts down to impact (full radius at
+  // launch, reaches 0 at contact). Eos red, Shockley blue, Zeno purple,
+  // Quake green, Inferno orange, Trinity shares the red
+  model.projectiles.forEach(function(pr){
+    if(!pr.mcol||!(pr.maoe>0))return;
+    if(!(tm>=pr.born&&tm<pr.impact))return;
+    var rr=pr.maoe*pxPerElmo;
+    if(rr<3)return;
+    var prog=(tm-pr.born)/(pr.impact-pr.born||1);
+    var ix=pr.ix*W,iy=pr.iy*H;
+    cx.strokeStyle="rgba("+pr.mcol+",.55)";
+    cx.lineWidth=1;
+    cx.beginPath();cx.arc(ix,iy,rr,0,7);cx.stroke();
+    cx.strokeStyle="rgba("+pr.mcol+",.9)";
+    cx.lineWidth=1.5;
+    cx.beginPath();cx.arc(ix,iy,Math.max(0,rr*(1-prog)),0,7);cx.stroke();
     cx.lineWidth=1;
   });
   // anti-nuke coverage: always visible once the launcher completes (ZK's
@@ -816,15 +838,22 @@ function draw(model,tm){
     var x=pos.x*W,y=pos.y*H;
     cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
-    /* Trinity warheads and antinuke interceptors carry their own marker at
-       the flight head: the icon drawn as a slight team-coloured BORDER,
-       no inner filling (a solid tinted icon reads as a blob on the trail).
-       Icon files land in mockup/icons/ as nuke.png / antinuke_proj.png;
+    /* in-flight markers. Trinity warheads and antinuke interceptors carry
+       their own icon: drawn as a slight team-coloured BORDER, no inner
+       filling (a solid tinted icon reads as a blob on the trail). Icon
+       files land in mockup/icons/ as nuke_missile.png / antinuke_proj.png;
        until dropped, the default glow dot keeps rendering */
     var fimg=pr.icon?ZkrReplay.iconFor(pr.icon):null;
     var fcol=fimg&&fimg.complete&&fimg.naturalWidth&&pr.team!==undefined?ZkrReplay.outlineIcon(fimg,teamColor(pr.team)):null;
     if(fcol){
       cx.drawImage(fcol,x-9,y-9,18,18);
+    }else if(pr.mcol){
+      /* the five silo missiles fly as a solid dot in their own colour
+         (Eos red / Shockley blue / Zeno purple / Quake green / Inferno
+         orange) - matching their target circle, far more readable at
+         replay speed than the generic yellow glow */
+      cx.fillStyle="rgba("+pr.mcol+",.95)";
+      cx.beginPath();cx.arc(x,y,4.5,0,7);cx.fill();
     }else{
       cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
     }

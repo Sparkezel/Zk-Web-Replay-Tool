@@ -1076,6 +1076,18 @@
        artifacts packed before the daemon-side fix render correctly too. */
     const PROJ_REUSE_GAP_FRAMES = 18;
     const projectiles = [];
+    /* the sent strategic missiles get ZK's own incoming-strike visualisa-
+     * tion (target circle + coloured head dot): Eos red, Shockley blue,
+     * Zeno purple, Quake green, Inferno orange - Trinity shares Eos's
+     * red. Substring match on the unit-key-prefixed weapon names. */
+    const MISSILE_COLORS = [
+      ["tacnuke", "255,72,56"],
+      ["empmissile", "72,214,255"],
+      ["missileslow", "168,96,255"],
+      ["seismic", "88,255,128"],
+      ["napalmmissile", "255,138,40"],
+      ["staticnuke", "255,72,56"],
+    ];
     for (const p of (artifact.proj ? artifact.proj.paths : [])) {
       /* two flights get their own on-map marker (drawn as a slight
          team-coloured border by the page): the Trinity warhead and the
@@ -1087,14 +1099,19 @@
          ZK's icons/nuke_missile.dds), NOT the Trinity structure's. */
       const wf = wdef.get(p.weaponDefID);
       let flIcon;
+      let mcol;
+      let maoe = 0;
       if (wf) {
         const wname = String(wf.name || "").toLowerCase();
         if (wname.includes("staticantinuke")) flIcon = "antinuke_proj";
         else if (wname.includes("staticnuke")) flIcon = "nuke_missile";
+        const mc = wname && MISSILE_COLORS.find(([n]) => wname.includes(n));
+        if (mc) { mcol = mc[1]; maoe = wf.aoe ?? 0; }
       }
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
         weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
+        mcol, maoe,
         born: toSec(seg[0].frame),
         end: toSec(seg[seg.length - 1].frame),
         path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),

@@ -789,6 +789,17 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "the antinuke interceptor flight gets the antinuke_proj.png marker");
   assert.ok(model.projectiles.filter((p) => p.icon).length === 2,
     "Eos/Shockley flights stay plain trails — no projectile-look marker");
+  // incoming-strike visualisation: the five silo missiles (+ Trinity) carry
+  // their own colour and AOE for the target circle; the interceptor flies
+  // colourless (defensive, no target to mark)
+  const missAF = model.projectiles.filter((p) => p.mcol);
+  assert.ok(missAF.length === 3, "Eos + Shockley + Trinity flights carry strike colours");
+  assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
+  assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
+  assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
+  assert.equal(missAF.find((p) => p.weaponDefID === 33)!.mcol, "255,72,56", "Trinity red");
+  assert.ok(model.projectiles.find((p) => p.weaponDefID === 34)!.mcol === undefined,
+    "the antinuke interceptor carries no strike colour");
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);
