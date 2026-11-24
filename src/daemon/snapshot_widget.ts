@@ -191,14 +191,20 @@ local function maybeWdef(defID)
   -- their own radius/duration separately (area_damage = 1)
   local aoe = tonumber(cp.gui_aoe) or tonumber(d.damageAreaOfEffect) or 0
   local adr, adu = 0, 0
-  -- napalm flag: ZK's own lups_napaml gadget classes a weapon as napalm by
+  -- napalm flag: ZK's own lups_napalm gadget classes a weapon as napalm by
   -- its description (e.g. "Napalm Mortar") or lups_napalm_fx/lups_heat_fx;
-  -- area_damage ALONE also covers slow fields (missileslow) and the Dante's
-  -- black hole, which must NOT paint fire patches in the viewer
+  -- area_damage ALONE also covers slow fields (missileslow) and
+  -- Placeholder's black hole (jumpblackhole), which must NOT paint fire
+  -- patches in the viewer
   local nd = 0
   if tostring(d.description or ""):lower():find("napalm", 1, true)
      or cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil then nd = 1 end
-  if nd == 1 then
+  -- area-damage radius/duration record for EVERY area_damage weapon, not
+  -- just napalm: Zeno's slow field and Placeholder's black hole carry the
+  -- same customParams, and the VIEWER decides by nd (fire) or by weapon
+  -- name (slow field) what paints; napalm without explicit params keeps
+  -- the old aoe/15s fallback
+  if nd == 1 or cp.area_damage ~= nil or cp.area_damage_radius ~= nil then
     adr = tonumber(cp.area_damage_radius) or 0
     adu = tonumber(cp.area_damage_duration) or 0
     if cp.area_damage == nil then adr, adu = aoe, 15 end
@@ -327,9 +333,16 @@ end
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
   LightningCannon = true, TorpedoLauncher = true }
 local projClassByID = {}
+-- sent strategic missiles, by ZK's weapon-name unit key (the viewer matches
+-- the same keys): these get their COMMANDED target polled once per flight,
+-- so an antinuke-intercepted warhead still tells the replay where the
+-- strike would have landed
+local STRAT_MISSILE_KEYS = { tacnuke = true, empmissile = true, missileslow = true,
+  seismic = true, napalmmissile = true, staticnuke = true }
+local lastPtgt = {}
 -- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
 -- description contains "Napalm" or the lups heat/napalm fx is set. Area
--- damage ALONE is not fire - the slow missile's slow field and the Dante's
+-- damage ALONE is not fire - the slow missile's slow field and Placeholder's
 -- black hole are area damage too but must not record as napalm
 local function isNapalmWeapon(d, cp)
   if tostring(d.description or ""):lower():find("napalm", 1, true) then return true end
@@ -338,12 +351,14 @@ end
 local function classifyWeapon(d, cp)
   -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
   -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
-  -- and the "party" filter below would silently drop it (and the DRP's own
-  -- burn weapons). Class 2 (artillery) fits the shell arc
+  -- and a name filter would silently drop it. Class 2 (artillery) fits the
+  -- shell arc. No "party" pattern here either: raveparty (Disco Rave Party),
+  -- jumparty and shiparty are LEGIT unit keys and the disco's colour
+  -- cannons must record; the fake proxies are covered by "fake"/"bogus".
   if cp ~= nil and cp.area_damage == "1" and isNapalmWeapon(d, cp) then return 2 end
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
-     name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
+     name:find("tele_beacon_target", 1, true) then return 0 end
   local wtype = d.type or ""
   if DROPPED_TYPES[wtype] then return 0 end
   local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil
@@ -491,6 +506,52 @@ function widget:GameFrame(frame)
         emit('{"t":"proj","f":' .. frame .. ',"u":' .. pid ..
           ',"d":' .. wdefID .. ',"tm":' .. (team or -1) ..
           ',"x":' .. ipos(x) .. ',"y":' .. ipos(y) .. ',"z":' .. ipos(z) .. '}')
+        -- strategic missiles (Eos/Shockley/Zeno/Quake/Inferno/Trinity): the
+        -- COMMANDED target of the flight. The path alone cannot tell where
+        -- an antinuke-intercepted warhead was headed (kills at ignition
+        -- leave zero movement), and the strike circle must mark the real
+        -- destination, never the intercept point.
+        -- Spring.GetProjectileTarget returns (targetType, targetData):
+        --   103 = ground   -> targetData = {[1]=x, [2]=y, [3]=z} (array
+        --                      form, NO .x/.z named keys - ZK's own
+        --                      unit_antinuke_handler.lua reads [1]/[3])
+        --   117 = unit    -> targetData = unitID
+        --   102 = feature -> targetData = featureID (separate id space!)
+        -- Emitted once per (pid, quantized target); probed every frame
+        -- while a strategic projectile exists, re-emitted only when the
+        -- engine hands a different target (retargeting; recycled pids with
+        -- a different target). pcall degrades safely on engines without
+        -- the API (ok = false -> no line).
+        local wd = WeaponDefs[wdefID]
+        local wkey = wd ~= nil and wd.name ~= nil and string.match(wd.name, "^([^_]+)") or nil
+        if wkey ~= nil and STRAT_MISSILE_KEYS[wkey] then
+          local ok, ttype, tdata = pcall(Spring.GetProjectileTarget, pid)
+          local tx, tz
+          if ok and ttype ~= nil then
+            if ttype == 103 and type(tdata) == "table" then
+              tx, tz = tdata[1], tdata[3]
+            elseif ttype == 117 and type(tdata) == "number" then
+              local ux, uy, uz = Spring.GetUnitPosition(tdata)
+              if ux ~= nil then tx, tz = ux, uz end
+            elseif ttype == 102 and type(tdata) == "number" then
+              local fx, fy, fz = Spring.GetFeaturePosition(tdata)
+              if fx ~= nil then tx, tz = fx, fz end
+            elseif type(tdata) == "table" then
+              -- unknown (type, table) combo on some other engine build:
+              -- best effort, array form first, named form second
+              tx, tz = tdata[1], tdata[3]
+              if tx == nil or tz == nil then tx, tz = tdata.x, tdata.z end
+            end
+          end
+          if tx ~= nil and tz ~= nil then
+            local key = ipos(tx) .. ":" .. ipos(tz)
+            if lastPtgt[pid] ~= key then
+              lastPtgt[pid] = key
+              emit('{"t":"ptgt","f":' .. frame .. ',"u":' .. pid ..
+                ',"x":' .. ipos(tx) .. ',"z":' .. ipos(tz) .. '}')
+            end
+          end
+        end
       end
     end
   end

@@ -718,6 +718,43 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16, napalm: true });
   snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
     samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  // a Zeno slow missile: area damage but NOT fire (nd 0, no area fields
+  // recorded - artifacts from the pre-slow-field widget) -> the impact
+  // leaves a lingering purple slow-zone patch with the fixed game values
+  snap.weaponDefs.set(38, { defID: 38, name: "missileslow_weapon", type: "StarburstLauncher", range: 6000, aoe: 320, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(110, { proID: 110, weaponDefID: 38, projClass: 4, ownerTeam: 0, startFrame: 70,
+    samples: [{ frame: 70, x: 5000, z: 5000, y: 200 }, { frame: 76, x: 5500, z: 5500, y: 0 }] });
+  // Placeholder's black hole (jumpblackhole - the Black-Hole artillery
+  // unit): no recorded area fields either -> dark grey lingering circle
+  // at the fixed game values 70 / 13.3 s
+  snap.weaponDefs.set(39, { defID: 39, name: "jumpblackhole_black_hole", type: "Cannon", range: 900, trajectoryHeight: 300, aoe: 300, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(111, { proID: 111, weaponDefID: 39, projClass: 1, ownerTeam: 0, startFrame: 90,
+    samples: [{ frame: 90, x: 6000, z: 6000, y: 100 }, { frame: 95, x: 6100, z: 6100, y: 0 }] });
+  // impact-AoE rings for the non-strategic big guns: Bertha plasma, the
+  // disco's red/orange cannons, one Dante rocket salvo volley (aoe values
+  // in the RECORDED convention - Spring's damageAreaOfEffect radius, half
+  // the lua areaOfEffect diameter, as real WDEFs carry them)
+  snap.weaponDefs.set(40, { defID: 40, name: "staticheavyarty_plasma", type: "Cannon", range: 12000, trajectoryHeight: 300, aoe: 88, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(112, { proID: 112, weaponDefID: 40, projClass: 1, ownerTeam: 0, startFrame: 120,
+    samples: [{ frame: 120, x: 2000, z: 2000, y: 400 }, { frame: 130, x: 3000, z: 3000, y: 0 }] });
+  snap.weaponDefs.set(41, { defID: 41, name: "raveparty_red_killer", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 96, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(113, { proID: 113, weaponDefID: 41, projClass: 1, ownerTeam: 0, startFrame: 135,
+    samples: [{ frame: 135, x: 4000, z: 2000, y: 100 }, { frame: 140, x: 4100, z: 2100, y: 0 }] });
+  snap.weaponDefs.set(42, { defID: 42, name: "raveparty_orange_roaster", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 400, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(114, { proID: 114, weaponDefID: 42, projClass: 1, ownerTeam: 0, startFrame: 145,
+    samples: [{ frame: 145, x: 5000, z: 2000, y: 100 }, { frame: 150, x: 5100, z: 2100, y: 0 }] });
+  snap.weaponDefs.set(43, { defID: 43, name: "striderdante_napalm_rockets_salvo", type: "MissileLauncher", range: 800, aoe: 84, areaDamageRadius: 78, areaDamageDuration: 3, napalm: true });
+  snap.projectiles.set(115, { proID: 115, weaponDefID: 43, projClass: 4, ownerTeam: 0, startFrame: 155,
+    samples: [{ frame: 155, x: 6000, z: 2000, y: 80 }, { frame: 160, x: 6100, z: 2100, y: 0 }] });
+  // the Pyro's death flame ball: jumpraid dies -> lingering orange patch at
+  // the wreck (explode weapons have no flight, the death spot is the anchor)
+  snap.unitDefs.set(400, { defID: 400, name: "jumpraid", metalCost: 260, health: 240, canMove: true, iconType: "pyro", humanName: "Pyro" });
+  snap.units.set(400, { unitID: 400, defID: 400, samples: [
+    { frame: 400, x: 7000, z: 7000, hp: 255, build: 255 },
+    { frame: 449, x: 7000, z: 7000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 400, unitID: 400, int1: 400, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 450, unitID: 400, int1: -1, int2: 0, int3: -1 });
   // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
   // corner until liftoff, so its death must NOT anchor the blast — the
   // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
@@ -729,6 +766,14 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   ] });
   snap.events.push({ kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 });
   snap.events.push({ kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 });
+  // unit 14 is also an Eos but NEVER stages: it stays in its silo until an
+  // enemy kills it - a launch it is not, and the feed must say so
+  snap.units.set(14, { unitID: 14, defID: 21, samples: [
+    { frame: 100, x: 3000, z: 3000, hp: 255, build: 255 },
+    { frame: 294, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 14, int1: 21, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 320, unitID: 14, int1: 33, int2: 1, int3: -1 });
   snap.weaponDefs.set(31, { defID: 31, name: "tacnuke_weapon", type: "MissileLauncher", range: 900, aoe: 192 });
   snap.projectiles.set(102, { proID: 102, weaponDefID: 31, projClass: 4, ownerTeam: 1, startFrame: 294,
     samples: [{ frame: 294, x: 8192, z: 8192, y: 200 }, { frame: 300, x: 9000, z: 9100, y: 0 }] });
@@ -738,6 +783,10 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(32, { defID: 32, name: "empmissile_emp_weapon", type: "MissileLauncher", range: 900, aoe: 140 });
   snap.projectiles.set(103, { proID: 103, weaponDefID: 32, projClass: 4, ownerTeam: 1, startFrame: 354,
     samples: [{ frame: 354, x: 1000, z: 1000, y: 200 }, { frame: 360, x: 2000, z: 2000, y: 0 }] });
+  // a second Shockley flight 2 frames after the first: same volley, and the
+  // launch news must aggregate the pair into ONE line
+  snap.projectiles.set(109, { proID: 109, weaponDefID: 32, projClass: 4, ownerTeam: 1, startFrame: 356,
+    samples: [{ frame: 356, x: 1100, z: 1100, y: 200 }, { frame: 362, x: 2100, z: 2100, y: 0 }] });
   snap.weaponDefs.set(33, { defID: 33, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
   snap.projectiles.set(104, { proID: 104, weaponDefID: 33, projClass: 3, ownerTeam: 0, startFrame: 414,
     samples: [{ frame: 414, x: 3000, z: 3000, y: 200 }, { frame: 420, x: 4000, z: 4000, y: 0 }] });
@@ -758,12 +807,46 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     samples: [{ frame: 594, x: 7000, z: 7000, y: 500 }, { frame: 600, x: 7500, z: 7500, y: 350 }] });
   snap.weaponDefs.set(37, { defID: 37, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
   snap.projectiles.set(108, { proID: 108, weaponDefID: 37, projClass: 3, ownerTeam: 1, startFrame: 595,
-    samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 601, x: 7520, z: 7490, y: 340 }] });
+    samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 600, x: 7500, z: 7450, y: 340 }] });
+  // PTGT: commanded warhead destinations. The clean Trinity gets one row
+  // (its circle anchors at the target, not the last sample); the
+  // INTERCEPTED Trinity gets a stale early row plus the real one - the
+  // LATEST row at-or-before the flight's end wins, so proID recycling
+  // never crosses targets across flights
+  snap.ptgts = [
+    { proID: 104, frame: 414, x: 6000, z: 6000 },
+    { proID: 107, frame: 500, x: 1500, z: 1500 },
+    { proID: 107, frame: 595, x: 9000, z: 9400 },
+  ];
   // superweapon news: a Zenith nanoframe appearing
   snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
   // live states: unit 1 fully EMP-stunned and slowed to 3/16 at frame 120
   snap.states = [{ unitID: 1, frame: 120, bits: 4, slow: 3 / 16 }];
+  // staging-corpse gate (feature mode): raw position bands alone must NEVER
+  // drop a wreck - Otago's real corner casualties (a Jumpjet Factory among
+  // them) proved that. A corner feature is staging carrion only when a
+  // LAUNCHED missile died within +/-36 frames of it (unit 12: staged,
+  // died f=300); one born far from any missile death is a real corner
+  // casualty and must survive.
+  snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
+  snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
+  // census-driven death blasts: a Skuttle (180 - the census threshold itself)
+  // and a Detriment (1280 NUCLEAR_MISSILE - nuke grade, vector art)
+  snap.unitDefs.set(23, { defID: 23, name: "jumpbomb", metalCost: 100, health: 800, canMove: true, iconType: "jumpbomb", humanName: "Skuttle" });
+  snap.units.set(15, { unitID: 15, defID: 23, samples: [
+    { frame: 320, x: 4000, z: 4000, hp: 255, build: 255 },
+    { frame: 354, x: 4000, z: 4000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 320, unitID: 15, int1: 23, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 354, unitID: 15, int1: -1, int2: 0, int3: -1 });
+  snap.unitDefs.set(24, { defID: 24, name: "striderdetriment", metalCost: 4000, health: 20000, canMove: false, iconType: "striderdetriment", humanName: "Detriment" });
+  snap.units.set(16, { unitID: 16, defID: 24, samples: [
+    { frame: 320, x: 8000, z: 2000, hp: 255, build: 255 },
+    { frame: 366, x: 8000, z: 2000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 320, unitID: 16, int1: 24, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 366, unitID: 16, int1: -1, int2: 1, int3: -1 });
 
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
@@ -780,8 +863,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
   // radius from WDEF aoe; the missile unit's corner death must NOT paint one
-  assert.equal(model.explosions.length, 3,
-    "exactly the Eos/Shockley/Trinity warhead flights paint one - no corner blast from the unit death, none from the antinuke interceptor");
+  assert.equal(model.explosions.length, 10,
+    "Eos + both Shockleys + the clean Trinity + the Skuttle and Detriment death blasts + the four impact rings (Bertha, DRP red/orange, Dante salvo); no corner blast from the unit deaths, none from the antinuke interceptor");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
@@ -789,12 +872,14 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(eos!.x - 9000 / 16384) < 0.01 && Math.abs(eos!.y - 9100 / 16384) < 0.01,
     "explosion at the flight's impact sample, not the missile unit's staging corner (16384/16384)");
   // prefixed real-world weapon names must still anchor their blast
-  const shockley = model.explosions.find((e) => e.col === "72,214,255");
-  assert.ok(shockley && Math.abs(shockley!.t - 12) < 0.01 && shockley!.r === 140,
-    "Shockley explosion from the unit-key-prefixed empmissile_emp_weapon at its impact");
+  assert.equal(model.explosions.filter((e) => e.col === "72,214,255").length, 2,
+    "both Shockley explosions from the unit-key-prefixed empmissile_emp_weapon at their impacts");
   const trinity = model.explosions.find((e) => e.r === 960);
   assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
     "Trinity explosion from staticnuke_crblmssl at its impact");
+  assert.equal(trinity!.fx, true, "the Trinity detonation carries the vector-blast flag");
+  assert.equal(model.explosions.find((e) => e.r === 192)!.fx, false,
+    "tactical/EMP/seismic blasts keep the default AOE circles");
   // in-flight markers: only the Trinity warhead and the antinuke interceptor
   // carry one (drawn as a slight team-coloured border at the flight head);
   // the warhead uses the missile's own nuke_missile icon, not the structure's
@@ -808,10 +893,11 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 4, "Eos + Shockley + both Trinities carry strike colours");
+  assert.ok(missAF.length === 6, "Eos + both Shockleys + both Trinities + the Zeno carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
+  assert.equal(missAF.find((p) => p.weaponDefID === 38)!.mcol, "168,96,255", "Zeno purple");
   assert.equal(missAF.find((p) => p.weaponDefID === 33)!.mcol, "255,72,56", "Trinity red");
   assert.ok(model.projectiles.find((p) => p.weaponDefID === 34)!.mcol === undefined,
     "the antinuke interceptor carries no strike colour");
@@ -836,6 +922,26 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(model.projectiles.filter((p) => p.intercepted).length === 1,
     "exactly the paired warhead reads as intercepted");
 
+  // ---- recorded warhead targets (PTGT) ----
+  // the clean Trinity's flight carries the commanded destination as map
+  // fractions; flights without a row keep tgt undefined (page keeps using
+  // the flight's own end = real impact)
+  const trClean = model.projectiles.find((p) => p.weaponDefID === 33)!;
+  assert.ok(trClean.tgt && Math.abs(trClean.tgt.x - 6000 / 16384) < 2e-4 &&
+    Math.abs(trClean.tgt.z - 6000 / 16384) < 2e-4,
+    "recorded target attaches to the flight (u16 elmo quantization within tolerance)");
+  assert.ok(model.projectiles.find((p) => p.weaponDefID === 31)!.tgt === undefined,
+    "a flight with no PTGT row gets no invented target");
+  // the INTERCEPTED Trinity still tells its real destination: the LATEST
+  // row at-or-before its end wins, the stale parking-era row is ignored
+  const trIcept = model.projectiles.find((p) => p.weaponDefID === 36)!;
+  assert.ok(trIcept.tgt && Math.abs(trIcept.tgt.x - 9000 / 16384) < 2e-4 &&
+    Math.abs(trIcept.tgt.z - 9400 / 16384) < 2e-4,
+    "the intercepted warhead's target is the latest row at-or-before its end");
+  // it stays intercepted (no ground detonation) AND now has a destination
+  // to circle instead of nothing
+  assert.equal(trIcept.intercepted, true);
+
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);
   assert.ok(np, "napalm patch present");
@@ -843,9 +949,87 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(np!.t - 56 / 30) < 0.05,
     "napalm starts at the impact (frames 50/56 -> last sample)");
 
+  // Zeno's slow zone: purple patch at the impact, fixed 320/30 game
+  // values (the fixture records no area fields, like real artifacts
+  // from the widget before slow-field adr/adu recording)
+  const zeno = model.napalm.find((n) => n.col === "168,96,255");
+  assert.ok(zeno, "slow-field patch present");
+  assert.equal(zeno!.r, 320);
+  assert.equal(zeno!.dur, 30);
+  // Placeholder's black hole: dark grey 70/13.3
+  const bh = model.napalm.find((n) => n.col === "90,90,90");
+  assert.ok(bh, "black-hole patch present");
+  assert.equal(bh!.r, 70);
+  assert.ok(Math.abs(bh!.dur - 13.3) < 1e-9);
+  // impact-AoE rings: Bertha plasma (colour from its plasma), the disco's
+  // red/orange cannons (colour matches the NAME), Dante's salvo
+  assert.ok(model.explosions.some((e) => e.r === 88 && e.col === "150,190,255"),
+    "Bertha plasma impact ring");
+  assert.ok(model.explosions.some((e) => e.r === 96 && e.dur === 2 && e.col === "255,72,56"),
+    "DRP Red Killer impact ring, red like its name");
+  assert.ok(model.explosions.some((e) => e.r === 400 && e.col === "255,138,40" && e.dur === 2),
+    "DRP Orange Roaster impact ring, orange like its name");
+  assert.ok(model.explosions.some((e) => e.r === 84 && e.col === "255,138,40" && e.dur === 3),
+    "Dante rocket salvo impact ring");
+  // DRP party zone: the disco's only lingering ground effect
+  const oz = model.napalm.find((n) => n.col === "255,138,40" && n.r === 400);
+  assert.ok(oz && oz.dur === 8, "DRP party-zone patch 400/8");
+  // Dante rockets keep their burning-ground patch alongside the ring
+  assert.ok(model.napalm.some((n) => n.r === 78 && n.dur === 3),
+    "Dante salvo fire patch 78/3");
+  // the Pyro's death flame ball at the death spot
+  const pyroBall = model.napalm.find((n) => n.r === 128 && Math.abs(n.dur - 13.3) < 1e-9);
+  assert.ok(pyroBall && !pyroBall.col, "Pyro death flame ball 128/13.3, default fire colour");
+  assert.ok(Math.abs(pyroBall!.t - 450 / 30) < 0.05,
+    "the flame ball starts at the Pyro's death");
+  assert.equal(model.napalm.filter((n) => !n.col).length, 3,
+    "colourless patches are exactly the three fire-family ones (firewalker shell, Dante salvo, Pyro ball)");
+
   // superweapon construction news in the feed
   assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),
     "superweapon news line");
+
+  // ---- launch news: every warhead flight announces the launch ----
+  assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "Eos launched!"),
+    "a single Eos flight leaves one plain launch line");
+  assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "2 \u00d7 Shockley missiles launched!"),
+    "two Shockley flights 0.07 s apart aggregate into one volley line");
+  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 2,
+    "both Trinity flights get news; their 6 s gap never aggregates them");
+
+  // ---- launched vs killed-in-silo missile units ----
+  const u12 = model.units.find((u) => u.id === 12)!;
+  assert.equal(u12.launched, true, "the staged Eos counts as launched");
+  assert.ok(Math.abs(u12.launchTm - 100 / 30) < 1e-6,
+    "launch time = the first staging-corner sample");
+  assert.ok(!model.feedData.some((f) => f.txt === "Eos destroyed"),
+    "a launched missile's later engine-side destroy leaves no destroyed line");
+  const u14 = model.units.find((u) => u.id === 14)!;
+  assert.equal(u14.launched, false, "an Eos that never staged was killed in its silo");
+  assert.ok(model.feedData.some((f) => f.cls === "death" &&
+    /^Eos was destroyed before launching/.test(f.txt)),
+    "a missile killed in its silo gets its own wording, not a plain destroy");
+  // staging-corpse gate (feature mode): raw position bands alone must NEVER
+  // drop a wreck — Otago's real corner casualties (a Jumpjet Factory among
+  // them) proved that. A corner feature is staging carrion only when a
+  // LAUNCHED missile died within ±36 frames of it; one born far from any
+  // missile death is a real corner casualty and must survive.
+  // (fixture rows added before buildZkrFromResim above)
+  assert.equal(model.wrecks.length, 1,
+    "feature mode drops ONLY the corner corpse matching the missile sweep (unit 12 died f=300)");
+  assert.ok(Math.abs(model.wrecks[0]!.x - 16000 / 16384) < 1e-4 && model.wrecks[0]!.metal === 40,
+    "the late corner casualty — a REAL wreck — survives the gate");
+
+  // census-driven death blasts: the Skuttle-class 180 circle, the
+  // Detriment's 1280 NUCLEAR_MISSILE blast with the vector nuke art
+  const skutBlast = model.explosions.find((e) => e.r === 180);
+  assert.ok(skutBlast && Math.abs(skutBlast.t - 354 / 30) < 1e-6 &&
+    Math.abs(skutBlast.x - 4000 / 16384) < 1e-4 && skutBlast.fx === false,
+    "Skuttle death blast: circle at its death position/time, no blast art");
+  const detBlast = model.explosions.find((e) => e.r === 1280);
+  assert.ok(detBlast && detBlast.fx === true && detBlast.col === "255,72,56" &&
+    Math.abs(detBlast.t - 366 / 30) < 1e-6,
+    "Detriment death blast: nuke-grade, red, uses the vector blast art");
 });
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {

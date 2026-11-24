@@ -277,6 +277,11 @@
     iconBase = String(url || "").replace(/\/?$/, "/");
   }
   function iconFor(iconType) {
+    /* ZK's own icontypes.lua resolves iconType "cruisemissilesmall" (the
+       five stockpiled silo missiles: Eos/Shockley/Zeno/Quake/Inferno) to
+       icons/cruisemissile.dds - the silo missiles keep their radar icon
+       until they fly (in flight they become the coloured warhead dots) */
+    if (iconType === "cruisemissilesmall") iconType = "cruisemissile";
     if (!iconBase || !iconType || typeof Image === "undefined") return null;
     if (!iconCache.has(iconType)) {
       const im = new Image();
@@ -471,6 +476,25 @@
     return p;
   }
 
+  /** PTGT v1 — commanded targets of sent strategic missiles:
+   * u32 count, per row: u32 proID, u32 frame, u16 x, u16 z (map fractions
+   * 0..1, elmos quantized across the map like PROJ). One row per
+   * (pid, target); the model picks the LATEST row at-or-before each
+   * flight's end, so proID recycling never crosses targets over. */
+  function decodePtgt(dv) {
+    const rows = [];
+    let o = 0;
+    const n = dv.getUint32(o, true); o += 4;
+    for (let i = 0; i < n; i++) {
+      const proID = dv.getUint32(o, true); o += 4;
+      const frame = dv.getUint32(o, true); o += 4;
+      const x = dv.getUint16(o, true) / 65535; o += 2;
+      const z = dv.getUint16(o, true) / 65535; o += 2;
+      rows.push({ proID, frame, x, z });
+    }
+    return rows;
+  }
+
   function decodeLink(dv, u8) {
     const p = { links: [], maxFrame: 0 };
     let o = 0;
@@ -559,6 +583,7 @@
       pos: raw["POS"] ? decodePos(new DataView(raw["POS"].buffer, raw["POS"].byteOffset, raw["POS"].byteLength), raw["POS"], versionOf("POS")) : null,
       evnt: raw["EVNT"] ? decodeEvnt(new DataView(raw["EVNT"].buffer, raw["EVNT"].byteOffset, raw["EVNT"].byteLength), raw["EVNT"]) : null,
       proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"], versionOf("PROJ")) : null,
+      ptgt: raw["PTGT"] ? decodePtgt(new DataView(raw["PTGT"].buffer, raw["PTGT"].byteOffset, raw["PTGT"].byteLength)) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
       states: raw["STAT"] ? decodeStates(new DataView(raw["STAT"].buffer, raw["STAT"].byteOffset, raw["STAT"].byteLength), raw["STAT"]) : null,
     };
@@ -750,6 +775,27 @@
       return null;
     };
     const feedData = [];
+    /* ---- stockpiled silo missiles: launched vs killed-in-silo ----
+       A launched missile stops being a map unit: the engine moves it to
+       the staging corner at the map's right edge (measured on The Hole:
+       fraction 1,0) where it sits until a later sweep destroys it, long
+       after impact. Death TIME cannot tell launched from killed — all
+       150 of The Hole's missiles died in the post-gameover sweep, their
+       impacts notwithstanding. The only in-data launch sign is a staging
+       sample (x at the extreme edge, z at either extreme); the missile
+       stockpiles at its silo deep inside the map before that. */
+    const MISSILE_UNIT_DEFS = new Set(["tacnuke", "empmissile", "missileslow", "seismic", "napalmmissile"]);
+    const launchTmByUnit = new Map();
+    for (const uu of (artifact.pos ? artifact.pos.units : [])) {
+      const info = udef.get(uu.defID);
+      if (!info || !MISSILE_UNIT_DEFS.has(info.name)) continue;
+      for (const s of uu.samples) {
+        if (s.x > 0.95 && (s.z < 0.05 || s.z > 0.95)) {
+          launchTmByUnit.set(uu.unitID, toSec(s.frame));
+          break;
+        }
+      }
+    }
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
       const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
@@ -780,6 +826,21 @@
             txt: unitName + " morphed into " + intoName,
           });
         }
+        continue;
+      }
+      /* stockpiled silo missile: a LAUNCHED one's story is told by its
+         warhead flight (launch news + strike circle + blast) — its
+         later engine-side destroy leaves no line. A missile that died
+         never having staged was killed in (or swept out of) its silo,
+         which is a different story and reads as such */
+      if (deadDef && MISSILE_UNIT_DEFS.has(deadDef.name)) {
+        if (launchTmByUnit.has(r.unitID)) continue;
+        const siloKiller = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
+        feedData.push({
+          tm: toSec(r.frame), cls: "death",
+          txt: unitName + " was destroyed before launching" +
+               (siloKiller ? " — killed by " + siloKiller : ""),
+        });
         continue;
       }
       /* unfinished unit dying before gameover with no killer = the builder
@@ -1015,6 +1076,11 @@
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
         morph: morphIntoByUnit.has(u.unitID),
+        /* silo missile launch (see MISSILE_UNIT_DEFS): staging-corner
+           sample time; the page hides the unit from here on (warhead
+           flight tells the story) and drops it from the loss grid */
+        launched: launchTmByUnit.has(u.unitID),
+        launchTm: launchTmByUnit.get(u.unitID) ?? -1,
         track: u.samples.map((s) => ({
           t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build,
           ck: s.ck,
@@ -1043,10 +1109,38 @@
     const wmw = dimsW && dimsW[0] > 0 ? dimsW[0] : 16384;
     const wmh = dimsW && dimsW[1] > 0 ? dimsW[1] : wmw;
     let nWreckEvents = 0;
+    /* staging corpses are filtered by POSITION + TIME, never by position
+       alone: real combat happens in map corners too (Otago: a Jumpjet
+       Factory and two neighbours died inside the same bands), so a corner
+       feature is staging carrion only when a LAUNCHED missile actually
+       died around that frame (corpse and unit death are the same engine
+       sweep). Artifacts with no missile launches keep every feature. */
+    const missileDeathFrames = [...launchTmByUnit.keys()]
+      .map((id) => (deathByUnit.has(id) ? deathByUnit.get(id) : -1))
+      .filter((f) => f >= 0)
+      .sort((a, b) => a - b);
+    const nearMissileDeath = (f) => {
+      if (!missileDeathFrames.length) return false;
+      let lo = 0, hi = missileDeathFrames.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (missileDeathFrames[mid] < f) lo = mid + 1; else hi = mid;
+      }
+      const hi2 = missileDeathFrames[lo];
+      const lo2 = lo > 0 ? missileDeathFrames[lo - 1] : hi2;
+      return Math.abs(hi2 - f) <= 36 || Math.abs(lo2 - f) <= 36;
+    };
     const wreckByFeature = new Map();
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "wreck") {
         nWreckEvents++;
+        /* stockpile missiles destroyed at the staging corner leave their
+           corpse OUTSIDE the playable map (measured on The Hole: all 150,
+           at fraction 1/0 — a magenta dot wall at the map corner without
+           this filter); gated on a matching missile death so the corner
+           band alone can never eat a real wreck */
+        if (r.int2 >= wmw * 0.95 && (r.int3 <= wmh * 0.05 || r.int3 >= wmh * 0.95) &&
+            nearMissileDeath(r.frame)) continue;
         wreckByFeature.set(r.unitID, {
           born: toSec(r.frame),
           x: r.int2 / wmw, y: r.int3 / wmh,
@@ -1060,7 +1154,9 @@
     let wrecks = [...wreckByFeature.values()];
     if (nWreckEvents === 0) {
       for (const u of units) {
-        if (u.died < 0 || u.morph || !u.track || !u.track.length) continue;
+        /* launched missiles staged at the corner leave no wreck at all:
+           their "corpse" (if any) sits outside the playable map */
+        if (u.died < 0 || u.morph || u.launched || !u.track || !u.track.length) continue;
         const last = u.track[u.track.length - 1];
         wrecks.push({
           born: u.died, x: last.x, y: last.y,
@@ -1166,17 +1262,42 @@
       ["empmissile", { col: "72,214,255", r: 140, fade: "fast", dur: 0 }],
       ["seismic", { col: "88,255,128", r: 320, fade: "fast", dur: 0 }],
       ["napalmmissile", { col: "255,138,40", r: 256, fade: "normal", dur: 8 }],
-      /* Trinity, the strategic nuke launcher - same red, its 960-elmo blast */
-      ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0 }],
+      /* Trinity, the strategic nuke launcher - same red, its 960-elmo blast.
+         fx: the warhead's detonation paints the vector BLAST ART instead
+         of the default AOE circle (the incoming-strike circles before
+         impact still carry the exact radius) */
+      ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0, fx: true }],
+    ];
+    /* impact AoE circles for the NON-strategic big guns: Big Bertha's
+       plasma, the disco's colour-in-the-name cannons (DRP is rare, the
+       rainbow reads well) and Dante's rocket volleys. Radius from the
+       recorded WDEF aoe (Spring's damageAreaOfEffect - the RADIUS, half
+       the lua areaOfEffect diameter: measured Dante 168->84, roaster
+       800->400 on real artifacts), else the halved fixed values below in
+       the same convention as the strategic table; each decays in sim
+       time over the stated (short) seconds; colour matches the weapon's
+       NAME (red killer -> red ...) or, for Bertha, its plasma */
+    const IMPACT_BLAST_DEFS = [
+      ["raveparty_red_killer",          { col: "255,72,56",  r: 96, dur: 2 }],
+      ["raveparty_orange_roaster",      { col: "255,138,40", r: 400, dur: 2 }],
+      ["raveparty_yellow_slammer",      { col: "255,224,32", r: 192, dur: 2 }],
+      ["raveparty_green_stamper",      { col: "88,255,128", r: 192, dur: 2 }],
+      ["raveparty_blue_shocker",       { col: "72,214,255", r: 160, dur: 2 }],
+      ["raveparty_violet_slugger",     { col: "168,96,255", r: 360, dur: 2 }],
+      ["staticheavyarty_plasma",        { col: "150,190,255", r: 88, dur: 2 }],
+      ["striderdante_napalm_rockets",       { col: "255,138,40", r: 84, dur: 3 }],
+      ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 84, dur: 3 }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
        napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
        which doubles as the fallback for artifacts recorded before the nd
-       flag existed). Slow fields (missileslow) and the Dante's black hole
-       are area damage but NOT fire; they do not paint. Firewalker shells
-       64 elmos / 16 s, Inferno warheads 256 / 45 s */
+       flag existed). Zeno's slow field (missileslow) is area damage but
+       NOT fire — it paints its own lingering purple patch; Placeholder's
+       black hole (jumpblackhole) likewise paints dark grey. Firewalker
+       shells 64 elmos / 16 s, Inferno warheads 256 / 45 s, Zeno slow
+       zones 320 / 30 s, black holes 70 / 13.3 s */
     const napalm = [];
     /* an antinuke intercept kills the warhead MID-AIR, and the warhead's
        flight would mark the intercept point as the strike - painting a
@@ -1203,16 +1324,44 @@
         p.intercepted = true;
       }
     }
+    /* ---- commanded destinations (PTGT) ----
+       An antinuke-intercepted warhead's flight record just STOPS at the
+       kill (the ion-intercept test kills happened at ignition: zero
+       movement, no heading to extrapolate), so the strike circle must
+       come from the RECORDED target, never from the path's end. Rows are
+       per (pid, target); the latest row at-or-before the flight's end
+       wins, so recycled proIDs never cross targets across flights. */
+    const ptgtByPro = new Map();
+    for (const t of (artifact.ptgt ?? [])) {
+      if (!ptgtByPro.has(t.proID)) ptgtByPro.set(t.proID, []);
+      ptgtByPro.get(t.proID).push(t);
+    }
+    for (const list of ptgtByPro.values()) list.sort((a, b) => a.frame - b.frame);
+    for (const p of projectiles) {
+      const rows = ptgtByPro.get(p.proID);
+      if (!rows || !rows.length) continue;
+      const endFrame = Math.round(p.end * FPS);
+      let cand = null;
+      for (const r of rows) {
+        if (r.frame <= endFrame + 6) cand = r; else break;
+      }
+      if (cand) p.tgt = { x: cand.x, z: cand.z };
+    }
     for (const p of projectiles) {
       const w = wdef.get(p.weaponDefID);
       if (!w || !p.path.length) continue;
       const imp = p.path[p.path.length - 1];
       const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().split("_")[0] === n);
       if (ex && !p.intercepted) {
-        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur });
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur, fx: ex[1].fx === true });
       }
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
+      }
+      const ib = IMPACT_BLAST_DEFS.find(([n]) => String(w.name || "").toLowerCase() === n);
+      if (ib && !p.intercepted) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z,
+          r: (w.aoe ?? 0) > 0 ? w.aoe : ib[1].r, col: ib[1].col, fade: "normal", dur: ib[1].dur });
       }
       const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));
       /* fire shells' last PROBE sample can sit hundreds of elmos above
@@ -1222,6 +1371,220 @@
          to ground fire */
       if (isFire && (w.adr ?? 0) > 0) {
         napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
+      }
+      /* Zeno's slow field: same area-damage family as napalm but NOT fire
+         (ZK marks it area_damage_is_slow) - impact leaves a lingering slow
+         zone that decays in sim time. Radius/duration from WDEF when the
+         recording widget provided them, else the fixed game values
+         (missileslow: 320 elmos / 30 s); col paints it purple like the
+         missile itself, the fire default stays orange */
+      if (!p.intercepted && String(w.name || "").toLowerCase().split("_")[0] === "missileslow") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 320,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 30,
+          col: "168,96,255",
+        });
+      }
+      /* Placeholder's black hole (jumpblackhole, the Black-Hole artillery
+         unit - NOT the Dante): the gravity well is neither fire nor slow,
+         it paints as a dark grey lingering circle. Fixed game values
+         70 elmos / 13.3 s unless the recording widget provided them */
+      if (!p.intercepted && String(w.name || "").toLowerCase().split("_")[0] === "jumpblackhole") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 70,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 13.3,
+          col: "90,90,90",
+        });
+      }
+      /* DRP's party zone: the disco's Orange Roaster shells leave the
+         lingering dance floor (the only rave weapon with area damage,
+         400 / 8 s); painted in the weapon's own orange, twinned with its
+         400-elmo impact ring above (recorded aoe - the RADIUS, half the
+         lua areaOfEffect diameter) */
+      if (!p.intercepted && String(w.name || "").toLowerCase() === "raveparty_orange_roaster") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 400,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 8,
+          col: "255,138,40",
+        });
+      }
+    }
+
+    /* ---- launch news: every tracked strategic flight is a launch ----
+       A warhead flight means the owning player actually fired. Same-type
+       same-team launches within 2.5 s of each other are one volley ->
+       one line ("24 x Eos missiles launched!"), not 24 identical rows;
+       measured on The Hole: an Eos volley of 24 + a single early shot,
+       50 Quake in two volleys, 38 Trinity warheads in groups. Trinity
+       has no missile unit (the launcher is the building), so its launch
+       line comes purely from the staticnuke flight. */
+    const LAUNCH_MISSILE_NAMES = {
+      tacnuke: "Eos", empmissile: "Shockley", missileslow: "Zeno",
+      seismic: "Quake", napalmmissile: "Inferno",
+    };
+    const launches = [];
+    for (const p of projectiles) {
+      if (!p.mcol || !p.path.length) continue;
+      const w = wdef.get(p.weaponDefID);
+      const k = w && w.name ? String(w.name).toLowerCase().split("_")[0] : null;
+      if (k && LAUNCH_MISSILE_NAMES[k]) {
+        launches.push({ tm: p.born, nm: LAUNCH_MISSILE_NAMES[k], team: p.team, nuke: false });
+      } else if (k === "staticnuke") {
+        launches.push({ tm: p.born, nm: "Trinity", team: p.team, nuke: true });
+      }
+    }
+    launches.sort((a, b) => a.tm - b.tm);
+    for (let i = 0; i < launches.length;) {
+      let j = i + 1;
+      while (j < launches.length && launches[j].nm === launches[i].nm &&
+             launches[j].team === launches[i].team &&
+             launches[j].tm - launches[j - 1].tm <= 2.5) j++;
+      const cnt = j - i, L = launches[i];
+      feedData.push({
+        tm: L.tm, cls: "launch",
+        txt: L.nuke
+          ? (cnt > 1 ? cnt + " × Trinity nukes launched!" : "Trinity launched a strategic nuke!")
+          : (cnt > 1 ? cnt + " × " + L.nm + " missiles launched!" : L.nm + " launched!"),
+      });
+      i = j;
+    }
+
+    /* ---- death blasts (Skuttle-sized and up) ----
+       ZK explodes every unit on death; this census covers the units whose
+       explodeAs/selfDestructAs weapon carries areaOfEffect >= Skuttle's
+       180 elmos (measured over zk-stable 2026-07: units/*.lua plus
+       weapons/*.tdf - inline weaponDefs and TDF stock explosions both).
+       The silo missile UNITS (Eos/Shockley/Quake/Inferno) are
+       deliberately absent: their detonations come from the warhead
+       FLIGHT impacts, and a missile killed in its silo leaves no blast
+       in the replay story. The nuke ART (fx) goes on the three 1280-elmo
+       death blasts: Detriment and Advanced Geothermal (both die through
+       the very same NUCLEAR_MISSILE weapon, out-blasting the Trinity
+       warhead's 960) and the Singularity Reactor (Naked Singularity).
+       Dynamic commander defs are generated per level at runtime, so the
+       pattern match below carries the chassis' 420-elmo blast to every
+       dynXX<N>_ level. Everything else uses the neutral blast colour. */
+    const NUKE_RED_LOCAL = "255,72,56";
+    const DEATH_BLAST_DEFS = {
+      "striderdetriment": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Detriment
+      "energysingu": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Singularity Reactor - Naked Singularity, same 1280, shares the art
+      "energyheavygeo": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Advanced Geothermal
+      "turretheavy": { r: 520 },   // Desolator (ESTOR_BUILDING)
+      "turretantiheavy": { r: 520 },   // Lucifer (ESTOR_BUILDING)
+      "turretaaheavy": { r: 520 },   // Artemis (ESTOR_BUILDING)
+      "striderfunnelweb": { r: 520 },   // Funnelweb (ESTOR_BUILDING)
+      "striderantiheavy": { r: 520 },   // Ultimatum (ESTOR_BUILDING)
+      "energygeo": { r: 520 },   // Geothermal Generator (ESTOR_BUILDING)
+      "bomberassault": { r: 520 },   // Odin (ESTOR_BUILDING)
+      "amphbomb": { r: 500 },   // Limpet (AMPHBOMB_DEATH)
+      "zenith": { r: 480 },   // Zenith (ATOMIC_BLAST)
+      "striderbantha": { r: 480 },   // Paladin (ATOMIC_BLAST)
+      "staticnuke": { r: 480 },   // Trinity (ATOMIC_BLAST)
+      "staticheavyarty": { r: 480 },   // Big Bertha (ATOMIC_BLAST)
+      "raveparty": { r: 480 },   // Disco Rave Party (ATOMIC_BLAST)
+      "pw_hq_attacker": { r: 480 },   // Attacker Command (ATOMIC_BLAST)
+      "pw_generic": { r: 480 },   // Generic Neutral Structure (ATOMIC_BLAST)
+      "mahlazer": { r: 480 },   // Starlight (ATOMIC_BLAST)
+      "energyfusion": { r: 480 },   // Fusion Reactor (ATOMIC_BLAST)
+      "striderhub": { r: 420 },   // Strider Hub (ESTOR_BUILDINGEX)
+      "obj_artefact": { r: 420 },   // Ancient Artefact (ESTOR_BUILDINGEX)
+      "energypylon": { r: 420 },   // Energy Pylon (ESTOR_BUILDINGEX)
+      "dynsupport1": { r: 420 },   // Engineer Commander (ESTOR_BUILDINGEX)
+      "dynstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "dynrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "dynassault1": { r: 420 },   // Guardian Commander (ESTOR_BUILDINGEX)
+      "cremcom1": { r: 420 },   // Commander (ESTOR_BUILDINGEX)
+      "corcom1": { r: 420 },   // Battle Commander (ESTOR_BUILDINGEX)
+      "commsupport1": { r: 420 },   // Support Commander (ESTOR_BUILDINGEX)
+      "commstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "commrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "benzcom1": { r: 420 },   // Siege Commander (ESTOR_BUILDINGEX)
+      "armcom1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "shieldbomb": { r: 384 },   // Snitch (shieldbomb_DEATH)
+      "cloakbomb": { r: 352 },   // Imp (cloakbomb_DEATH)
+      "turretsunlance": { r: 340 },   // Sunlance (LARGE_BUILDINGEX)
+      "turretriot": { r: 340 },   // Stardust (LARGE_BUILDINGEX)
+      "turretaafar": { r: 340 },   // Chainsaw (LARGE_BUILDINGEX)
+      "staticrearm": { r: 340 },   // Airpad (LARGE_BUILDINGEX)
+      "staticmissilesilo": { r: 340 },   // Missile Silo (LARGE_BUILDINGEX)
+      "staticarty": { r: 340 },   // Cerberus (LARGE_BUILDINGEX)
+      "staticantinuke": { r: 340 },   // Antinuke (LARGE_BUILDINGEX)
+      "nebula": { r: 340 },   // Nebula (LARGE_BUILDINGEX)
+      "gunshipkrow": { r: 340 },   // Krow (LARGE_BUILDINGEX)
+      "factoryveh": { r: 340 },   // Rover Assembly (LARGE_BUILDINGEX)
+      "factorytank": { r: 340 },   // Tank Foundry (LARGE_BUILDINGEX)
+      "factoryspider": { r: 340 },   // Spider Factory (LARGE_BUILDINGEX)
+      "factoryship": { r: 340 },   // Shipyard (LARGE_BUILDINGEX)
+      "factoryshield": { r: 340 },   // Shieldbot Factory (LARGE_BUILDINGEX)
+      "factoryplane": { r: 340 },   // Airplane Plant (LARGE_BUILDINGEX)
+      "factoryjump": { r: 340 },   // Jumpbot Factory (LARGE_BUILDINGEX)
+      "factoryhover": { r: 340 },   // Hovercraft Platform (LARGE_BUILDINGEX)
+      "factorygunship": { r: 340 },   // Gunship Plant (LARGE_BUILDINGEX)
+      "factorycloak": { r: 340 },   // Cloakbot Factory (LARGE_BUILDINGEX)
+      "factoryamph": { r: 340 },   // Amphbot Factory (LARGE_BUILDINGEX)
+      "striderarty": { r: 320 },   // Merlin (ATOMIC_BLASTSML)
+      "shipcarrier": { r: 320 },   // Reef (ATOMIC_BLASTSML)
+      "plateveh": { r: 294 },   // Rover Plate (FAC_PLATEEX)
+      "platetank": { r: 294 },   // Tank Plate (FAC_PLATEEX)
+      "platespider": { r: 294 },   // Spider Plate (FAC_PLATEEX)
+      "plateship": { r: 294 },   // Ship Plate (FAC_PLATEEX)
+      "plateshield": { r: 294 },   // Shieldbot Plate (FAC_PLATEEX)
+      "plateplane": { r: 294 },   // Airplane Plate (FAC_PLATEEX)
+      "platejump": { r: 294 },   // Jumpbot Plate (FAC_PLATEEX)
+      "platehover": { r: 294 },   // Hovercraft Plate (FAC_PLATEEX)
+      "plategunship": { r: 294 },   // Gunship Plate (FAC_PLATEEX)
+      "platecloak": { r: 294 },   // Cloakbot Plate (FAC_PLATEEX)
+      "plateamph": { r: 294 },   // Amphbot Plate (FAC_PLATEEX)
+      "commander_egg": { r: 280 },   // Commander Egg (COMMANDER_EGG_EMP)
+      "turrettorp": { r: 260 },   // Urchin (MEDIUM_BUILDINGEX)
+      "turretimpulse": { r: 260 },   // Newton (MEDIUM_BUILDINGEX)
+      "turretheavylaser": { r: 260 },   // Stinger (MEDIUM_BUILDINGEX)
+      "turretemp": { r: 260 },   // Faraday (MEDIUM_BUILDINGEX)
+      "turretaaflak": { r: 260 },   // Thresher (MEDIUM_BUILDINGEX)
+      "hoverarty": { r: 260 },   // Lance (MEDIUM_BUILDINGEX)
+      "striderscorpion": { r: 256 },   // Scorpion (CRAWL_BLASTSML)
+      "striderdante": { r: 256 },   // Dante (CRAWL_BLASTSML)
+      "turretlaser": { r: 180 },   // Lotus (SMALL_BUILDINGEX)
+      "turretgauss": { r: 180 },   // Gauss (SMALL_BUILDINGEX)
+      "turretaalaser": { r: 180 },   // Razor (SMALL_BUILDINGEX)
+      "turretaaclose": { r: 180 },   // Hacksaw (SMALL_BUILDINGEX)
+      "staticstorage": { r: 180 },   // Storage (SMALL_BUILDINGEX)
+      "staticsonar": { r: 180 },   // Sonar Station (SMALL_BUILDINGEX)
+      "staticradar": { r: 180 },   // Radar Tower (SMALL_BUILDINGEX)
+      "staticmex": { r: 180 },   // Metal Extractor (SMALL_BUILDINGEX)
+      "staticheavyradar": { r: 180 },   // Advanced Radar (SMALL_BUILDINGEX)
+      "jumpbomb": { r: 180 },   // Skuttle (jumpbomb_DEATH)
+      "energywind": { r: 180 },   // Wind/Tidal Generator (SMALL_BUILDINGEX)
+      "energysolar": { r: 180 },   // Solar Collector (SMALL_BUILDINGEX)
+    };
+    /* units whose EXPLODE weapon leaves lingering ground: the Pyro dies in
+       a flame ball - jumpraid's PYRO_DEATH (128 elmos / 13.3 s per game
+       data). Explode weapons fire ONCE at death and are LaserCannons
+       (never tracked as flights), so the death spot is the only anchor;
+       painted as default-orange fire */
+    const PATCH_DEATH_DEFS = {
+      "jumpraid": { r: 128, dur: 13.3 },   // Pyro — flame ball
+    };
+    for (const u of units) {
+      if (u.died < 0 || u.morph) continue;
+      const db = DEATH_BLAST_DEFS[u.def ?? ""] ??
+        (/^dyn[a-z]+[1-9]\d*_/.test(u.def ?? "") ? { r: 420 } : null);
+      const pd = PATCH_DEATH_DEFS[u.def ?? ""] ?? null;
+      if (!db && !pd) continue;
+      /* an unfinished nanoframe crumples - it does not go up in its full
+         death blast; the table is for complete units */
+      const last = u.track.length ? u.track[u.track.length - 1] : null;
+      if (!last || (last.bd !== undefined && last.bd < 0.99)) continue;
+      if (db) {
+        explosions.push({ t: u.died, x: last.x, y: last.y, r: db.r,
+          col: db.col ?? "255,150,90", fade: "fast", dur: 0,
+          fx: db.fx === true });
+      }
+      if (pd) {
+        napalm.push({ t: u.died, x: last.x, y: last.y, r: pd.r, dur: pd.dur });
       }
     }
 

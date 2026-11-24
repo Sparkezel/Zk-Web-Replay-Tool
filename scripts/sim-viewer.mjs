@@ -2,7 +2,9 @@
  * Headless run of mockup/index.html's inline script over the real artifact:
  * stubs DOM/canvas/fetch, then drives the rAF loop (with Play toggled on) and
  * a full timeline sweep. Any viewer-side runtime error shows up here with a
- * stack — no browser needed.  node scripts/sim-viewer.mjs [artifactPath]
+ * stack — no browser needed.  node scripts/sim-viewer.mjs [artifactPath] [--fx]
+ * (--fx: stub images decode, so the SVG trefoil art and the icon
+ * tint/outline pipeline execute too; default runs the fallback paths)
  */
 import { readFileSync } from "node:fs";
 import "node:child_process";
@@ -46,10 +48,20 @@ function makeCx() {
         throw new Error(`canvas arc() negative radius ${args[2]}`);
       }
       if (name === "drawImage") {
-        const [, , w, h] = args;
-        if ((w !== undefined && (!Number.isFinite(w) || w <= 0)) || (h !== undefined && (!Number.isFinite(h) || h <= 0))) {
-          cxErrors.push(`drawImage bad size w=${w} h=${h}`);
-          throw new Error(`canvas drawImage() bad size w=${w} h=${h}`);
+        /* browsers throw IndexSizeError only on non-positive draw SIZE
+           args — negative dx/dy offsets are legal (the canvas clips).
+           9-arg form: sx sy sw sh dx dy dw dh (sw/sh non-positive throws
+           too); 5-arg: dx dy dw dh; 3-arg: whole image, nothing to
+           check. The old guard misread dy/dw as w/h and false-failed on
+           legally off-canvas blasts (measured: Trinity at x=0.069 draws
+           at dx=-30) */
+        const W = args.length >= 9 ? [args[3], args[4], args[7], args[8]]
+          : args.length >= 5 ? [args[3], args[4]] : [];
+        for (const w of W) {
+          if (w !== undefined && (!Number.isFinite(w) || w <= 0)) {
+            cxErrors.push(`drawImage bad size args: ${args}`);
+            throw new Error(`canvas drawImage() bad size args: ${args.join(",")}`);
+          }
         }
       }
     }
@@ -77,12 +89,24 @@ globalThis.document = {
 const listens = [];
 globalThis.window = globalThis;
 globalThis.addEventListener = (ev, fn) => listens.push([ev, fn]);
+/* --fx puts the stub Image in "decoded" mode: every loaded image settles
+   complete:true with 64x64 dimensions, so the icon tint/outline pipeline
+   and the SVG FX art (nuke_blast/intercept trefoils) actually execute in
+   the smoke — by default images stay undecoded and the page's plain-dot
+   fallback paths are what run. Real bytes for the fx fetch come from the
+   URL fix below ("fx/..." resolves under mockup/). */
+const FX_MODE = process.argv.includes("--fx");
 class Image {
-  constructor() { this.src = ""; this._handlers = {}; }
+  constructor() { this._src = ""; this._handlers = {}; this._ok = false; this._w = 0; this._h = 0; }
   set onload(f) { this._handlers.load = f; }
-  get complete() { return false; }
-  get naturalWidth() { return 0; }
-  get naturalHeight() { return 0; }
+  get src() { return this._src; }
+  set src(v) {
+    this._src = v;
+    if (FX_MODE && v) { this._ok = true; this._w = this._h = 64; }
+  }
+  get complete() { return this._ok; }
+  get naturalWidth() { return this._w; }
+  get naturalHeight() { return this._h; }
 }
 globalThis.Image = Image;
 globalThis.performance = { now: () => simTimeMs };
@@ -91,12 +115,24 @@ const rafQueue = [];
 globalThis.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
 
 // fetch: serve the real bytes without HTTP (exact ArrayBuffer — Buffer.buffer
-// may be Node's shared pool for small files)
+// may be Node's shared pool for small files). Missing files resolve as a
+// soft 404 (same shape a browser gives) — page-side loaders must degrade,
+// never throw: the draw loop is the thing under test here.
 globalThis.fetch = (url) => {
-  const p = String(url).startsWith("http") ? "mockup/" + String(url).split("/").pop() : String(url);
-  const data = readFileSync(p === "battle.zkr" ? artifact : p);
+  let p = String(url).startsWith("http") ? "mockup/" + String(url).split("/").pop() : String(url);
+  /* page fetches the SVG art relative ("fx/...") - the harness cwd is the
+     repo root, not mockup/, so resolve the prefix (feeds --fx mode) */
+  if (p.startsWith("fx/")) p = "mockup/" + p;
+  let data;
+  try {
+    data = readFileSync(p === "battle.zkr" ? artifact : p);
+  } catch (e) {
+    return Promise.resolve({ ok: false, status: 404,
+      text: () => Promise.resolve(""), arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
+  }
   const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-  return Promise.resolve({ ok: true, status: 200, arrayBuffer: () => Promise.resolve(ab) });
+  return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(data.toString("utf8")),
+    arrayBuffer: () => Promise.resolve(ab) });
 };
 
 // ---------- run the page script ----------

@@ -32,6 +32,11 @@ ICON_ALIASES = {
     "commander1": "armcommander",
     "commander2": "armcommander",
     "commander3": "armcommander",
+    # the five stockpiled silo missiles (Eos/Shockley/Zeno/Quake/Inferno)
+    # resolve to the cruise-missile icon; the file is committed so the
+    # sync must not consider it missing when the game ships no
+    # cruisemissilesmall.* of its own
+    "cruisemissilesmall": "cruisemissile",
 }
 
 
