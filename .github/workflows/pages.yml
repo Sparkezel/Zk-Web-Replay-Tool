@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -37,5 +38,19 @@ jobs:
           # the viewer is self-contained: relative fetches of battle.zkr,
           # map.png and icons/ all resolve inside this directory
           path: mockup
+      - name: Wait for the github-pages artifact to be visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 1 30); do
+            count=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?name=github-pages" --jq '.total_count' 2>/dev/null || echo 0)
+            if [ "${count:-0}" -ge 1 ]; then
+              echo "github-pages artifact is visible to the Actions API"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::github-pages artifact did not become visible to the Actions API" >&2
+          exit 1
       - id: deploy
         uses: actions/deploy-pages@v4
