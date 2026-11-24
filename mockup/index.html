@@ -435,7 +435,12 @@ function buildArtifactModel(artifact){
     /* strike estimate: with a RECORDED target, impact time = last sample
        + remaining distance / measured cruise speed (ZK strategic
        missiles fly a straight constant-speed line); without one it is
-       the flight's own end (a real impact for a warhead that landed) */
+       the flight's own end (a real impact for a warhead that landed).
+       Deliberate limit (counter-review M1): a warhead killed AT IGNITION
+       has no measurable horizontal speed, so its circle honestly counts
+       down to the kill and then goes — there is nothing in a static
+       path to extrapolate an ETA from (the PTGT row gives the WHERE,
+       never the how-long). */
     var mapWf=m.mapW||16384,mapHf=m.mapH||16384;
     var sp=0;
     if(p.path.length>=2){

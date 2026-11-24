@@ -786,6 +786,14 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
   // live states: unit 1 fully EMP-stunned and slowed to 3/16 at frame 120
   snap.states = [{ unitID: 1, frame: 120, bits: 4, slow: 3 / 16 }];
+  // staging-corpse gate (feature mode): raw position bands alone must NEVER
+  // drop a wreck - Otago's real corner casualties (a Jumpjet Factory among
+  // them) proved that. A corner feature is staging carrion only when a
+  // LAUNCHED missile died within +/-36 frames of it (unit 12: staged,
+  // died f=300); one born far from any missile death is a real corner
+  // casualty and must survive.
+  snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
+  snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
 
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
@@ -908,10 +916,17 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(model.feedData.some((f) => f.cls === "death" &&
     /^Eos was destroyed before launching/.test(f.txt)),
     "a missile killed in its silo gets its own wording, not a plain destroy");
-  // the launched missile's staging-corner corpse never lands on the wreck
-  // layer (old-artifact fallback path: died>0 would have added one)
-  assert.ok(!model.wrecks.some((w) => w.x > 0.95 && (w.y < 0.05 || w.y > 0.95)),
-    "no fallback wreck at the staging corner");
+  // staging-corpse gate (feature mode): raw position bands alone must NEVER
+  // drop a wreck — Otago's real corner casualties (a Jumpjet Factory among
+  // them) proved that. A corner feature is staging carrion only when a
+  // LAUNCHED missile died within ±36 frames of it; one born far from any
+  // missile death is a real corner casualty and must survive.
+  snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
+  snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
+  assert.equal(model.wrecks.length, 1,
+    "feature mode drops ONLY the corner corpse matching the missile sweep (unit 12 died f=300)");
+  assert.ok(Math.abs(model.wrecks[0]!.x - 16000 / 16384) < 1e-4 && model.wrecks[0]!.metal === 40,
+    "the late corner casualty — a REAL wreck — survives the gate");
 });
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {

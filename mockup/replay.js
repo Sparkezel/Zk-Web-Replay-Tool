@@ -495,7 +495,8 @@
     return rows;
   }
 
-  function decodeLink(dv, u8) {    const p = { links: [], maxFrame: 0 };
+  function decodeLink(dv, u8) {
+    const p = { links: [], maxFrame: 0 };
     let o = 0;
     const n = dv.getUint32(o, true); o += 4;
     for (let i = 0; i < n; i++) {
@@ -1108,6 +1109,27 @@
     const wmw = dimsW && dimsW[0] > 0 ? dimsW[0] : 16384;
     const wmh = dimsW && dimsW[1] > 0 ? dimsW[1] : wmw;
     let nWreckEvents = 0;
+    /* staging corpses are filtered by POSITION + TIME, never by position
+       alone: real combat happens in map corners too (Otago: a Jumpjet
+       Factory and two neighbours died inside the same bands), so a corner
+       feature is staging carrion only when a LAUNCHED missile actually
+       died around that frame (corpse and unit death are the same engine
+       sweep). Artifacts with no missile launches keep every feature. */
+    const missileDeathFrames = [...launchTmByUnit.keys()]
+      .map((id) => (deathByUnit.has(id) ? deathByUnit.get(id) : -1))
+      .filter((f) => f >= 0)
+      .sort((a, b) => a - b);
+    const nearMissileDeath = (f) => {
+      if (!missileDeathFrames.length) return false;
+      let lo = 0, hi = missileDeathFrames.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (missileDeathFrames[mid] < f) lo = mid + 1; else hi = mid;
+      }
+      const hi2 = missileDeathFrames[lo];
+      const lo2 = lo > 0 ? missileDeathFrames[lo - 1] : hi2;
+      return Math.abs(hi2 - f) <= 36 || Math.abs(lo2 - f) <= 36;
+    };
     const wreckByFeature = new Map();
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "wreck") {
@@ -1115,8 +1137,10 @@
         /* stockpile missiles destroyed at the staging corner leave their
            corpse OUTSIDE the playable map (measured on The Hole: all 150,
            at fraction 1/0 — a magenta dot wall at the map corner without
-           this filter); real wrecks never sit at the literal map edge */
-        if (r.int2 >= wmw * 0.95 && (r.int3 <= wmh * 0.05 || r.int3 >= wmh * 0.95)) continue;
+           this filter); gated on a matching missile death so the corner
+           band alone can never eat a real wreck */
+        if (r.int2 >= wmw * 0.95 && (r.int3 <= wmh * 0.05 || r.int3 >= wmh * 0.95) &&
+            nearMissileDeath(r.frame)) continue;
         wreckByFeature.set(r.unitID, {
           born: toSec(r.frame),
           x: r.int2 / wmw, y: r.int3 / wmh,

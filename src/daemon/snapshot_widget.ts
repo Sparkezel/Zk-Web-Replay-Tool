@@ -502,33 +502,37 @@ function widget:GameFrame(frame)
         -- COMMANDED target of the flight. The path alone cannot tell where
         -- an antinuke-intercepted warhead was headed (kills at ignition
         -- leave zero movement), and the strike circle must mark the real
-        -- destination, never the intercept point. ZK itself never queries
-        -- GetProjectileTarget, so accept every plausible return shape:
-        --   (type, targetID)              unit/feature target
-        --   (type, x, y, z)               ground target
-        --   ({x=..,y=..,z=..})            table form of a ground target
-        -- Emitted once per (pid, target) - re-emit only when the engine
-        -- hands a different target (proID recycling, retargeting).
+        -- destination, never the intercept point.
+        -- Spring.GetProjectileTarget returns (targetType, targetData):
+        --   103 = ground   -> targetData = {[1]=x, [2]=y, [3]=z} (array
+        --                      form, NO .x/.z named keys - ZK's own
+        --                      unit_antinuke_handler.lua reads [1]/[3])
+        --   117 = unit    -> targetData = unitID
+        --   102 = feature -> targetData = featureID (separate id space!)
+        -- Emitted once per (pid, quantized target); probed every frame
+        -- while a strategic projectile exists, re-emitted only when the
+        -- engine hands a different target (retargeting; recycled pids with
+        -- a different target). pcall degrades safely on engines without
+        -- the API (ok = false -> no line).
         local wd = WeaponDefs[wdefID]
         local wkey = wd ~= nil and wd.name ~= nil and string.match(wd.name, "^([^_]+)") or nil
         if wkey ~= nil and STRAT_MISSILE_KEYS[wkey] then
-          local ok, a, b, c, d2 = pcall(Spring.GetProjectileTarget, pid)
+          local ok, ttype, tdata = pcall(Spring.GetProjectileTarget, pid)
           local tx, tz
-          if ok and a ~= nil then
-            if type(b) == "table" and b.x ~= nil and b.z ~= nil then
-              tx, tz = b.x, b.z
-            elseif type(b) == "number" and b > 0 then
-              if type(c) == "number" and type(d2) == "number" then
-                tx, tz = b, d2
-              else
-                local ux, uy, uz = Spring.GetUnitPosition(b)
-                if ux ~= nil then
-                  tx, tz = ux, uz
-                else
-                  local fx, fy, fz = Spring.GetFeaturePosition(b)
-                  tx, tz = fx, fz
-                end
-              end
+          if ok and ttype ~= nil then
+            if ttype == 103 and type(tdata) == "table" then
+              tx, tz = tdata[1], tdata[3]
+            elseif ttype == 117 and type(tdata) == "number" then
+              local ux, uy, uz = Spring.GetUnitPosition(tdata)
+              if ux ~= nil then tx, tz = ux, uz end
+            elseif ttype == 102 and type(tdata) == "number" then
+              local fx, fy, fz = Spring.GetFeaturePosition(tdata)
+              if fx ~= nil then tx, tz = fx, fz end
+            elseif type(tdata) == "table" then
+              -- unknown (type, table) combo on some other engine build:
+              -- best effort, array form first, named form second
+              tx, tz = tdata[1], tdata[3]
+              if tx == nil or tz == nil then tx, tz = tdata.x, tdata.z end
             end
           end
           if tx ~= nil and tz ~= nil then

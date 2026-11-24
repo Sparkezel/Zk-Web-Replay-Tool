@@ -435,14 +435,15 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
       return;
     }
     case "ptgt": {
-      // strategic projectile target: wolrd-space x/z (elmos), ordered
+      // strategic projectile target: world-space x/z (elmos), ordered
       // command destination of the missile — recorded by the widget once
       // per projectile life (re-emitted when the engine hands a different
       // target, e.g. after proID recycling)
       const x = num(ev["x"], NaN);
       const z = num(ev["z"], NaN);
-      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-      snap.ptgts.push({ proID: num(ev["u"]), frame: num(ev["f"], 0), x, z });
+      const proID = num(ev["u"], -1);
+      if (proID < 0 || !Number.isFinite(x) || !Number.isFinite(z)) return;
+      snap.ptgts.push({ proID, frame: num(ev["f"], 0), x, z });
       return;
     }
     case "gameover": {
