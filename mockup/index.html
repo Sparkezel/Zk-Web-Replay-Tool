@@ -702,21 +702,25 @@ function draw(model,tm){
       a=1-(tm-e.t)/(e.dur||8);          /* normal: decays in sim time */
     }
     var rr=Math.max(3,e.r*pxPerElmo);
-    cx.fillStyle="rgba("+e.col+","+(0.5*a).toFixed(3)+")";
-    cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.fill();
-    cx.strokeStyle="rgba("+e.col+","+a.toFixed(3)+")";
-    cx.lineWidth=1.5;
-    cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.stroke();
-    cx.lineWidth=1;
-    /* vector blast art over the detonation, in the warhead's colour —
-       the circles below stay (they carry the precise AOE), the SVG adds
-       the flavour layer; same once-per-pass alpha as the circles */
-    var fx=fxImage("nuke_blast",e.col);
-    if(fxReady(fx)){
-      var fs=Math.max(40,rr*1.5);
-      cx.globalAlpha=0.85*a;
+    /* the strategic NUKE detonation paints the vector BLAST ART instead of
+       the default circles (fx flag; art missing -> graceful circle
+       fallback); every other detonation keeps its precise AOE circles */
+    var fx=e.fx?fxImage("nuke_blast",e.col):null;
+    if(e.fx&&fxReady(fx)){
+      /* art spans ~1.9x the blast radius: the mushroom's visual mass sits
+         at roughly half the box, so the FELT blast size stays true to the
+         real AOE; the 60px floor keeps it visible when zoomed way out */
+      var fs=Math.max(60,rr*1.9);
+      cx.globalAlpha=Math.min(1,1.05*a);
       cx.drawImage(fx,e.x*W-fs/2,e.y*H-fs/2,fs,fs);
       cx.globalAlpha=1;
+    }else{
+      cx.fillStyle="rgba("+e.col+","+(0.5*a).toFixed(3)+")";
+      cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.fill();
+      cx.strokeStyle="rgba("+e.col+","+a.toFixed(3)+")";
+      cx.lineWidth=1.5;
+      cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.stroke();
+      cx.lineWidth=1;
     }
   });
   // incoming strategic missiles - ZK's own incoming-strike visualisation:
@@ -1074,17 +1078,14 @@ function draw(model,tm){
     cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
     /* in-flight markers. Trinity warheads and antinuke interceptors carry
-       their own icon files (nuke_missile.png / antinuke_proj.png). The
-       interceptor draws as a slight team-coloured BORDER (a solid tinted
-       dot would read as a warhead); the Trinity's custom art renders
-       SOLID-tinted — the destination-out erase used for the interceptor
-       would hollow its middle out into a transparent ring glyph. Until
-       an image file settles, the fallback glow dot keeps rendering */
+       their own icon files (nuke_missile.png / antinuke_proj.png): BOTH
+       render SOLID-TINTED - the destination-out border trick hollowed
+       the custom art's middle out (the very effect the antinuke rocket
+       was showing next); until an image settles, the fallback glow dot
+       keeps rendering */
     var fimg=pr.icon?ZkrReplay.iconFor(pr.icon):null;
-    var fcol=fimg&&fimg.complete&&fimg.naturalWidth&&pr.team!==undefined?(
-      pr.icon==="antinuke_proj"
-        ?ZkrReplay.outlineIcon(fimg,teamColor(pr.team))
-        :ZkrReplay.tintIcon(fimg,teamColor(pr.team))):null;
+    var fcol=fimg&&fimg.complete&&fimg.naturalWidth&&pr.team!==undefined?
+      ZkrReplay.tintIcon(fimg,teamColor(pr.team)):null;
     if(fcol){
       cx.drawImage(fcol,x-9,y-9,18,18);
     }else if(pr.mcol){

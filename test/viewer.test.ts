@@ -824,6 +824,9 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   const trinity = model.explosions.find((e) => e.r === 960);
   assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
     "Trinity explosion from staticnuke_crblmssl at its impact");
+  assert.equal(trinity!.fx, true, "the Trinity detonation carries the vector-blast flag");
+  assert.equal(model.explosions.find((e) => e.r === 192)!.fx, false,
+    "tactical/EMP/seismic blasts keep the default AOE circles");
   // in-flight markers: only the Trinity warhead and the antinuke interceptor
   // carry one (drawn as a slight team-coloured border at the flight head);
   // the warhead uses the missile's own nuke_missile icon, not the structure's

@@ -1,12 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <!-- nuke_blast.svg — PLACEHOLDER ART, drawn to be replaced.
+       Used ONLY for nuclear missile (Trinity) detonations, as a REPLACEMENT
+       of the default AOE circles. Death blasts of Detriment / Advanced
+       Geothermal / Singularity Reactor are the future contenders (all
+       1280 elmos, see the game's NUCLEAR_MISSILE / SINGULARITY weapons).
        Constraints for your own art:
        - keep the square viewBox (256x256), art centred on (128,128)
        - self-contained: no external images, fonts or scripts
-       - write the literal __TINT__ wherever the warhead colour goes
-         (Eos red / Shockley cyan / Zeno purple / Quake green / Inferno
-         orange / Trinity red) — it is replaced at load time
-       - use semi-transparent fills so the AOE circles stay readable -->
+       - write the literal __TINT__ wherever the warhead colour goes —
+         it is replaced at load time
+       - the art's silhouette should read at ~1.9x the blast radius:
+         sprite box = 1.9 x AOE, visual mass ~ half the box
+       - keep fills semi-transparent-ish: the incoming-strike circles have
+         already shown the exact AOE before the blast lands -->
   <g fill="none" stroke="#000" stroke-width="6" opacity=".55">
     <path d="M128 42 C 78 42 52 74 52 108 C 52 150 92 160 128 160 C 164 160 204 150 204 108 C 204 74 178 42 128 42 Z"/>
     <path d="M116 160 C 108 190 100 205 88 218 C 108 226 148 226 168 218 C 156 205 148 190 140 160 Z"/>

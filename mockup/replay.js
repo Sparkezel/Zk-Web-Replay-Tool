@@ -1262,8 +1262,11 @@
       ["empmissile", { col: "72,214,255", r: 140, fade: "fast", dur: 0 }],
       ["seismic", { col: "88,255,128", r: 320, fade: "fast", dur: 0 }],
       ["napalmmissile", { col: "255,138,40", r: 256, fade: "normal", dur: 8 }],
-      /* Trinity, the strategic nuke launcher - same red, its 960-elmo blast */
-      ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0 }],
+      /* Trinity, the strategic nuke launcher - same red, its 960-elmo blast.
+         fx: the warhead's detonation paints the vector BLAST ART instead
+         of the default AOE circle (the incoming-strike circles before
+         impact still carry the exact radius) */
+      ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0, fx: true }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
@@ -1328,7 +1331,7 @@
       const imp = p.path[p.path.length - 1];
       const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().split("_")[0] === n);
       if (ex && !p.intercepted) {
-        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur });
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur, fx: ex[1].fx === true });
       }
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
