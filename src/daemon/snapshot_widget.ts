@@ -351,12 +351,14 @@ end
 local function classifyWeapon(d, cp)
   -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
   -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
-  -- and the "party" filter below would silently drop it (and the DRP's own
-  -- burn weapons). Class 2 (artillery) fits the shell arc
+  -- and a name filter would silently drop it. Class 2 (artillery) fits the
+  -- shell arc. No "party" pattern here either: raveparty (Disco Rave Party),
+  -- jumparty and shiparty are LEGIT unit keys and the disco's colour
+  -- cannons must record; the fake proxies are covered by "fake"/"bogus".
   if cp ~= nil and cp.area_damage == "1" and isNapalmWeapon(d, cp) then return 2 end
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
-     name:find("party", 1, true) or name:find("tele_beacon_target", 1, true) then return 0 end
+     name:find("tele_beacon_target", 1, true) then return 0 end
   local wtype = d.type or ""
   if DROPPED_TYPES[wtype] then return 0 end
   local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil

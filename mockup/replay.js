@@ -1268,6 +1268,23 @@
          impact still carry the exact radius) */
       ["staticnuke", { col: "255,72,56", r: 960, fade: "fast", dur: 0, fx: true }],
     ];
+    /* impact AoE circles for the NON-strategic big guns: Big Bertha's
+       plasma, the disco's colour-in-the-name cannons (DRP is rare, the
+       rainbow reads well) and Dante's rocket volleys. Radius from the
+       recorded WDEF aoe, else the fixed game values below; each decays
+       in sim time over the stated (short) seconds; colour matches the
+       weapon's NAME (red killer -> red ...) or, for Bertha, its plasma */
+    const IMPACT_BLAST_DEFS = [
+      ["raveparty_red_killer",          { col: "255,72,56",  r: 192, dur: 2 }],
+      ["raveparty_orange_roaster",      { col: "255,138,40", r: 800, dur: 2 }],
+      ["raveparty_yellow_slammer",      { col: "255,224,32", r: 384, dur: 2 }],
+      ["raveparty_green_stamper",      { col: "88,255,128", r: 384, dur: 2 }],
+      ["raveparty_blue_shocker",       { col: "72,214,255", r: 320, dur: 2 }],
+      ["raveparty_violet_slugger",     { col: "168,96,255", r: 720, dur: 2 }],
+      ["staticheavyarty_plasma",        { col: "150,190,255", r: 176, dur: 2 }],
+      ["striderdante_napalm_rockets",       { col: "255,138,40", r: 168, dur: 3 }],
+      ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 168, dur: 3 }],
+    ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
        napalm patches are FIRE only — ZK's lups_napalm classification
@@ -1338,6 +1355,11 @@
       if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
       }
+      const ib = IMPACT_BLAST_DEFS.find(([n]) => String(w.name || "").toLowerCase() === n);
+      if (ib && !p.intercepted) {
+        explosions.push({ t: imp.t, x: imp.x, y: imp.z,
+          r: (w.aoe ?? 0) > 0 ? w.aoe : ib[1].r, col: ib[1].col, fade: "normal", dur: ib[1].dur });
+      }
       const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));
       /* fire shells' last PROBE sample can sit hundreds of elmos above
          impact (measured: real Firewalker/Kodachi/Dante flights end at
@@ -1371,6 +1393,18 @@
           r: (w.adr ?? 0) > 0 ? w.adr : 70,
           dur: (w.adu ?? 0) > 0 ? w.adu : 13.3,
           col: "90,90,90",
+        });
+      }
+      /* DRP's party zone: the disco's Orange Roaster shells leave the
+         lingering dance floor (the only rave weapon with area damage,
+         400 / 8 s); painted in the weapon's own orange, twinned with its
+         800-elmo impact ring above */
+      if (!p.intercepted && String(w.name || "").toLowerCase() === "raveparty_orange_roaster") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 400,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 8,
+          col: "255,138,40",
         });
       }
     }
@@ -1522,18 +1556,32 @@
       "energywind": { r: 180 },   // Wind/Tidal Generator (SMALL_BUILDINGEX)
       "energysolar": { r: 180 },   // Solar Collector (SMALL_BUILDINGEX)
     };
+    /* units whose EXPLODE weapon leaves lingering ground: the Pyro dies in
+       a flame ball - jumpraid's PYRO_DEATH (128 elmos / 13.3 s per game
+       data). Explode weapons fire ONCE at death and are LaserCannons
+       (never tracked as flights), so the death spot is the only anchor;
+       painted as default-orange fire */
+    const PATCH_DEATH_DEFS = {
+      "jumpraid": { r: 128, dur: 13.3 },   // Pyro — flame ball
+    };
     for (const u of units) {
       if (u.died < 0 || u.morph) continue;
       const db = DEATH_BLAST_DEFS[u.def ?? ""] ??
         (/^dyn[a-z]+[1-9]\d*_/.test(u.def ?? "") ? { r: 420 } : null);
-      if (!db) continue;
+      const pd = PATCH_DEATH_DEFS[u.def ?? ""] ?? null;
+      if (!db && !pd) continue;
       /* an unfinished nanoframe crumples - it does not go up in its full
          death blast; the table is for complete units */
       const last = u.track.length ? u.track[u.track.length - 1] : null;
       if (!last || (last.bd !== undefined && last.bd < 0.99)) continue;
-      explosions.push({ t: u.died, x: last.x, y: last.y, r: db.r,
-        col: db.col ?? "255,150,90", fade: "fast", dur: 0,
-        fx: db.fx === true });
+      if (db) {
+        explosions.push({ t: u.died, x: last.x, y: last.y, r: db.r,
+          col: db.col ?? "255,150,90", fade: "fast", dur: 0,
+          fx: db.fx === true });
+      }
+      if (pd) {
+        napalm.push({ t: u.died, x: last.x, y: last.y, r: pd.r, dur: pd.dur });
+      }
     }
 
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({

@@ -42,9 +42,13 @@ const DROPPED_TYPES = new Set([
   "AircraftBomb", "Melee", "Shield", "LightningCannon", "TorpedoLauncher",
 ]);
 
-/** Name substrings of junk / fake weapons (dropped bucket). */
+/** Name substrings of junk / fake weapons (dropped bucket). "party" was
+ *  removed: no real weapon contains it except the LEGIT unit keys
+ *  raveparty (Disco Rave Party), jumparty (Firewalker) and shiparty —
+ *  the disco's colour cannons were silently dropped wholesale; the fake
+ *  proxies are already covered by "fake"/"bogus". */
 const DROPPED_NAME_PATTERNS = [
-  "fake", "bogus", "party", "anl_fake", "tele_beacon_target",
+  "fake", "bogus", "anl_fake", "tele_beacon_target",
 ] as const;
 
 /** Launcher types producing guided missile trajectories. */
@@ -58,10 +62,9 @@ export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
 
   // ground napalm (ZK's own classification: description / lups fx, not merely
-  // any area damage) is always recorded BEFORE the junk-name list — ZK
-  // prefixes weapon names with the unit key, so legit napalm weapons like
-  // Firewalker's `jumparty_napalm_sprayer` or disco's rave weapons match
-  // the "party" pattern and would otherwise be silently dropped.
+  // any area damage) is recorded first regardless — ZK prefixes weapon names
+  // with the unit key, so legit napalm weapons like the Firewalker's
+  // `jumparty_napalm_sprayer` never depend on the name patterns.
   if (w.napalm) return 2;
 
   if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;

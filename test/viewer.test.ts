@@ -730,6 +730,29 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(39, { defID: 39, name: "jumpblackhole_black_hole", type: "Cannon", range: 900, trajectoryHeight: 300, aoe: 300, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
   snap.projectiles.set(111, { proID: 111, weaponDefID: 39, projClass: 1, ownerTeam: 0, startFrame: 90,
     samples: [{ frame: 90, x: 6000, z: 6000, y: 100 }, { frame: 95, x: 6100, z: 6100, y: 0 }] });
+  // impact-AoE rings for the non-strategic big guns: Bertha plasma, the
+  // disco's red/orange cannons, one Dante rocket salvo volley
+  snap.weaponDefs.set(40, { defID: 40, name: "staticheavyarty_plasma", type: "Cannon", range: 12000, trajectoryHeight: 300, aoe: 176, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(112, { proID: 112, weaponDefID: 40, projClass: 1, ownerTeam: 0, startFrame: 120,
+    samples: [{ frame: 120, x: 2000, z: 2000, y: 400 }, { frame: 130, x: 3000, z: 3000, y: 0 }] });
+  snap.weaponDefs.set(41, { defID: 41, name: "raveparty_red_killer", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 192, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(113, { proID: 113, weaponDefID: 41, projClass: 1, ownerTeam: 0, startFrame: 135,
+    samples: [{ frame: 135, x: 4000, z: 2000, y: 100 }, { frame: 140, x: 4100, z: 2100, y: 0 }] });
+  snap.weaponDefs.set(42, { defID: 42, name: "raveparty_orange_roaster", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 800, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(114, { proID: 114, weaponDefID: 42, projClass: 1, ownerTeam: 0, startFrame: 145,
+    samples: [{ frame: 145, x: 5000, z: 2000, y: 100 }, { frame: 150, x: 5100, z: 2100, y: 0 }] });
+  snap.weaponDefs.set(43, { defID: 43, name: "striderdante_napalm_rockets_salvo", type: "MissileLauncher", range: 800, aoe: 168, areaDamageRadius: 78, areaDamageDuration: 3, napalm: true });
+  snap.projectiles.set(115, { proID: 115, weaponDefID: 43, projClass: 4, ownerTeam: 0, startFrame: 155,
+    samples: [{ frame: 155, x: 6000, z: 2000, y: 80 }, { frame: 160, x: 6100, z: 2100, y: 0 }] });
+  // the Pyro's death flame ball: jumpraid dies -> lingering orange patch at
+  // the wreck (explode weapons have no flight, the death spot is the anchor)
+  snap.unitDefs.set(400, { defID: 400, name: "jumpraid", metalCost: 260, health: 240, canMove: true, iconType: "pyro", humanName: "Pyro" });
+  snap.units.set(400, { unitID: 400, defID: 400, samples: [
+    { frame: 400, x: 7000, z: 7000, hp: 255, build: 255 },
+    { frame: 449, x: 7000, z: 7000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 400, unitID: 400, int1: 400, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 450, unitID: 400, int1: -1, int2: 0, int3: -1 });
   // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
   // corner until liftoff, so its death must NOT anchor the blast — the
   // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
@@ -838,8 +861,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
   // radius from WDEF aoe; the missile unit's corner death must NOT paint one
-  assert.equal(model.explosions.length, 6,
-    "Eos + both Shockleys + the clean Trinity + the Skuttle and Detriment death blasts; no corner blast from the unit deaths, none from the antinuke interceptor");
+  assert.equal(model.explosions.length, 10,
+    "Eos + both Shockleys + the clean Trinity + the Skuttle and Detriment death blasts + the four impact rings (Bertha, DRP red/orange, Dante salvo); no corner blast from the unit deaths, none from the antinuke interceptor");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
@@ -936,8 +959,29 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(bh, "black-hole patch present");
   assert.equal(bh!.r, 70);
   assert.ok(Math.abs(bh!.dur - 13.3) < 1e-9);
-  assert.equal(model.napalm.filter((n) => !n.col && n !== np).length, 0,
-    "only fire patches stay colourless");
+  // impact-AoE rings: Bertha plasma (colour from its plasma), the disco's
+  // red/orange cannons (colour matches the NAME), Dante's salvo
+  assert.ok(model.explosions.some((e) => e.r === 176 && e.col === "150,190,255"),
+    "Bertha plasma impact ring");
+  assert.ok(model.explosions.some((e) => e.r === 192 && e.dur === 2 && e.col === "255,72,56"),
+    "DRP Red Killer impact ring, red like its name");
+  assert.ok(model.explosions.some((e) => e.r === 800 && e.col === "255,138,40"),
+    "DRP Orange Roaster impact ring, orange like its name");
+  assert.ok(model.explosions.some((e) => e.r === 168 && e.col === "255,138,40" && e.dur === 3),
+    "Dante rocket salvo impact ring");
+  // DRP party zone: the disco's only lingering ground effect
+  const oz = model.napalm.find((n) => n.col === "255,138,40" && n.r === 400);
+  assert.ok(oz && oz.dur === 8, "DRP party-zone patch 400/8");
+  // Dante rockets keep their burning-ground patch alongside the ring
+  assert.ok(model.napalm.some((n) => n.r === 78 && n.dur === 3),
+    "Dante salvo fire patch 78/3");
+  // the Pyro's death flame ball at the death spot
+  const pyroBall = model.napalm.find((n) => n.r === 128 && Math.abs(n.dur - 13.3) < 1e-9);
+  assert.ok(pyroBall && !pyroBall.col, "Pyro death flame ball 128/13.3, default fire colour");
+  assert.ok(Math.abs(pyroBall!.t - 450 / 30) < 0.05,
+    "the flame ball starts at the Pyro's death");
+  assert.equal(model.napalm.filter((n) => !n.col).length, 3,
+    "colourless patches are exactly the three fire-family ones (firewalker shell, Dante salvo, Pyro ball)");
 
   // superweapon construction news in the feed
   assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),
