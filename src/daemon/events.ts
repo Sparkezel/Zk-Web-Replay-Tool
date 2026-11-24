@@ -254,7 +254,8 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         trajectoryHeight: ev["th"] !== undefined ? num(ev["th"]) : undefined,
         // v2 columns: explosion AOE and the napalm ground patch (area
         // damage gated to actual napalm weapons — ZK's own lups_napalm
-        // classification; slow fields and the Dante black hole are NOT fire)
+        // classification; slow fields and the Placeholder (jumpblackhole)
+        // black hole are NOT fire)
         aoe: ev["aoe"] !== undefined ? num(ev["aoe"]) : undefined,
         areaDamageRadius: ev["adr"] !== undefined ? num(ev["adr"]) : undefined,
         areaDamageDuration: ev["adu"] !== undefined ? num(ev["adu"]) : undefined,

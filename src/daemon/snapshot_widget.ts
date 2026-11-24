@@ -200,7 +200,7 @@ local function maybeWdef(defID)
   if tostring(d.description or ""):lower():find("napalm", 1, true)
      or cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil then nd = 1 end
   -- area-damage radius/duration record for EVERY area_damage weapon, not
-  -- just napalm: Zeno's slow field and the Dante's black hole carry the
+  -- just napalm: Zeno's slow field and Placeholder's black hole carry the
   -- same customParams, and the VIEWER decides by nd (fire) or by weapon
   -- name (slow field) what paints; napalm without explicit params keeps
   -- the old aoe/15s fallback
@@ -342,7 +342,7 @@ local STRAT_MISSILE_KEYS = { tacnuke = true, empmissile = true, missileslow = tr
 local lastPtgt = {}
 -- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
 -- description contains "Napalm" or the lups heat/napalm fx is set. Area
--- damage ALONE is not fire - the slow missile's slow field and the Dante's
+-- damage ALONE is not fire - the slow missile's slow field and Placeholder's
 -- black hole are area damage too but must not record as napalm
 local function isNapalmWeapon(d, cp)
   if tostring(d.description or ""):lower():find("napalm", 1, true) then return true end

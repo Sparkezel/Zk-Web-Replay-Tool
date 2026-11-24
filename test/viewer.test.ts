@@ -731,17 +731,19 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.projectiles.set(111, { proID: 111, weaponDefID: 39, projClass: 1, ownerTeam: 0, startFrame: 90,
     samples: [{ frame: 90, x: 6000, z: 6000, y: 100 }, { frame: 95, x: 6100, z: 6100, y: 0 }] });
   // impact-AoE rings for the non-strategic big guns: Bertha plasma, the
-  // disco's red/orange cannons, one Dante rocket salvo volley
-  snap.weaponDefs.set(40, { defID: 40, name: "staticheavyarty_plasma", type: "Cannon", range: 12000, trajectoryHeight: 300, aoe: 176, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  // disco's red/orange cannons, one Dante rocket salvo volley (aoe values
+  // in the RECORDED convention - Spring's damageAreaOfEffect radius, half
+  // the lua areaOfEffect diameter, as real WDEFs carry them)
+  snap.weaponDefs.set(40, { defID: 40, name: "staticheavyarty_plasma", type: "Cannon", range: 12000, trajectoryHeight: 300, aoe: 88, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
   snap.projectiles.set(112, { proID: 112, weaponDefID: 40, projClass: 1, ownerTeam: 0, startFrame: 120,
     samples: [{ frame: 120, x: 2000, z: 2000, y: 400 }, { frame: 130, x: 3000, z: 3000, y: 0 }] });
-  snap.weaponDefs.set(41, { defID: 41, name: "raveparty_red_killer", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 192, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.weaponDefs.set(41, { defID: 41, name: "raveparty_red_killer", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 96, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
   snap.projectiles.set(113, { proID: 113, weaponDefID: 41, projClass: 1, ownerTeam: 0, startFrame: 135,
     samples: [{ frame: 135, x: 4000, z: 2000, y: 100 }, { frame: 140, x: 4100, z: 2100, y: 0 }] });
-  snap.weaponDefs.set(42, { defID: 42, name: "raveparty_orange_roaster", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 800, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.weaponDefs.set(42, { defID: 42, name: "raveparty_orange_roaster", type: "Cannon", range: 4000, trajectoryHeight: 200, aoe: 400, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
   snap.projectiles.set(114, { proID: 114, weaponDefID: 42, projClass: 1, ownerTeam: 0, startFrame: 145,
     samples: [{ frame: 145, x: 5000, z: 2000, y: 100 }, { frame: 150, x: 5100, z: 2100, y: 0 }] });
-  snap.weaponDefs.set(43, { defID: 43, name: "striderdante_napalm_rockets_salvo", type: "MissileLauncher", range: 800, aoe: 168, areaDamageRadius: 78, areaDamageDuration: 3, napalm: true });
+  snap.weaponDefs.set(43, { defID: 43, name: "striderdante_napalm_rockets_salvo", type: "MissileLauncher", range: 800, aoe: 84, areaDamageRadius: 78, areaDamageDuration: 3, napalm: true });
   snap.projectiles.set(115, { proID: 115, weaponDefID: 43, projClass: 4, ownerTeam: 0, startFrame: 155,
     samples: [{ frame: 155, x: 6000, z: 2000, y: 80 }, { frame: 160, x: 6100, z: 2100, y: 0 }] });
   // the Pyro's death flame ball: jumpraid dies -> lingering orange patch at
@@ -961,13 +963,13 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(bh!.dur - 13.3) < 1e-9);
   // impact-AoE rings: Bertha plasma (colour from its plasma), the disco's
   // red/orange cannons (colour matches the NAME), Dante's salvo
-  assert.ok(model.explosions.some((e) => e.r === 176 && e.col === "150,190,255"),
+  assert.ok(model.explosions.some((e) => e.r === 88 && e.col === "150,190,255"),
     "Bertha plasma impact ring");
-  assert.ok(model.explosions.some((e) => e.r === 192 && e.dur === 2 && e.col === "255,72,56"),
+  assert.ok(model.explosions.some((e) => e.r === 96 && e.dur === 2 && e.col === "255,72,56"),
     "DRP Red Killer impact ring, red like its name");
-  assert.ok(model.explosions.some((e) => e.r === 800 && e.col === "255,138,40"),
+  assert.ok(model.explosions.some((e) => e.r === 400 && e.col === "255,138,40" && e.dur === 2),
     "DRP Orange Roaster impact ring, orange like its name");
-  assert.ok(model.explosions.some((e) => e.r === 168 && e.col === "255,138,40" && e.dur === 3),
+  assert.ok(model.explosions.some((e) => e.r === 84 && e.col === "255,138,40" && e.dur === 3),
     "Dante rocket salvo impact ring");
   // DRP party zone: the disco's only lingering ground effect
   const oz = model.napalm.find((n) => n.col === "255,138,40" && n.r === 400);

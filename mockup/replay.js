@@ -1271,19 +1271,22 @@
     /* impact AoE circles for the NON-strategic big guns: Big Bertha's
        plasma, the disco's colour-in-the-name cannons (DRP is rare, the
        rainbow reads well) and Dante's rocket volleys. Radius from the
-       recorded WDEF aoe, else the fixed game values below; each decays
-       in sim time over the stated (short) seconds; colour matches the
-       weapon's NAME (red killer -> red ...) or, for Bertha, its plasma */
+       recorded WDEF aoe (Spring's damageAreaOfEffect - the RADIUS, half
+       the lua areaOfEffect diameter: measured Dante 168->84, roaster
+       800->400 on real artifacts), else the halved fixed values below in
+       the same convention as the strategic table; each decays in sim
+       time over the stated (short) seconds; colour matches the weapon's
+       NAME (red killer -> red ...) or, for Bertha, its plasma */
     const IMPACT_BLAST_DEFS = [
-      ["raveparty_red_killer",          { col: "255,72,56",  r: 192, dur: 2 }],
-      ["raveparty_orange_roaster",      { col: "255,138,40", r: 800, dur: 2 }],
-      ["raveparty_yellow_slammer",      { col: "255,224,32", r: 384, dur: 2 }],
-      ["raveparty_green_stamper",      { col: "88,255,128", r: 384, dur: 2 }],
-      ["raveparty_blue_shocker",       { col: "72,214,255", r: 320, dur: 2 }],
-      ["raveparty_violet_slugger",     { col: "168,96,255", r: 720, dur: 2 }],
-      ["staticheavyarty_plasma",        { col: "150,190,255", r: 176, dur: 2 }],
-      ["striderdante_napalm_rockets",       { col: "255,138,40", r: 168, dur: 3 }],
-      ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 168, dur: 3 }],
+      ["raveparty_red_killer",          { col: "255,72,56",  r: 96, dur: 2 }],
+      ["raveparty_orange_roaster",      { col: "255,138,40", r: 400, dur: 2 }],
+      ["raveparty_yellow_slammer",      { col: "255,224,32", r: 192, dur: 2 }],
+      ["raveparty_green_stamper",      { col: "88,255,128", r: 192, dur: 2 }],
+      ["raveparty_blue_shocker",       { col: "72,214,255", r: 160, dur: 2 }],
+      ["raveparty_violet_slugger",     { col: "168,96,255", r: 360, dur: 2 }],
+      ["staticheavyarty_plasma",        { col: "150,190,255", r: 88, dur: 2 }],
+      ["striderdante_napalm_rockets",       { col: "255,138,40", r: 84, dur: 3 }],
+      ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 84, dur: 3 }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
@@ -1398,7 +1401,8 @@
       /* DRP's party zone: the disco's Orange Roaster shells leave the
          lingering dance floor (the only rave weapon with area damage,
          400 / 8 s); painted in the weapon's own orange, twinned with its
-         800-elmo impact ring above */
+         400-elmo impact ring above (recorded aoe - the RADIUS, half the
+         lua areaOfEffect diameter) */
       if (!p.intercepted && String(w.name || "").toLowerCase() === "raveparty_orange_roaster") {
         napalm.push({
           t: imp.t, x: imp.x, y: imp.z,
