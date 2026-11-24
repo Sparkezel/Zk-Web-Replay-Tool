@@ -766,7 +766,8 @@ function draw(model,tm){
   // intercepted warheads: a small vector burst where the antinuke rocket
   // got them (the strike circle keeps telling the would-be target) - flash
   // ONCE per pass through time, exactly like the detonation blasts; the
-  // art paints in the downed missile's colour to match its target circle
+  // trefoil art carries its own fixed nuclear palette (red ring/strike,
+  // yellow-orange blades), so the warhead-colour token is unused in it
   model.projectiles.forEach(function(pr){
     if(!pr.intercepted)return;
     /* seek back before the kill re-arms the flash (same semantics as the
