@@ -1386,6 +1386,129 @@
       i = j;
     }
 
+    /* ---- death blasts (Skuttle-sized and up) ----
+       ZK explodes every unit on death; this census covers the units whose
+       explodeAs/selfDestructAs weapon carries areaOfEffect >= Skuttle's
+       180 elmos (measured over zk-stable 2026-07: units/*.lua plus
+       weapons/*.tdf - inline weaponDefs and TDF stock explosions both).
+       The silo missile UNITS (Eos/Shockley/Quake/Inferno) are
+       deliberately absent: their detonations come from the warhead
+       FLIGHT impacts, and a missile killed in its silo leaves no blast
+       in the replay story. The nuke ART (fx) goes on Detriment and
+       Advanced Geothermal only - both die through the very same
+       NUCLEAR_MISSILE weapon (1280 elmos, out-blasting the Trinity
+       warhead's 960); the Singularity Reactor's identical 1280 stays a
+       plain circle (design call - one table entry to change).
+       Dynamic commander defs are generated per level at runtime, so the
+       pattern match below carries the chassis' 420-elmo blast to every
+       dynXX<N>_ level. Everything else uses the neutral blast colour. */
+    const NUKE_RED_LOCAL = "255,72,56";
+    const DEATH_BLAST_DEFS = {
+      "striderdetriment": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Detriment
+      "energysingu": { r: 1280, col: NUKE_RED_LOCAL },   // Singularity Reactor (same 1280, circle per design)
+      "energyheavygeo": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Advanced Geothermal
+      "turretheavy": { r: 520 },   // Desolator (ESTOR_BUILDING)
+      "turretantiheavy": { r: 520 },   // Lucifer (ESTOR_BUILDING)
+      "turretaaheavy": { r: 520 },   // Artemis (ESTOR_BUILDING)
+      "striderfunnelweb": { r: 520 },   // Funnelweb (ESTOR_BUILDING)
+      "striderantiheavy": { r: 520 },   // Ultimatum (ESTOR_BUILDING)
+      "energygeo": { r: 520 },   // Geothermal Generator (ESTOR_BUILDING)
+      "bomberassault": { r: 520 },   // Odin (ESTOR_BUILDING)
+      "amphbomb": { r: 500 },   // Limpet (AMPHBOMB_DEATH)
+      "zenith": { r: 480 },   // Zenith (ATOMIC_BLAST)
+      "striderbantha": { r: 480 },   // Paladin (ATOMIC_BLAST)
+      "staticnuke": { r: 480 },   // Trinity (ATOMIC_BLAST)
+      "staticheavyarty": { r: 480 },   // Big Bertha (ATOMIC_BLAST)
+      "raveparty": { r: 480 },   // Disco Rave Party (ATOMIC_BLAST)
+      "pw_hq_attacker": { r: 480 },   // Attacker Command (ATOMIC_BLAST)
+      "pw_generic": { r: 480 },   // Generic Neutral Structure (ATOMIC_BLAST)
+      "mahlazer": { r: 480 },   // Starlight (ATOMIC_BLAST)
+      "energyfusion": { r: 480 },   // Fusion Reactor (ATOMIC_BLAST)
+      "striderhub": { r: 420 },   // Strider Hub (ESTOR_BUILDINGEX)
+      "obj_artefact": { r: 420 },   // Ancient Artefact (ESTOR_BUILDINGEX)
+      "energypylon": { r: 420 },   // Energy Pylon (ESTOR_BUILDINGEX)
+      "dynsupport1": { r: 420 },   // Engineer Commander (ESTOR_BUILDINGEX)
+      "dynstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "dynrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "dynassault1": { r: 420 },   // Guardian Commander (ESTOR_BUILDINGEX)
+      "cremcom1": { r: 420 },   // Commander (ESTOR_BUILDINGEX)
+      "corcom1": { r: 420 },   // Battle Commander (ESTOR_BUILDINGEX)
+      "commsupport1": { r: 420 },   // Support Commander (ESTOR_BUILDINGEX)
+      "commstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "commrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "benzcom1": { r: 420 },   // Siege Commander (ESTOR_BUILDINGEX)
+      "armcom1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "shieldbomb": { r: 384 },   // Snitch (shieldbomb_DEATH)
+      "cloakbomb": { r: 352 },   // Imp (cloakbomb_DEATH)
+      "turretsunlance": { r: 340 },   // Sunlance (LARGE_BUILDINGEX)
+      "turretriot": { r: 340 },   // Stardust (LARGE_BUILDINGEX)
+      "turretaafar": { r: 340 },   // Chainsaw (LARGE_BUILDINGEX)
+      "staticrearm": { r: 340 },   // Airpad (LARGE_BUILDINGEX)
+      "staticmissilesilo": { r: 340 },   // Missile Silo (LARGE_BUILDINGEX)
+      "staticarty": { r: 340 },   // Cerberus (LARGE_BUILDINGEX)
+      "staticantinuke": { r: 340 },   // Antinuke (LARGE_BUILDINGEX)
+      "nebula": { r: 340 },   // Nebula (LARGE_BUILDINGEX)
+      "gunshipkrow": { r: 340 },   // Krow (LARGE_BUILDINGEX)
+      "factoryveh": { r: 340 },   // Rover Assembly (LARGE_BUILDINGEX)
+      "factorytank": { r: 340 },   // Tank Foundry (LARGE_BUILDINGEX)
+      "factoryspider": { r: 340 },   // Spider Factory (LARGE_BUILDINGEX)
+      "factoryship": { r: 340 },   // Shipyard (LARGE_BUILDINGEX)
+      "factoryshield": { r: 340 },   // Shieldbot Factory (LARGE_BUILDINGEX)
+      "factoryplane": { r: 340 },   // Airplane Plant (LARGE_BUILDINGEX)
+      "factoryjump": { r: 340 },   // Jumpbot Factory (LARGE_BUILDINGEX)
+      "factoryhover": { r: 340 },   // Hovercraft Platform (LARGE_BUILDINGEX)
+      "factorygunship": { r: 340 },   // Gunship Plant (LARGE_BUILDINGEX)
+      "factorycloak": { r: 340 },   // Cloakbot Factory (LARGE_BUILDINGEX)
+      "factoryamph": { r: 340 },   // Amphbot Factory (LARGE_BUILDINGEX)
+      "striderarty": { r: 320 },   // Merlin (ATOMIC_BLASTSML)
+      "shipcarrier": { r: 320 },   // Reef (ATOMIC_BLASTSML)
+      "plateveh": { r: 294 },   // Rover Plate (FAC_PLATEEX)
+      "platetank": { r: 294 },   // Tank Plate (FAC_PLATEEX)
+      "platespider": { r: 294 },   // Spider Plate (FAC_PLATEEX)
+      "plateship": { r: 294 },   // Ship Plate (FAC_PLATEEX)
+      "plateshield": { r: 294 },   // Shieldbot Plate (FAC_PLATEEX)
+      "plateplane": { r: 294 },   // Airplane Plate (FAC_PLATEEX)
+      "platejump": { r: 294 },   // Jumpbot Plate (FAC_PLATEEX)
+      "platehover": { r: 294 },   // Hovercraft Plate (FAC_PLATEEX)
+      "plategunship": { r: 294 },   // Gunship Plate (FAC_PLATEEX)
+      "platecloak": { r: 294 },   // Cloakbot Plate (FAC_PLATEEX)
+      "plateamph": { r: 294 },   // Amphbot Plate (FAC_PLATEEX)
+      "commander_egg": { r: 280 },   // Commander Egg (COMMANDER_EGG_EMP)
+      "turrettorp": { r: 260 },   // Urchin (MEDIUM_BUILDINGEX)
+      "turretimpulse": { r: 260 },   // Newton (MEDIUM_BUILDINGEX)
+      "turretheavylaser": { r: 260 },   // Stinger (MEDIUM_BUILDINGEX)
+      "turretemp": { r: 260 },   // Faraday (MEDIUM_BUILDINGEX)
+      "turretaaflak": { r: 260 },   // Thresher (MEDIUM_BUILDINGEX)
+      "hoverarty": { r: 260 },   // Lance (MEDIUM_BUILDINGEX)
+      "striderscorpion": { r: 256 },   // Scorpion (CRAWL_BLASTSML)
+      "striderdante": { r: 256 },   // Dante (CRAWL_BLASTSML)
+      "turretlaser": { r: 180 },   // Lotus (SMALL_BUILDINGEX)
+      "turretgauss": { r: 180 },   // Gauss (SMALL_BUILDINGEX)
+      "turretaalaser": { r: 180 },   // Razor (SMALL_BUILDINGEX)
+      "turretaaclose": { r: 180 },   // Hacksaw (SMALL_BUILDINGEX)
+      "staticstorage": { r: 180 },   // Storage (SMALL_BUILDINGEX)
+      "staticsonar": { r: 180 },   // Sonar Station (SMALL_BUILDINGEX)
+      "staticradar": { r: 180 },   // Radar Tower (SMALL_BUILDINGEX)
+      "staticmex": { r: 180 },   // Metal Extractor (SMALL_BUILDINGEX)
+      "staticheavyradar": { r: 180 },   // Advanced Radar (SMALL_BUILDINGEX)
+      "jumpbomb": { r: 180 },   // Skuttle (jumpbomb_DEATH)
+      "energywind": { r: 180 },   // Wind/Tidal Generator (SMALL_BUILDINGEX)
+      "energysolar": { r: 180 },   // Solar Collector (SMALL_BUILDINGEX)
+    };
+    for (const u of units) {
+      if (u.died < 0 || u.morph) continue;
+      const db = DEATH_BLAST_DEFS[u.def ?? ""] ??
+        (/^dyn[a-z]+[1-9]\d*_/.test(u.def ?? "") ? { r: 420 } : null);
+      if (!db) continue;
+      /* an unfinished nanoframe crumples - it does not go up in its full
+         death blast; the table is for complete units */
+      const last = u.track.length ? u.track[u.track.length - 1] : null;
+      if (!last || (last.bd !== undefined && last.bd < 0.99)) continue;
+      explosions.push({ t: u.died, x: last.x, y: last.y, r: db.r,
+        col: db.col ?? "255,150,90", fade: "fast", dur: 0,
+        fx: db.fx === true });
+    }
+
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({
       djinnID: l.djinnID, lampID: l.lampID, team: l.team,
       open: toSec(l.openFrame),

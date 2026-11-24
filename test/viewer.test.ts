@@ -794,6 +794,22 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // casualty and must survive.
   snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
   snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
+  // census-driven death blasts: a Skuttle (180 - the census threshold itself)
+  // and a Detriment (1280 NUCLEAR_MISSILE - nuke grade, vector art)
+  snap.unitDefs.set(23, { defID: 23, name: "jumpbomb", metalCost: 100, health: 800, canMove: true, iconType: "jumpbomb", humanName: "Skuttle" });
+  snap.units.set(15, { unitID: 15, defID: 23, samples: [
+    { frame: 320, x: 4000, z: 4000, hp: 255, build: 255 },
+    { frame: 354, x: 4000, z: 4000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 320, unitID: 15, int1: 23, int2: 0, int3: -1 });
+  snap.events.push({ kind: "death", frame: 354, unitID: 15, int1: -1, int2: 0, int3: -1 });
+  snap.unitDefs.set(24, { defID: 24, name: "striderdetriment", metalCost: 4000, health: 20000, canMove: false, iconType: "striderdetriment", humanName: "Detriment" });
+  snap.units.set(16, { unitID: 16, defID: 24, samples: [
+    { frame: 320, x: 8000, z: 2000, hp: 255, build: 255 },
+    { frame: 366, x: 8000, z: 2000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 320, unitID: 16, int1: 24, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 366, unitID: 16, int1: -1, int2: 1, int3: -1 });
 
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
@@ -810,8 +826,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
   // radius from WDEF aoe; the missile unit's corner death must NOT paint one
-  assert.equal(model.explosions.length, 4,
-    "Eos + both Shockleys + the clean Trinity paint one - no corner blast from the unit deaths, none from the antinuke interceptor");
+  assert.equal(model.explosions.length, 6,
+    "Eos + both Shockleys + the clean Trinity + the Skuttle and Detriment death blasts; no corner blast from the unit deaths, none from the antinuke interceptor");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
@@ -924,12 +940,22 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // them) proved that. A corner feature is staging carrion only when a
   // LAUNCHED missile died within ±36 frames of it; one born far from any
   // missile death is a real corner casualty and must survive.
-  snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
-  snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
+  // (fixture rows added before buildZkrFromResim above)
   assert.equal(model.wrecks.length, 1,
     "feature mode drops ONLY the corner corpse matching the missile sweep (unit 12 died f=300)");
   assert.ok(Math.abs(model.wrecks[0]!.x - 16000 / 16384) < 1e-4 && model.wrecks[0]!.metal === 40,
     "the late corner casualty — a REAL wreck — survives the gate");
+
+  // census-driven death blasts: the Skuttle-class 180 circle, the
+  // Detriment's 1280 NUCLEAR_MISSILE blast with the vector nuke art
+  const skutBlast = model.explosions.find((e) => e.r === 180);
+  assert.ok(skutBlast && Math.abs(skutBlast.t - 354 / 30) < 1e-6 &&
+    Math.abs(skutBlast.x - 4000 / 16384) < 1e-4 && skutBlast.fx === false,
+    "Skuttle death blast: circle at its death position/time, no blast art");
+  const detBlast = model.explosions.find((e) => e.r === 1280);
+  assert.ok(detBlast && detBlast.fx === true && detBlast.col === "255,72,56" &&
+    Math.abs(detBlast.t - 366 / 30) < 1e-6,
+    "Detriment death blast: nuke-grade, red, uses the vector blast art");
 });
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
