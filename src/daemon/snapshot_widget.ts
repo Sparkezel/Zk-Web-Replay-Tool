@@ -193,8 +193,9 @@ local function maybeWdef(defID)
   local adr, adu = 0, 0
   -- napalm flag: ZK's own lups_napalm gadget classes a weapon as napalm by
   -- its description (e.g. "Napalm Mortar") or lups_napalm_fx/lups_heat_fx;
-  -- area_damage ALONE also covers slow fields (missileslow) and the Dante's
-  -- black hole, which must NOT paint fire patches in the viewer
+  -- area_damage ALONE also covers slow fields (missileslow) and
+  -- Placeholder's black hole (jumpblackhole), which must NOT paint fire
+  -- patches in the viewer
   local nd = 0
   if tostring(d.description or ""):lower():find("napalm", 1, true)
      or cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil then nd = 1 end

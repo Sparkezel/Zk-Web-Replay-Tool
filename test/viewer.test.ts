@@ -724,6 +724,12 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(38, { defID: 38, name: "missileslow_weapon", type: "StarburstLauncher", range: 6000, aoe: 320, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
   snap.projectiles.set(110, { proID: 110, weaponDefID: 38, projClass: 4, ownerTeam: 0, startFrame: 70,
     samples: [{ frame: 70, x: 5000, z: 5000, y: 200 }, { frame: 76, x: 5500, z: 5500, y: 0 }] });
+  // Placeholder's black hole (jumpblackhole - the Black-Hole artillery
+  // unit): no recorded area fields either -> dark grey lingering circle
+  // at the fixed game values 70 / 13.3 s
+  snap.weaponDefs.set(39, { defID: 39, name: "jumpblackhole_black_hole", type: "Cannon", range: 900, trajectoryHeight: 300, aoe: 300, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(111, { proID: 111, weaponDefID: 39, projClass: 1, ownerTeam: 0, startFrame: 90,
+    samples: [{ frame: 90, x: 6000, z: 6000, y: 100 }, { frame: 95, x: 6100, z: 6100, y: 0 }] });
   // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
   // corner until liftoff, so its death must NOT anchor the blast — the
   // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
@@ -925,6 +931,11 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(zeno, "slow-field patch present");
   assert.equal(zeno!.r, 320);
   assert.equal(zeno!.dur, 30);
+  // Placeholder's black hole: dark grey 70/13.3
+  const bh = model.napalm.find((n) => n.col === "90,90,90");
+  assert.ok(bh, "black-hole patch present");
+  assert.equal(bh!.r, 70);
+  assert.ok(Math.abs(bh!.dur - 13.3) < 1e-9);
   assert.equal(model.napalm.filter((n) => !n.col && n !== np).length, 0,
     "only fire patches stay colourless");
 

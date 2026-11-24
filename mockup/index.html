@@ -679,7 +679,8 @@ function draw(model,tm){
   (model.napalmRegions||[]).forEach(function(n){
     if(!(tm>=n.t&&tm<=n.t+n.dur))return;
     /* per-patch colour: fire stays orange, Zeno's slow zones paint the
-       missile's own colour (purple) — older models may carry no col */
+       missile's own colour (purple), Placeholder's black holes paint
+       dark grey — older models may carry no col */
     cx.fillStyle="rgba("+(n.col||"255,120,30")+",.3)";
     cx.beginPath();cx.arc(n.x*W,n.y*H,Math.max(2,n.r*pxPerElmo),0,7);cx.fill();
   });

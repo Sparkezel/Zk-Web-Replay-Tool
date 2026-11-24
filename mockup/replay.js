@@ -1274,9 +1274,10 @@
        (weapon description / fx; the internal def names carry _napalm_ too,
        which doubles as the fallback for artifacts recorded before the nd
        flag existed). Zeno's slow field (missileslow) is area damage but
-       NOT fire — it paints its own lingering purple patch. The Dante's
-       black hole stays unpainted. Firewalker shells 64 elmos / 16 s,
-       Inferno warheads 256 / 45 s, Zeno slow zones 320 / 30 s */
+       NOT fire — it paints its own lingering purple patch; Placeholder's
+       black hole (jumpblackhole) likewise paints dark grey. Firewalker
+       shells 64 elmos / 16 s, Inferno warheads 256 / 45 s, Zeno slow
+       zones 320 / 30 s, black holes 70 / 13.3 s */
     const napalm = [];
     /* an antinuke intercept kills the warhead MID-AIR, and the warhead's
        flight would mark the intercept point as the strike - painting a
@@ -1358,6 +1359,18 @@
           r: (w.adr ?? 0) > 0 ? w.adr : 320,
           dur: (w.adu ?? 0) > 0 ? w.adu : 30,
           col: "168,96,255",
+        });
+      }
+      /* Placeholder's black hole (jumpblackhole, the Black-Hole artillery
+         unit - NOT the Dante): the gravity well is neither fire nor slow,
+         it paints as a dark grey lingering circle. Fixed game values
+         70 elmos / 13.3 s unless the recording widget provided them */
+      if (!p.intercepted && String(w.name || "").toLowerCase().split("_")[0] === "jumpblackhole") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 70,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 13.3,
+          col: "90,90,90",
         });
       }
     }
