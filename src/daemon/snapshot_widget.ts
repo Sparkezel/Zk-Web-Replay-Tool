@@ -303,6 +303,43 @@ function widget:FeatureDestroyed(featureID)
   emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID .. '}')
 end
 
+-- ---- engagements: who is fighting whom --------------------------------
+-- Users want to see how fights flow: a small arrow from the attacker to
+-- its current target while the two are engaged. Ground truth is the
+-- engine's own UnitDamaged callin (a spectator/replay view sees every
+-- hit). Emit an "eng" row when an attacker's victim CHANGES, plus a
+-- keep-alive refresh every 18 frames (0.6 s) while the SAME pair keeps
+-- landing hits - the viewer holds an arrow alive for ~1.2 s past the
+-- last row, so a healthy fight never flickers. One row per (attacker,
+-- victim, 0.6 s) instead of one per damage tick keeps a big 8v8 in the
+-- low thousands of rows. Excluded, matching the user's spec: ballistic
+-- artillery (weapon trajectoryHeight > 0 - the arcs already have their
+-- own flight layer) and the strategic silo missiles (they have their
+-- own strike/blast layers and would flood the map); everything else
+-- records - assaults, raiders, riots, AA, skirms with flat launchers,
+-- beams, flamethrowers.
+local ENG_MISSILE_DEFS = {
+  tacnuke = true, empmissile = true, missileslow = true,
+  seismic = true, napalmmissile = true, staticnuke = true, staticantinuke = true,
+}
+local engLast = {}   -- attackerUnitID -> { v = victimUnitID, f = frame of last emit }
+function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
+                            weaponDefID, projectileID, attackerID, attackerDefID, attackerTeam)
+  if attackerID == nil or attackerID <= 0 or attackerID == unitID then return end
+  local ad = attackerDefID and UnitDefs[attackerDefID]
+  if ad == nil then return end
+  local an = string.lower(ad.name or "")
+  if ENG_MISSILE_DEFS[an] or an == "terraunit" or string.find(an, "^fakeunit") then return end
+  -- ballistic artillery arcs: they draw flights, not engagements
+  local wd = weaponDefID and WeaponDefs[weaponDefID]
+  if wd ~= nil and (wd.trajectoryHeight or 0) > 0 then return end
+  local f = Spring.GetGameFrame()
+  local last = engLast[attackerID]
+  if last ~= nil and last.v == unitID and f - last.f < 18 then return end
+  engLast[attackerID] = { v = unitID, f = f }
+  emit('{"t":"eng","f":' .. f .. ',"u":' .. attackerID .. ',"v":' .. unitID .. '}')
+end
+
 -- 1-second lifecycle poll (the headless engine skips the callins above)
 local function pollWreckFeatures()
   local alive = {}

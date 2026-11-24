@@ -173,6 +173,7 @@
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="cloaks" checked> cloaks</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1"> healthv1</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2" checked> healthv2</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="targets"> targets</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
       </div>
@@ -460,6 +461,9 @@ function buildArtifactModel(artifact){
       sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.diedShown>0&&tm>=this.diedShown))return null;
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
+  /* attacker id -> view unit, for the target-arrow layer */
+  var unitById={};
+  units.forEach(function(u){unitById[u.id]=u;});
   var projectiles=m.projectiles.map(function(p){
     var ip=p.path[p.path.length-1];
     /* strike estimate: with a RECORDED target, impact time = last sample
@@ -623,6 +627,7 @@ function draw(model,tm){
      damage-darkened team colour, no ring. If both toggles are on, v1 wins. */
   var hpv1On=document.getElementById("hpv1").checked;
   var hpv2On=!hpv1On&&document.getElementById("hpv2").checked;
+  var targetsOn=document.getElementById("targets").checked;
 
   /* ------------- under-layer: wrecks, shield fields, cloak fields -------------
      all of this renders BELOW every unit icon; radii use the single
@@ -958,6 +963,42 @@ function draw(model,tm){
       cx.strokeStyle=stroke;cx.lineWidth=1;
       cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
     });
+  }
+
+  // engagement arrows (toggle: targets): small yellow arrows from each
+  // attacker to the victim it is currently landing hits on — the
+  // recorded "engage" rows are ground truth from the engine's own
+  // UnitDamaged callin (victim change + 0.6 s keep-alive), so an arrow
+  // = actual damage flowing, not a mere attack order. TTL ~1.2 s after
+  // the last hit; drawn BELOW all unit icons at 0.3 opacity; artifacts
+  // recorded before the engage rows carry nothing and paint nothing
+  if(targetsOn&&model.engagements){
+    var ENG_TTL=model.ENGAGE_TTL||1.2;
+    cx.strokeStyle="rgba(255,221,68,.3)";
+    cx.fillStyle="rgba(255,221,68,.3)";
+    cx.lineWidth=1.5;
+    for(var eid in model.engagements){
+      var au=unitById[eid];
+      if(!au||!au.posAt)continue;
+      var row=ZkrReplay.engAt(model.engagements[eid],tm,ENG_TTL);
+      if(!row)continue;
+      var vu=unitById[row.v];
+      if(!vu||!vu.posAt)continue;
+      var ap=au.posAt(tm),vp=vu.posAt(tm);
+      if(!ap||!vp)continue;
+      var ax=ap.x*W,ay=ap.y*H,bx=vp.x*W,by=vp.y*H;
+      var dx=bx-ax,dy=by-ay,len=Math.hypot(dx,dy);
+      if(len<8)continue;   /* same-spot pair: an arrowhead alone is noise */
+      var ux=dx/len,uy=dy/len;
+      /* shaft starts/ends clear of the icons, arrowhead lands on target */
+      var hx=bx-ux*7,hy=by-uy*7;
+      cx.beginPath();cx.moveTo(ax+ux*5,ay+uy*5);cx.lineTo(hx,hy);cx.stroke();
+      cx.beginPath();cx.moveTo(bx,by);
+      cx.lineTo(hx-uy*4.5,hy+ux*4.5);
+      cx.lineTo(hx+uy*4.5,hy-ux*4.5);
+      cx.closePath();cx.fill();
+    }
+    cx.lineWidth=1;
   }
 
   model.units.forEach(function(u){

@@ -22,7 +22,7 @@
   "use strict";
 
   const FPS = 30;
-  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck"];
+  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck", "engage"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
@@ -1244,6 +1244,25 @@
       }
     }
 
+    /* ---- engagements: who is fighting whom ---------------------------
+       Each "engage" row says: attacker u landed damage on victim v at
+       frame f. The widget emits on victim CHANGE plus a keep-alive every
+       0.6 s, so at any playback time the attacker's current target is
+       the LATEST row at-or-before tm whose keep-alive has not expired:
+       the arrow layer TTLs out ~1.2 s after the last hit (rows refresh
+       twice per TTL, so an ongoing fight never flickers). Rows are
+       shape-sorted per attacker; old artifacts carry no use rows and
+       simply paint nothing. */
+    const ENGAGE_TTL = 1.2;
+    const engagements = {};
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind !== "engage") continue;
+      (engagements[r.unitID] = engagements[r.unitID] || []).push({ t: toSec(r.frame), v: r.int1 });
+    }
+    for (const k of Object.keys(engagements)) {
+      engagements[k].sort((a, b) => a.t - b.t);
+    }
+
     /* Eos / Shockley / Quake / Inferno / Trinity: the stockpiled missile
        UNITS stage at the map corner between the launch command and liftoff,
        so their death position must NOT anchor the blast (and a silenced
@@ -1644,6 +1663,12 @@
       /* superweapon detonations (Eos/Shockley/Quake/Inferno + Zenith
          meteors) and ground napalm patches — page paints both on the map */
       explosions, napalm,
+      /* engagements: concise rows keep the attacker->victim arrow layer
+         fed — per ATTACKER, a time-sorted array of {t, v} (victim) rows,
+         emitted on victim change or as a 0.6 s keep-alive while the pair
+         keeps landing hits; engAt(rows, tm) resolves the current target */
+      engagements,
+      ENGAGE_TTL,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -1668,6 +1693,23 @@
     const fw = Math.min(cw, ch * ar);
     const fh = Math.min(ch, cw / ar);
     return { ox: (cw - fw) / 2, oy: (ch - fh) / 2, fw, fh };
+  }
+
+  /** Resolve an attacker's CURRENT target at playback time tm: the latest
+   *  engagement row at-or-before tm, when the keep-alive has not expired
+   *  (ttl, default 1.2 sim-seconds — the half-life of "still fighting"
+   *  between the widget's 0.6 s refreshes). Returns the row {t, v} or
+   *  null before the first recorded hit / once the fight went quiet.
+   *  Binary search over shape-sorted per-attacker rows — O(log n) per
+   *  attacker per frame, no per-frame state. */
+  function engAt(rows, tm, ttl) {
+    let lo = 0, hi = rows.length - 1, cand = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].t <= tm) { cand = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    if (cand < 0 || tm - rows[cand].t > ttl) return null;
+    return rows[cand];
   }
 
   /** Sample a unit track at time tm — coordinate + hp + build + cloak state
@@ -1725,5 +1767,6 @@
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
     MORPH_PAIR_WINDOW_SEC,
+    engAt,
   };
 })(typeof window !== "undefined" ? window : globalThis);

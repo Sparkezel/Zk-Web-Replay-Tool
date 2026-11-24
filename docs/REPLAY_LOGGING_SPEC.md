@@ -60,6 +60,15 @@ Design basis: barreplay (mabn) sectioned-artifact format, adapted to Zero-K.
 18. Gameover (EVNT `kind=4`): `(frame, firstWinnerAllyteam, winnerCount)` —
     one row per game-over; drives the viewer's victory overlay and timeline
     length
+19. Engagement (EVNT `kind=7`): `(frame, attackerUnitID, victimUnitID)` — the
+    engine's `UnitDamaged` callin (a spec/replay view sees every hit). The
+    widget emits when an attacker's victim CHANGES plus a keep-alive every
+    18 frames (0.6 s) while the same pair keeps landing hits — one row per
+    (attacker, victim, 0.6 s) instead of one per damage tick. Excluded:
+    ballistic artillery (weapon `trajectoryHeight > 0` — arcs have their
+    own flight layer), the strategic silo missiles, `terraunit` and
+    `fakeunit_*`. The viewer's arrow layer TTLs an arrow out ~1.2 s after
+    the last row (Engagement TTL: hits refresh twice per TTL window).
 
 ## C. Projectiles (`P`) — revised policy
 

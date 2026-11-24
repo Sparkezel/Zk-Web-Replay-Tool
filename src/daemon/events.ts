@@ -98,7 +98,7 @@ export interface UnitTrack {
   samples: PosSample[];
 }
 
-export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover" | "wreck" | "unwreck";
+export type EventKind = "spawn" | "death" | "finished" | "transfer" | "gameover" | "wreck" | "unwreck" | "engage";
 
 export interface EvntRecord {
   kind: EventKind;
@@ -401,6 +401,20 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         frame: num(ev["f"], 0),
         unitID: num(ev["u"]),
         int1: -1,
+        int2: -1,
+        int3: -1,
+      });
+      return;
+    }
+    case "eng": {
+      // engagement: attacker u landed damage on victim v — recorded on
+      // victim change or as a 0.6 s keep-alive while the pair keeps
+      // fighting (the viewer TTLs an arrow out ~1.2 s after the last row)
+      snap.events.push({
+        kind: "engage",
+        frame: num(ev["f"], 0),
+        unitID: num(ev["u"]),
+        int1: num(ev["v"]),
         int2: -1,
         int3: -1,
       });
