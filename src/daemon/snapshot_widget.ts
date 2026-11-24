@@ -191,14 +191,19 @@ local function maybeWdef(defID)
   -- their own radius/duration separately (area_damage = 1)
   local aoe = tonumber(cp.gui_aoe) or tonumber(d.damageAreaOfEffect) or 0
   local adr, adu = 0, 0
-  -- napalm flag: ZK's own lups_napaml gadget classes a weapon as napalm by
+  -- napalm flag: ZK's own lups_napalm gadget classes a weapon as napalm by
   -- its description (e.g. "Napalm Mortar") or lups_napalm_fx/lups_heat_fx;
   -- area_damage ALONE also covers slow fields (missileslow) and the Dante's
   -- black hole, which must NOT paint fire patches in the viewer
   local nd = 0
   if tostring(d.description or ""):lower():find("napalm", 1, true)
      or cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil then nd = 1 end
-  if nd == 1 then
+  -- area-damage radius/duration record for EVERY area_damage weapon, not
+  -- just napalm: Zeno's slow field and the Dante's black hole carry the
+  -- same customParams, and the VIEWER decides by nd (fire) or by weapon
+  -- name (slow field) what paints; napalm without explicit params keeps
+  -- the old aoe/15s fallback
+  if nd == 1 or cp.area_damage ~= nil or cp.area_damage_radius ~= nil then
     adr = tonumber(cp.area_damage_radius) or 0
     adu = tonumber(cp.area_damage_duration) or 0
     if cp.area_damage == nil then adr, adu = aoe, 15 end

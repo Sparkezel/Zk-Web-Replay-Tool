@@ -678,16 +678,28 @@ function draw(model,tm){
   // straight from the game's area_damage values (64/256 elmos)
   (model.napalmRegions||[]).forEach(function(n){
     if(!(tm>=n.t&&tm<=n.t+n.dur))return;
-    cx.fillStyle="rgba(255,120,30,.3)";
+    /* per-patch colour: fire stays orange, Zeno's slow zones paint the
+       missile's own colour (purple) — older models may carry no col */
+    cx.fillStyle="rgba("+(n.col||"255,120,30")+",.3)";
     cx.beginPath();cx.arc(n.x*W,n.y*H,Math.max(2,n.r*pxPerElmo),0,7);cx.fill();
   });
   // superweapon detonations at in-game AOE scale: Eos red / Shockley cyan /
   // Quake green flash fast (wall-clock ~0.5 s regardless of playback speed
   // — "5 replay frames" at whatever speed the viewer runs), Inferno orange
-  // and Zenith purple meteors decay in sim time over 8 s
+  // and Zenith purple meteors decay in sim time over 8 s; the trefoil
+  // NUKE blast art lives on the same 30-game-second window as the
+  // intercept mark — sim time, frozen while paused
   (model.explosions||[]).forEach(function(e){
     var a=0;
-    if(e.fade==="fast"){
+    if(e.fx){
+      /* trefoil blast (~30 GAME-seconds, sim time): purely a timeline
+         window [blast, blast+30s), linear fade, frozen while paused,
+         speed-independent, deterministic under seeks — every pass
+         through the window re-shows it */
+      var d=tm-e.t;
+      if(d<0||d>=30)return;
+      a=1-d/30;
+    }else if(e.fade==="fast"){
       if(tm<e.t){e._seen=undefined;return;}
       if(e._seen===undefined)e._seen=wallNow;
       a=1-(wallNow-e._seen)/500;       /* ~5 rAF frames at any speed */

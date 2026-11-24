@@ -718,6 +718,12 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(30, { defID: 30, name: "Napalm Mortar", type: "Cannon", range: 620, aoe: 80, areaDamageRadius: 64, areaDamageDuration: 16, napalm: true });
   snap.projectiles.set(101, { proID: 101, weaponDefID: 30, projClass: 2, ownerTeam: 0, startFrame: 50,
     samples: [{ frame: 50, x: 4000, z: 4000, y: 100 }, { frame: 56, x: 4400, z: 4400, y: 60 }] });
+  // a Zeno slow missile: area damage but NOT fire (nd 0, no area fields
+  // recorded - artifacts from the pre-slow-field widget) -> the impact
+  // leaves a lingering purple slow-zone patch with the fixed game values
+  snap.weaponDefs.set(38, { defID: 38, name: "missileslow_weapon", type: "StarburstLauncher", range: 6000, aoe: 320, areaDamageRadius: 0, areaDamageDuration: 0, napalm: false });
+  snap.projectiles.set(110, { proID: 110, weaponDefID: 38, projClass: 4, ownerTeam: 0, startFrame: 70,
+    samples: [{ frame: 70, x: 5000, z: 5000, y: 200 }, { frame: 76, x: 5500, z: 5500, y: 0 }] });
   // an Eos tactical nuke: the missile UNIT stockpiles/stages at the map
   // corner until liftoff, so its death must NOT anchor the blast — the
   // warhead FLIGHT (wdef tacnuke_weapon) is the detonation, at its last
@@ -856,10 +862,11 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 5, "Eos + both Shockleys + both Trinities carry strike colours");
+  assert.ok(missAF.length === 6, "Eos + both Shockleys + both Trinities + the Zeno carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
+  assert.equal(missAF.find((p) => p.weaponDefID === 38)!.mcol, "168,96,255", "Zeno purple");
   assert.equal(missAF.find((p) => p.weaponDefID === 33)!.mcol, "255,72,56", "Trinity red");
   assert.ok(model.projectiles.find((p) => p.weaponDefID === 34)!.mcol === undefined,
     "the antinuke interceptor carries no strike colour");
@@ -910,6 +917,16 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.equal(np!.dur, 16);
   assert.ok(Math.abs(np!.t - 56 / 30) < 0.05,
     "napalm starts at the impact (frames 50/56 -> last sample)");
+
+  // Zeno's slow zone: purple patch at the impact, fixed 320/30 game
+  // values (the fixture records no area fields, like real artifacts
+  // from the widget before slow-field adr/adu recording)
+  const zeno = model.napalm.find((n) => n.col === "168,96,255");
+  assert.ok(zeno, "slow-field patch present");
+  assert.equal(zeno!.r, 320);
+  assert.equal(zeno!.dur, 30);
+  assert.equal(model.napalm.filter((n) => !n.col && n !== np).length, 0,
+    "only fire patches stay colourless");
 
   // superweapon construction news in the feed
   assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),

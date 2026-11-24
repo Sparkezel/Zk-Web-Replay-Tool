@@ -1273,9 +1273,10 @@
        napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
        which doubles as the fallback for artifacts recorded before the nd
-       flag existed). Slow fields (missileslow) and the Dante's black hole
-       are area damage but NOT fire; they do not paint. Firewalker shells
-       64 elmos / 16 s, Inferno warheads 256 / 45 s */
+       flag existed). Zeno's slow field (missileslow) is area damage but
+       NOT fire — it paints its own lingering purple patch. The Dante's
+       black hole stays unpainted. Firewalker shells 64 elmos / 16 s,
+       Inferno warheads 256 / 45 s, Zeno slow zones 320 / 30 s */
     const napalm = [];
     /* an antinuke intercept kills the warhead MID-AIR, and the warhead's
        flight would mark the intercept point as the strike - painting a
@@ -1344,6 +1345,20 @@
          to ground fire */
       if (isFire && (w.adr ?? 0) > 0) {
         napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
+      }
+      /* Zeno's slow field: same area-damage family as napalm but NOT fire
+         (ZK marks it area_damage_is_slow) - impact leaves a lingering slow
+         zone that decays in sim time. Radius/duration from WDEF when the
+         recording widget provided them, else the fixed game values
+         (missileslow: 320 elmos / 30 s); col paints it purple like the
+         missile itself, the fire default stays orange */
+      if (!p.intercepted && String(w.name || "").toLowerCase().split("_")[0] === "missileslow") {
+        napalm.push({
+          t: imp.t, x: imp.x, y: imp.z,
+          r: (w.adr ?? 0) > 0 ? w.adr : 320,
+          dur: (w.adu ?? 0) > 0 ? w.adu : 30,
+          col: "168,96,255",
+        });
       }
     }
 
