@@ -390,6 +390,22 @@ function hatchPattern(rgb){
   return hatchCache[rgb]||("rgba("+rgb+",.05)");
 }
 
+/* antinuke tint: the FIRST roster player of the team — ZK itself colours
+   a team by its first player, so coverage never drifts from the player
+   rows; on 1:1 teams (today's games) it is the team's own colour, and
+   the pinning is the assurance for FFA replays where team and player
+   lists can diverge */
+function antiColorStr(model,t){
+  var ps=(model.players||[]).filter(function(p){return p.team===t;});
+  return teamColorStr(ps.length?ps[0].team:t);
+}
+/* which side a team fights on (teamMeta carries ally per team; teams with
+   no meta fall back to their own number) */
+function allyOfTeam(model,t){
+  var mt=model&&model.teamMeta&&model.teamMeta[t];
+  return mt?mt.ally:t;
+}
+
 function buildArtifactModel(artifact){
   var m=ZkrReplay.artifactToModel(artifact);
   var R=mulberry(2539874);
@@ -416,7 +432,25 @@ function buildArtifactModel(artifact){
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
   var projectiles=m.projectiles.map(function(p){
     var ip=p.path[p.path.length-1];
+    /* strike estimate: with a RECORDED target, impact time = last sample
+       + remaining distance / measured cruise speed (ZK strategic
+       missiles fly a straight constant-speed line); without one it is
+       the flight's own end (a real impact for a warhead that landed) */
+    var mapWf=m.mapW||16384,mapHf=m.mapH||16384;
+    var sp=0;
+    if(p.path.length>=2){
+      var a2=p.path[p.path.length-1],b2=p.path[p.path.length-2];
+      var dT=a2.t-b2.t;
+      if(dT>0.01)sp=Math.hypot((a2.x-b2.x)*mapWf,(a2.z-b2.z)*mapHf)/dT;
+    }
+    var tgt=p.tgt?{x:p.tgt.x,y:p.tgt.z}:null;
+    var strikeTm=p.end;
+    if(tgt&&sp>1){
+      var dElm=Math.hypot((tgt.x-ip.x)*mapWf,(tgt.y-ip.z)*mapHf);
+      strikeTm=Math.max(p.end,ip.t+dElm/sp);
+    }
     return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
+      tgt:tgt,intercepted:!!p.intercepted,strikeTm:strikeTm,
       ix:ip.x,iy:ip.z,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
         var s=ZkrReplay.pathAt(p.path,tm);
@@ -641,31 +675,64 @@ function draw(model,tm){
     cx.lineWidth=1;
   });
   // incoming strategic missiles - ZK's own incoming-strike visualisation:
-  // at the impact point a HOLLOW circle shows the blast AOE, ringed by a
+  // at the DESTINATION a HOLLOW circle shows the blast AOE, ringed by a
   // shrinking second circle that counts down to impact (full radius at
   // launch, reaches 0 at contact). Eos red, Shockley blue, Zeno purple,
-  // Quake green, Inferno orange, Trinity shares the red. A warhead the
-  // antinuke killed MID-AIR (its flight end coincides with an antinuke
-  // rocket's end) has no strike to mark - neither circle paints
+  // Quake green, Inferno orange, Trinity shares the red. The destination
+  // is the RECORDED target when the artifact has one (PTGT) - so a warhead
+  // the antinuke killed MID-AIR still marks where the strike WOULD have
+  // landed, counting down to the estimated impact; an old artifact's
+  // intercepted warhead (no recorded target) paints NOTHING, never a
+  // fake circle at the intercept point. Trinity additionally draws a red
+  // dashed line from the flying warhead to its target.
   model.projectiles.forEach(function(pr){
-    if(!pr.mcol||!(pr.maoe>0)||pr.intercepted)return;
-    if(!(tm>=pr.born&&tm<pr.impact))return;
+    if(!pr.mcol||!(pr.maoe>0))return;
+    if(pr.intercepted&&!pr.tgt)return;
+    var tx=pr.tgt?pr.tgt.x:pr.ix,ty=pr.tgt?pr.tgt.y:pr.iy;
+    if(!(tm>=pr.born&&tm<pr.strikeTm))return;
     var rr=pr.maoe*pxPerElmo;
     if(rr<3)return;
-    var prog=(tm-pr.born)/(pr.impact-pr.born||1);
-    var ix=pr.ix*W,iy=pr.iy*H;
+    var prog=Math.min(1,(tm-pr.born)/Math.max(0.05,pr.strikeTm-pr.born));
+    var ix=tx*W,iy=ty*H;
+    /* AOE ring: a bit thicker, grown INWARD - the OUTER edge stays the
+       true damage radius, the line never claims reach it does not have */
     cx.strokeStyle="rgba("+pr.mcol+",.55)";
-    cx.lineWidth=1;
-    cx.beginPath();cx.arc(ix,iy,rr,0,7);cx.stroke();
+    cx.lineWidth=2.2;
+    cx.beginPath();cx.arc(ix,iy,Math.max(0,rr-1.1),0,7);cx.stroke();
     cx.strokeStyle="rgba("+pr.mcol+",.9)";
     cx.lineWidth=1.5;
     cx.beginPath();cx.arc(ix,iy,Math.max(0,rr*(1-prog)),0,7);cx.stroke();
     cx.lineWidth=1;
+    /* Trinity warhead: red dashed pointer to its (real) target */
+    if(pr.icon==="nuke_missile"){
+      var hp=pr.posAt(tm);
+      if(hp){
+        cx.setLineDash([5,3]);
+        cx.strokeStyle="rgba(255,72,56,.5)";
+        cx.beginPath();cx.moveTo(hp.x*W,hp.y*H);cx.lineTo(ix,iy);cx.stroke();
+        cx.setLineDash([]);
+      }
+    }
   });
   // anti-nuke coverage: always visible once the launcher completes (ZK's
-  // own coverage circle reads the same nuke_coverage value, 2500 elmos);
-  // an EMP-shocked launcher cannot intercept — its circle and icon flash
-  // red while the stun holds
+  // own coverage circle reads the same nuke_coverage value, 2500 elmos).
+  // D+B display: the whole hatch + border uses the team's FIRST-PLAYER
+  // tint; hovering a launcher spotlights its range as a white circle. An
+  // EMP-shocked launcher cannot intercept: the DISABLED part of its range
+  // (whatever other still-working antinukes of the same side do NOT
+  // keep covered) blinks red hatched, 0.2 s on / 0.8 s off while playing;
+  // the part that stays covered keeps its working coverage view through
+  // those launchers' own circles.
+  var hoveredAnti=null;
+  if(PTR){
+    (model.antiNukeUnits||[]).forEach(function(u){
+      if(hoveredAnti)return;
+      var pos=u.posAt(tm);
+      if(!pos)return;
+      var sx=fit.ox+VIEW.px+pos.x*W*VIEW.z,sy=fit.oy+VIEW.py+pos.y*H*VIEW.z;
+      if(Math.hypot(PTR[0]-sx,PTR[1]-sy)<=Math.max(13*VIEW.z,22))hoveredAnti=u;
+    });
+  }
   (model.antiNukeUnits||[]).forEach(function(u){
     var pos=u.posAt(tm);
     if(!pos||(pos.bd!==undefined&&pos.bd<1))return;
@@ -674,18 +741,64 @@ function draw(model,tm){
     var anned=(b&4)!==0;
     var rx=u.antiNuke*pxPerElmo;
     if(rx<3)return;
-    // flash = alternate red / team colour; never blank the circle — a pause
-    // on the "off" phase would leave the launcher with no coverage view
-    var col=(anned&&Math.floor(wallNow/180)%2===0)?"255,50,40":teamColorStr(u.t);
-    /* thinly HATCHED interior (sparse 1px diagonals, no translucent
-       wash — several overlapping coverages stay readable) + a plain
-       border; the EMP flash swaps hatch and border to red */
-    cx.fillStyle=hatchPattern(col);
-    cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
-    cx.strokeStyle="rgba("+col+",.7)";
-    cx.lineWidth=1.4;
-    cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
-    cx.lineWidth=1;
+    var ax=pos.x*W,ay=pos.y*H;
+    var col=antiColorStr(model,u.t);
+    if(anned){
+      /* blink 0.2 s on / 0.8 s off (wall clock; while playing - paused
+         shows the disabled region steady so a pause never hides it) */
+      if(playing&&wallNow%1000>=200)return;
+      /* the DISABLED region: this circle minus every other same-side
+         still-working antinuke circle (those keep covering their overlap
+         and draw their own hatch over it) */
+      var working=[];
+      (model.antiNukeUnits||[]).forEach(function(v){
+        if(v===u)return;
+        var vp=v.posAt(tm);
+        if(!vp||(vp.bd!==undefined&&vp.bd<1))return;
+        var vb=0;
+        for(var si2=0;si2<(v.states?v.states.length:0);si2++){var s2=v.states[si2];if(s2.t>tm)break;vb=s2.b;}
+        if((vb&4)!==0)return;
+        if(allyOfTeam(model,v.t)!==allyOfTeam(model,u.t))return;
+        working.push({x:vp.x*W,y:vp.y*H,r:v.antiNuke*pxPerElmo});
+      });
+      cx.save();
+      cx.beginPath();
+      cx.moveTo(ax+rx,ay);cx.arc(ax,ay,rx,0,7);
+      working.forEach(function(o){
+        if(o.r<3)return;
+        cx.moveTo(o.x+o.r,o.y);cx.arc(o.x,o.y,o.r,0,7);
+      });
+      /* even-odd subtraction: plainly wrong in a >2-circle triple
+         overlap (a point inside three circles flips back to "enabled") -
+         real coverage rarely stacks more than two deep; accepted */
+      cx.clip("evenodd");
+      cx.fillStyle=hatchPattern("255,50,40");
+      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
+      cx.strokeStyle="rgba(255,50,40,.7)";
+      cx.lineWidth=1.4;
+      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.stroke();
+      cx.lineWidth=1;
+      cx.restore();
+    }else{
+      /* thinly HATCHED interior (sparse 1px diagonals, no translucent
+         wash - several overlapping coverages stay readable) + a plain
+         border, in the team's first-player tint */
+      cx.fillStyle=hatchPattern(col);
+      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
+      cx.strokeStyle="rgba("+col+",.7)";
+      cx.lineWidth=1.4;
+      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.stroke();
+      cx.lineWidth=1;
+    }
+    /* hover spotlight (D): this launcher's range as a white circle */
+    if(hoveredAnti===u){
+      cx.strokeStyle="rgba(255,255,255,.9)";
+      cx.lineWidth=1.6;
+      cx.fillStyle="rgba(255,255,255,.06)";
+      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
+      cx.stroke();
+      cx.lineWidth=1;
+    }
   });
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot
@@ -1188,6 +1301,17 @@ function zoomAt(sx,sy,factor){
     if(Object.keys(ptrs).length!==2)lastPinch=0;}
   cv.addEventListener("pointerup",endPtr);cv.addEventListener("pointercancel",endPtr);
 })();
+
+/* hover tracking: the raw device-space pointer position, outside the drag
+   handlers above (these return early when no button is held). Hover alone
+   must repaint even while paused - the governor skips untouched paused
+   draws, and the antinuke spotlight follows the cursor. */
+var PTR=null;
+cv.addEventListener("pointermove",function(e){
+  PTR=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+  if(!playing)drawFrame();
+});
+cv.addEventListener("pointerleave",function(){PTR=null;if(!playing)drawFrame();});
 
 function teamLabelOf(model,team){
   var n=model.teamNames&&model.teamNames[team];

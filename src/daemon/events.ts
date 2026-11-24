@@ -144,6 +144,11 @@ export interface SnapshotData {
   projectiles: Map<number, ProjTrack>;
   /** tracks closed because their proID was recycled — packed like any other */
   closedProjectiles: ProjTrack[];
+  /** strategic projectile targets (widget `ptgt` lines): the commanded
+   * destination of each sent missile — the only way to know where an
+   * ANTINUKE-INTERCEPTED warhead was headed (kills at ignition leave the
+   * flight path with zero movement) */
+  ptgts: Array<{ proID: number; frame: number; x: number; z: number }>;
   /** unitIDs of EXCLUDED_UNIT_DEFS spawns (pos/death rows skipped) */
   ignoredUnits: Set<number>;
   links: Map<number, LinkRecord>;
@@ -164,6 +169,7 @@ export function newSnapshot(): SnapshotData {
     events: [],
     projectiles: new Map(),
     closedProjectiles: [],
+    ptgts: [],
     ignoredUnits: new Set(),
     links: new Map(),
     unitDefs: new Map(),
@@ -426,6 +432,17 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         y: num(ev["y"], 0),
         z: num(ev["z"], 0),
       });
+      return;
+    }
+    case "ptgt": {
+      // strategic projectile target: wolrd-space x/z (elmos), ordered
+      // command destination of the missile — recorded by the widget once
+      // per projectile life (re-emitted when the engine hands a different
+      // target, e.g. after proID recycling)
+      const x = num(ev["x"], NaN);
+      const z = num(ev["z"], NaN);
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return;
+      snap.ptgts.push({ proID: num(ev["u"]), frame: num(ev["f"], 0), x, z });
       return;
     }
     case "gameover": {

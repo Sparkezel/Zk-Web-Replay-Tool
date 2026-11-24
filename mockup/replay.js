@@ -476,8 +476,26 @@
     return p;
   }
 
-  function decodeLink(dv, u8) {
-    const p = { links: [], maxFrame: 0 };
+  /** PTGT v1 — commanded targets of sent strategic missiles:
+   * u32 count, per row: u32 proID, u32 frame, u16 x, u16 z (map fractions
+   * 0..1, elmos quantized across the map like PROJ). One row per
+   * (pid, target); the model picks the LATEST row at-or-before each
+   * flight's end, so proID recycling never crosses targets over. */
+  function decodePtgt(dv) {
+    const rows = [];
+    let o = 0;
+    const n = dv.getUint32(o, true); o += 4;
+    for (let i = 0; i < n; i++) {
+      const proID = dv.getUint32(o, true); o += 4;
+      const frame = dv.getUint32(o, true); o += 4;
+      const x = dv.getUint16(o, true) / 65535; o += 2;
+      const z = dv.getUint16(o, true) / 65535; o += 2;
+      rows.push({ proID, frame, x, z });
+    }
+    return rows;
+  }
+
+  function decodeLink(dv, u8) {    const p = { links: [], maxFrame: 0 };
     let o = 0;
     const n = dv.getUint32(o, true); o += 4;
     for (let i = 0; i < n; i++) {
@@ -564,6 +582,7 @@
       pos: raw["POS"] ? decodePos(new DataView(raw["POS"].buffer, raw["POS"].byteOffset, raw["POS"].byteLength), raw["POS"], versionOf("POS")) : null,
       evnt: raw["EVNT"] ? decodeEvnt(new DataView(raw["EVNT"].buffer, raw["EVNT"].byteOffset, raw["EVNT"].byteLength), raw["EVNT"]) : null,
       proj: raw["PROJ"] ? decodeProj(new DataView(raw["PROJ"].buffer, raw["PROJ"].byteOffset, raw["PROJ"].byteLength), raw["PROJ"], versionOf("PROJ")) : null,
+      ptgt: raw["PTGT"] ? decodePtgt(new DataView(raw["PTGT"].buffer, raw["PTGT"].byteOffset, raw["PTGT"].byteLength)) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
       states: raw["STAT"] ? decodeStates(new DataView(raw["STAT"].buffer, raw["STAT"].byteOffset, raw["STAT"].byteLength), raw["STAT"]) : null,
     };
@@ -1255,6 +1274,29 @@
         && Math.hypot((r.x - imp.x) * wmw, (r.z - imp.z) * wmh) <= ICEPT_RADIUS)) {
         p.intercepted = true;
       }
+    }
+    /* ---- commanded destinations (PTGT) ----
+       An antinuke-intercepted warhead's flight record just STOPS at the
+       kill (the ion-intercept test kills happened at ignition: zero
+       movement, no heading to extrapolate), so the strike circle must
+       come from the RECORDED target, never from the path's end. Rows are
+       per (pid, target); the latest row at-or-before the flight's end
+       wins, so recycled proIDs never cross targets across flights. */
+    const ptgtByPro = new Map();
+    for (const t of (artifact.ptgt ?? [])) {
+      if (!ptgtByPro.has(t.proID)) ptgtByPro.set(t.proID, []);
+      ptgtByPro.get(t.proID).push(t);
+    }
+    for (const list of ptgtByPro.values()) list.sort((a, b) => a.frame - b.frame);
+    for (const p of projectiles) {
+      const rows = ptgtByPro.get(p.proID);
+      if (!rows || !rows.length) continue;
+      const endFrame = Math.round(p.end * FPS);
+      let cand = null;
+      for (const r of rows) {
+        if (r.frame <= endFrame + 6) cand = r; else break;
+      }
+      if (cand) p.tgt = { x: cand.x, z: cand.z };
     }
     for (const p of projectiles) {
       const w = wdef.get(p.weaponDefID);

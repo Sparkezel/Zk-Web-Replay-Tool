@@ -770,7 +770,17 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     samples: [{ frame: 594, x: 7000, z: 7000, y: 500 }, { frame: 600, x: 7500, z: 7500, y: 350 }] });
   snap.weaponDefs.set(37, { defID: 37, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
   snap.projectiles.set(108, { proID: 108, weaponDefID: 37, projClass: 3, ownerTeam: 1, startFrame: 595,
-    samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 601, x: 7520, z: 7490, y: 340 }] });
+    samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 600, x: 7500, z: 7450, y: 340 }] });
+  // PTGT: commanded warhead destinations. The clean Trinity gets one row
+  // (its circle anchors at the target, not the last sample); the
+  // INTERCEPTED Trinity gets a stale early row plus the real one - the
+  // LATEST row at-or-before the flight's end wins, so proID recycling
+  // never crosses targets across flights
+  snap.ptgts = [
+    { proID: 104, frame: 414, x: 6000, z: 6000 },
+    { proID: 107, frame: 500, x: 1500, z: 1500 },
+    { proID: 107, frame: 595, x: 9000, z: 9400 },
+  ];
   // superweapon news: a Zenith nanoframe appearing
   snap.unitDefs.set(22, { defID: 22, name: "zenith", metalCost: 15000, health: 9000, canMove: false, iconType: "zenith", humanName: "Zenith" });
   snap.events.push({ kind: "spawn", frame: 600, unitID: 13, int1: 22, int2: 0, int3: -1 });
@@ -846,6 +856,26 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // it must not mark anything
   assert.ok(model.projectiles.filter((p) => p.intercepted).length === 1,
     "exactly the paired warhead reads as intercepted");
+
+  // ---- recorded warhead targets (PTGT) ----
+  // the clean Trinity's flight carries the commanded destination as map
+  // fractions; flights without a row keep tgt undefined (page keeps using
+  // the flight's own end = real impact)
+  const trClean = model.projectiles.find((p) => p.weaponDefID === 33)!;
+  assert.ok(trClean.tgt && Math.abs(trClean.tgt.x - 6000 / 16384) < 2e-4 &&
+    Math.abs(trClean.tgt.z - 6000 / 16384) < 2e-4,
+    "recorded target attaches to the flight (u16 elmo quantization within tolerance)");
+  assert.ok(model.projectiles.find((p) => p.weaponDefID === 31)!.tgt === undefined,
+    "a flight with no PTGT row gets no invented target");
+  // the INTERCEPTED Trinity still tells its real destination: the LATEST
+  // row at-or-before its end wins, the stale parking-era row is ignored
+  const trIcept = model.projectiles.find((p) => p.weaponDefID === 36)!;
+  assert.ok(trIcept.tgt && Math.abs(trIcept.tgt.x - 9000 / 16384) < 2e-4 &&
+    Math.abs(trIcept.tgt.z - 9400 / 16384) < 2e-4,
+    "the intercepted warhead's target is the latest row at-or-before its end");
+  // it stays intercepted (no ground detonation) AND now has a destination
+  // to circle instead of nothing
+  assert.equal(trIcept.intercepted, true);
 
   // ground napalm from the shell's impact, game radius/duration
   const np = model.napalm.find((n) => n.r === 64);

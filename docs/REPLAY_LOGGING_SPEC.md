@@ -98,6 +98,16 @@ recorded trajectories): log the launch and interception *events* only — no
 path. Interception = the moment an incoming nuke/missile dies with
 `killerUnitID` = interceptor.
 
+**Strategic missile targets** (`PTGT` v1): the sent missiles above
+(`staticnuke`, `tacnuke`, `empmissile`, `missileslow`, `seismic`,
+`napalmmissile`) additionally report their COMMANDED destination once per
+`(pid, target)` via `Spring.GetProjectileTarget` (widget `ptgt` lines;
+packed as u32 proID, u32 frame, u16 x, u16 z). The flight path alone
+cannot say where an antinuke-intercepted warhead was headed — the kill
+happens wherever the rocket catches it, and kills at ignition leave the
+recording with zero movement — so the incoming-strike circle anchors at
+the recorded target, never at the intercept point.
+
 Explosion markers for area weapons (weaponDefID + position): on.
 
 ## D. Macro events (`C`/`D`/`MACRO`)

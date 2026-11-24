@@ -229,6 +229,30 @@ export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset =
 }
 
 /**
+ * `PTGT` v1 — strategic projectile targets (widget `ptgt` lines).
+ *
+ *   u32 numTargets
+ *   repeat: u32 proID, u32 frame, u16 x, u16 z
+ *
+ * x/z world elmos quantized across the map like PROJ. One row per (pid,
+ * target); the viewer picks the LATEST row at-or-before a flight's end
+ * (proID recycling re-emits under the same id).
+ */
+export function encodeProjTargets(snap: SnapshotData): Uint8Array | null {
+  if (!snap.ptgts || snap.ptgts.length === 0) return null;
+  const mapW = snap.meta.mapW ?? 0;
+  const mapH = snap.meta.mapH ?? mapW;
+  const w = new ByteWriter();
+  const rows = snap.ptgts.slice().sort((a, b) => a.proID - b.proID || a.frame - b.frame);
+  w.u32(rows.length);
+  for (const r of rows) {
+    w.u32(Math.max(0, r.proID) >>> 0).u32(Math.max(0, r.frame) >>> 0)
+      .u16(quantize(r.x, mapW)).u16(quantize(r.z, mapH));
+  }
+  return w.finish();
+}
+
+/**
  * `LINK` v1 — Djinn ⇄ Lamp links (spec §L).
  *
  *   u32 numLinks
@@ -403,6 +427,12 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
   // that predate the stat rows — old artifacts simply lack the section
   if ((snap.states?.length ?? 0) > 0) {
     secs.push({ id: SECTION.STATES, version: 1, payload: encodeStates(snap), codec });
+  }
+  // commanded targets of sent strategic missiles — absent until the
+  // resim that grew the widget's ptgt lines; harmless to skip when empty
+  const ptgtPayload = encodeProjTargets(snap);
+  if (ptgtPayload) {
+    secs.push({ id: SECTION.PROJECTILE_TARGETS, version: 1, payload: ptgtPayload, codec });
   }
   const startboxPayload = encodeStartboxes(snap);
   if (startboxPayload) {

@@ -327,6 +327,13 @@ end
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
   LightningCannon = true, TorpedoLauncher = true }
 local projClassByID = {}
+-- sent strategic missiles, by ZK's weapon-name unit key (the viewer matches
+-- the same keys): these get their COMMANDED target polled once per flight,
+-- so an antinuke-intercepted warhead still tells the replay where the
+-- strike would have landed
+local STRAT_MISSILE_KEYS = { tacnuke = true, empmissile = true, missileslow = true,
+  seismic = true, napalmmissile = true, staticnuke = true }
+local lastPtgt = {}
 -- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
 -- description contains "Napalm" or the lups heat/napalm fx is set. Area
 -- damage ALONE is not fire - the slow missile's slow field and the Dante's
@@ -491,6 +498,48 @@ function widget:GameFrame(frame)
         emit('{"t":"proj","f":' .. frame .. ',"u":' .. pid ..
           ',"d":' .. wdefID .. ',"tm":' .. (team or -1) ..
           ',"x":' .. ipos(x) .. ',"y":' .. ipos(y) .. ',"z":' .. ipos(z) .. '}')
+        -- strategic missiles (Eos/Shockley/Zeno/Quake/Inferno/Trinity): the
+        -- COMMANDED target of the flight. The path alone cannot tell where
+        -- an antinuke-intercepted warhead was headed (kills at ignition
+        -- leave zero movement), and the strike circle must mark the real
+        -- destination, never the intercept point. ZK itself never queries
+        -- GetProjectileTarget, so accept every plausible return shape:
+        --   (type, targetID)              unit/feature target
+        --   (type, x, y, z)               ground target
+        --   ({x=..,y=..,z=..})            table form of a ground target
+        -- Emitted once per (pid, target) - re-emit only when the engine
+        -- hands a different target (proID recycling, retargeting).
+        local wd = WeaponDefs[wdefID]
+        local wkey = wd ~= nil and wd.name ~= nil and string.match(wd.name, "^([^_]+)") or nil
+        if wkey ~= nil and STRAT_MISSILE_KEYS[wkey] then
+          local ok, a, b, c, d2 = pcall(Spring.GetProjectileTarget, pid)
+          local tx, tz
+          if ok and a ~= nil then
+            if type(b) == "table" and b.x ~= nil and b.z ~= nil then
+              tx, tz = b.x, b.z
+            elseif type(b) == "number" and b > 0 then
+              if type(c) == "number" and type(d2) == "number" then
+                tx, tz = b, d2
+              else
+                local ux, uy, uz = Spring.GetUnitPosition(b)
+                if ux ~= nil then
+                  tx, tz = ux, uz
+                else
+                  local fx, fy, fz = Spring.GetFeaturePosition(b)
+                  tx, tz = fx, fz
+                end
+              end
+            end
+          end
+          if tx ~= nil and tz ~= nil then
+            local key = ipos(tx) .. ":" .. ipos(tz)
+            if lastPtgt[pid] ~= key then
+              lastPtgt[pid] = key
+              emit('{"t":"ptgt","f":' .. frame .. ',"u":' .. pid ..
+                ',"x":' .. ipos(tx) .. ',"z":' .. ipos(tz) .. '}')
+            end
+          end
+        end
       end
     end
   end
