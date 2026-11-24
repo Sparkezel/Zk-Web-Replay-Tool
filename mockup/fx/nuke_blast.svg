@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
   <!-- nuke_blast.svg — PLACEHOLDER ART, drawn to be replaced.
-       Used ONLY for nuclear missile (Trinity) detonations, as a REPLACEMENT
-       of the default AOE circles. Death blasts of Detriment / Advanced
-       Geothermal / Singularity Reactor are the future contenders (all
-       1280 elmos, see the game's NUCLEAR_MISSILE / SINGULARITY weapons).
+       Used ONLY for nuclear-grade detonations, as a REPLACEMENT of the
+       default AOE circles: the Trinity warhead impact (960) and the
+       death blasts of Detriment / Advanced Geothermal (NUCLEAR_MISSILE,
+       1280) and Singularity Reactor (Naked Singularity, 1280).
        Constraints for your own art:
        - keep the square viewBox (256x256), art centred on (128,128)
        - self-contained: no external images, fonts or scripts

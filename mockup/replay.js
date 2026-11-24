@@ -1394,18 +1394,17 @@
        The silo missile UNITS (Eos/Shockley/Quake/Inferno) are
        deliberately absent: their detonations come from the warhead
        FLIGHT impacts, and a missile killed in its silo leaves no blast
-       in the replay story. The nuke ART (fx) goes on Detriment and
-       Advanced Geothermal only - both die through the very same
-       NUCLEAR_MISSILE weapon (1280 elmos, out-blasting the Trinity
-       warhead's 960); the Singularity Reactor's identical 1280 stays a
-       plain circle (design call - one table entry to change).
+       in the replay story. The nuke ART (fx) goes on the three 1280-elmo
+       death blasts: Detriment and Advanced Geothermal (both die through
+       the very same NUCLEAR_MISSILE weapon, out-blasting the Trinity
+       warhead's 960) and the Singularity Reactor (Naked Singularity).
        Dynamic commander defs are generated per level at runtime, so the
        pattern match below carries the chassis' 420-elmo blast to every
        dynXX<N>_ level. Everything else uses the neutral blast colour. */
     const NUKE_RED_LOCAL = "255,72,56";
     const DEATH_BLAST_DEFS = {
       "striderdetriment": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Detriment
-      "energysingu": { r: 1280, col: NUKE_RED_LOCAL },   // Singularity Reactor (same 1280, circle per design)
+      "energysingu": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Singularity Reactor - Naked Singularity, same 1280, shares the art
       "energyheavygeo": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Advanced Geothermal
       "turretheavy": { r: 520 },   // Desolator (ESTOR_BUILDING)
       "turretantiheavy": { r: 520 },   // Lucifer (ESTOR_BUILDING)
