@@ -707,10 +707,11 @@ function draw(model,tm){
        fallback); every other detonation keeps its precise AOE circles */
     var fx=e.fx?fxImage("nuke_blast",e.col):null;
     if(e.fx&&fxReady(fx)){
-      /* art spans ~1.9x the blast radius: the mushroom's visual mass sits
-         at roughly half the box, so the FELT blast size stays true to the
-         real AOE; the 60px floor keeps it visible when zoomed way out */
-      var fs=Math.max(60,rr*1.9);
+      /* trefoil art box = the AoE EXACTLY: the drawn svg spans the full
+         blast diameter (outer ring rides the damage radius), no margin
+         and no px floor — zoomed far out it vanishes with the map, the
+         honest reading of the true AoE */
+      var fs=rr*2;
       cx.globalAlpha=Math.min(1,1.05*a);
       cx.drawImage(fx,e.x*W-fs/2,e.y*H-fs/2,fs,fs);
       cx.globalAlpha=1;
@@ -763,22 +764,27 @@ function draw(model,tm){
       }
     }
   });
-  // intercepted warheads: a small vector burst where the antinuke rocket
-  // got them (the strike circle keeps telling the would-be target) - flash
-  // ONCE per pass through time, exactly like the detonation blasts; the
-  // trefoil art carries its own fixed nuclear palette (red ring/strike,
-  // yellow-orange blades), so the warhead-colour token is unused in it
+  // intercepted warheads: the trefoil strike-through marks where the
+  // antinuke rocket got them (the strike circle keeps telling the
+  // would-be target); the marker lives for ~30 GAME-seconds past the kill
+  // and covers half the would-be blast footprint; the art carries its own
+  // fixed nuclear palette (red ring/strike, yellow-orange blades), so the
+  // warhead-colour token is unused in it
   model.projectiles.forEach(function(pr){
     if(!pr.intercepted)return;
-    /* seek back before the kill re-arms the flash (same semantics as the
-       detonation blasts: one flash per pass through time) */
-    if(tm<pr.impact){pr._seenfx=undefined;return;}
-    if(pr._seenfx===undefined)pr._seenfx=wallNow;
-    var a=1-(wallNow-pr._seenfx)/500;
-    if(a<=0)return;
+    /* purely a timeline window [kill, kill+30s), driven by SIM time:
+       frozen while paused (no wall-clock decay), speed-independent,
+       deterministic under seeks and loop-wrap - every pass through
+       re-shows it, fading linearly to zero exactly at +30 s */
+    var d=tm-pr.impact;
+    if(d<0||d>=30)return;
+    var a=1-d/30;
     var fx=fxImage("intercept",pr.mcol);
     if(!fxReady(fx))return;
-    var s=Math.max(18,120*pxPerElmo);   /* ~120 elmos tall on the map */
+    /* ~50% of the nuclear blast box (the blast now spans its full AoE),
+       so the mark covers half the would-be blast footprint; old
+       artifacts without a recorded maoe keep the old 120-elmo mark */
+    var s=Math.max(18,(pr.maoe||120)*pxPerElmo);
     cx.globalAlpha=0.9*a;
     cx.drawImage(fx,pr.ix*W-s/2,pr.iy*H-s/2,s,s);
     cx.globalAlpha=1;

@@ -1,25 +1,160 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- nuke_blast.svg — PLACEHOLDER ART, drawn to be replaced.
-       Used ONLY for nuclear-grade detonations, as a REPLACEMENT of the
-       default AOE circles: the Trinity warhead impact (960) and the
-       death blasts of Detriment / Advanced Geothermal (NUCLEAR_MISSILE,
-       1280) and Singularity Reactor (Naked Singularity, 1280).
-       Constraints for your own art:
-       - keep the square viewBox (256x256), art centred on (128,128)
-       - self-contained: no external images, fonts or scripts
-       - write the literal __TINT__ wherever the warhead colour goes —
-         it is replaced at load time
-       - the art's silhouette should read at ~1.9x the blast radius:
-         sprite box = 1.9 x AOE, visual mass ~ half the box
-       - keep fills semi-transparent-ish: the incoming-strike circles have
-         already shown the exact AOE before the blast lands -->
-  <g fill="none" stroke="#000" stroke-width="6" opacity=".55">
-    <path d="M128 42 C 78 42 52 74 52 108 C 52 150 92 160 128 160 C 164 160 204 150 204 108 C 204 74 178 42 128 42 Z"/>
-    <path d="M116 160 C 108 190 100 205 88 218 C 108 226 148 226 168 218 C 156 205 148 190 140 160 Z"/>
-  </g>
-  <g stroke="none">
-    <path d="M128 56 C 92 56 66 80 66 108 C 66 136 96 146 128 146 C 160 146 190 136 190 108 C 190 80 164 56 128 56 Z" fill="__TINT__" opacity=".55"/>
-    <path d="M120 160 C 114 186 107 200 96 212 C 114 219 142 219 160 212 C 149 200 142 186 136 160 Z" fill="__TINT__" opacity=".45"/>
-    <path d="M66 108 C 96 120 160 120 190 108" fill="none" stroke="#000" stroke-width="3" opacity=".35"/>
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="120"
+   height="120"
+   viewBox="0 0 120 120"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.4 (dcaf3e7, 2026-05-05)"
+   sodipodi:docname="nuke-trefoil.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns:xlink="http://www.w3.org/1999/xlink"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#505050"
+     bordercolor="#ffffff"
+     borderopacity="1"
+     inkscape:showpageshadow="0"
+     inkscape:pageopacity="0"
+     inkscape:pagecheckerboard="1"
+     inkscape:deskcolor="#505050"
+     inkscape:document-units="px"
+     showguides="false"
+     inkscape:zoom="4.8024336"
+     inkscape:cx="50.287005"
+     inkscape:cy="63.197126"
+     inkscape:window-width="1920"
+     inkscape:window-height="1017"
+     inkscape:window-x="-8"
+     inkscape:window-y="32"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1" />
+  <defs
+     id="defs1">
+    <linearGradient
+       id="linearGradient65"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#ffc93c;stop-opacity:1;"
+         offset="0"
+         id="stop64" />
+      <stop
+         style="stop-color:#e66c00;stop-opacity:0.70158732;"
+         offset="1"
+         id="stop65" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient63"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#ffc93c;stop-opacity:1;"
+         offset="0"
+         id="stop62" />
+      <stop
+         style="stop-color:#e66c00;stop-opacity:0.70476192;"
+         offset="1"
+         id="stop63" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient59"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#ffc93c;stop-opacity:1;"
+         offset="0"
+         id="stop59" />
+      <stop
+         style="stop-color:#e66c00;stop-opacity:0.70476192;"
+         offset="1"
+         id="stop60" />
+    </linearGradient>
+    <linearGradient
+       id="linearGradient45"
+       inkscape:collect="always">
+      <stop
+         style="stop-color:#ffc93c;stop-opacity:1;"
+         offset="0"
+         id="stop45" />
+      <stop
+         style="stop-color:#e66c00;stop-opacity:1;"
+         offset="1"
+         id="stop46" />
+    </linearGradient>
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient45"
+       id="radialGradient46"
+       cx="60"
+       cy="60"
+       fx="60"
+       fy="60"
+       r="16"
+       gradientUnits="userSpaceOnUse" />
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient65"
+       id="radialGradient60"
+       cx="59.999996"
+       cy="57.625973"
+       fx="59.999992"
+       fy="57.625973"
+       r="19.276367"
+       gradientTransform="matrix(2.860555,-9.7452941e-8,2.6166282e-8,2.8605545,-111.63329,-104.84224)"
+       gradientUnits="userSpaceOnUse" />
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient59"
+       id="radialGradient61"
+       cx="60.000008"
+       cy="57.625977"
+       fx="60.000008"
+       fy="57.625977"
+       r="19.276367"
+       gradientTransform="matrix(2.860555,2.4810041e-7,3.7029455e-8,2.8605547,-111.63332,-104.84228)"
+       gradientUnits="userSpaceOnUse" />
+    <radialGradient
+       inkscape:collect="always"
+       xlink:href="#linearGradient63"
+       id="radialGradient62"
+       cx="60"
+       cy="37.055439"
+       fx="60"
+       fy="37.055439"
+       r="25"
+       gradientTransform="matrix(2.2056442,0,0,2.2056442,-72.338654,-21.731115)"
+       gradientUnits="userSpaceOnUse" />
+  </defs>
+  <g
+     inkscape:label="Warstwa 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <path
+       id="path31"
+       style="fill:url(#radialGradient61);stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill-opacity:1"
+       d="M 35 16.699219 A 50 50 0 0 0 10 60 L 37.103516 60 A 22.895706 22.895706 0 0 1 48.552734 40.171875 L 35 16.699219 z " />
+    <path
+       id="path29"
+       style="fill:url(#radialGradient62);stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill-opacity:1"
+       d="M 48.552734 79.828125 L 35 103.30078 A 50 50 0 0 0 60 110 A 50 50 0 0 0 85 103.30078 L 71.447266 79.828125 A 22.895706 22.895706 0 0 1 60 82.896484 A 22.895706 22.895706 0 0 1 48.552734 79.828125 z " />
+    <path
+       id="path27"
+       style="fill:url(#radialGradient60);stroke:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill-opacity:1"
+       d="M 85 16.699219 L 71.447266 40.171875 A 22.895706 22.895706 0 0 1 82.896484 60 L 110 60 A 50 50 0 0 0 85 16.699219 z " />
+    <circle
+       style="fill:url(#radialGradient46);stroke:none;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="path32"
+       cx="60"
+       cy="60"
+       r="10" />
+    <circle
+       style="fill:none;fill-opacity:1;stroke:#ff4838;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:none;stroke-opacity:1"
+       id="path45"
+       cx="60"
+       cy="60"
+       r="60" />
   </g>
 </svg>
