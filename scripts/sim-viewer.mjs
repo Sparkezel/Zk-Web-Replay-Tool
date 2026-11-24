@@ -91,12 +91,21 @@ const rafQueue = [];
 globalThis.requestAnimationFrame = (fn) => { rafQueue.push(fn); return rafQueue.length; };
 
 // fetch: serve the real bytes without HTTP (exact ArrayBuffer — Buffer.buffer
-// may be Node's shared pool for small files)
+// may be Node's shared pool for small files). Missing files resolve as a
+// soft 404 (same shape a browser gives) — page-side loaders must degrade,
+// never throw: the draw loop is the thing under test here.
 globalThis.fetch = (url) => {
   const p = String(url).startsWith("http") ? "mockup/" + String(url).split("/").pop() : String(url);
-  const data = readFileSync(p === "battle.zkr" ? artifact : p);
+  let data;
+  try {
+    data = readFileSync(p === "battle.zkr" ? artifact : p);
+  } catch (e) {
+    return Promise.resolve({ ok: false, status: 404,
+      text: () => Promise.resolve(""), arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) });
+  }
   const ab = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-  return Promise.resolve({ ok: true, status: 200, arrayBuffer: () => Promise.resolve(ab) });
+  return Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(data.toString("utf8")),
+    arrayBuffer: () => Promise.resolve(ab) });
 };
 
 // ---------- run the page script ----------

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- nuke_blast.svg — PLACEHOLDER ART, drawn to be replaced.
+       Constraints for your own art:
+       - keep the square viewBox (256x256), art centred on (128,128)
+       - self-contained: no external images, fonts or scripts
+       - write the literal __TINT__ wherever the warhead colour goes
+         (Eos red / Shockley cyan / Zeno purple / Quake green / Inferno
+         orange / Trinity red) — it is replaced at load time
+       - use semi-transparent fills so the AOE circles stay readable -->
+  <g fill="none" stroke="#000" stroke-width="6" opacity=".55">
+    <path d="M128 42 C 78 42 52 74 52 108 C 52 150 92 160 128 160 C 164 160 204 150 204 108 C 204 74 178 42 128 42 Z"/>
+    <path d="M116 160 C 108 190 100 205 88 218 C 108 226 148 226 168 218 C 156 205 148 190 140 160 Z"/>
+  </g>
+  <g stroke="none">
+    <path d="M128 56 C 92 56 66 80 66 108 C 66 136 96 146 128 146 C 160 146 190 136 190 108 C 190 80 164 56 128 56 Z" fill="__TINT__" opacity=".55"/>
+    <path d="M120 160 C 114 186 107 200 96 212 C 114 219 142 219 160 212 C 149 200 142 186 136 160 Z" fill="__TINT__" opacity=".45"/>
+    <path d="M66 108 C 96 120 160 120 190 108" fill="none" stroke="#000" stroke-width="3" opacity=".35"/>
+  </g>
+</svg>

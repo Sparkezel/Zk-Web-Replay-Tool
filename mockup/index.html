@@ -406,6 +406,36 @@ function allyOfTeam(model,t){
   return mt?mt.ally:t;
 }
 
+/* ---- SVG FX overlays (mockup/fx/) ---------------------------------------
+   Blast / intercept art ships as vector files so it stays crisp at any
+   stage zoom (the 960-elmo Trinity blast is huge at 1x, a dot zoomed out).
+   The file is fetched ONCE per (art, colour), the literal __TINT__ token
+   inside the SVG text is replaced with the warhead colour, and the result
+   loads as a data-URI Image. Missing file, failed fetch or an undecoded
+   image skip the overlay silently — the fallback circles always render. */
+var fxCACHE={};
+function fxImage(name,rgb){
+  var key=name+"|"+rgb;
+  if(fxCACHE[key]!==undefined)return fxCACHE[key];
+  fxCACHE[key]=null; /* in flight — later frames see the resolved image */
+  /* try/catch around the WHOLE chain: an environment whose fetch throws
+     synchronously (headless harnesses reading file paths that may not
+     exist) must never kill the draw loop — the overlay just never shows */
+  try{
+    fetch("fx/"+name+".svg",{cache:"no-cache"}).then(function(r){
+      if(!r.ok)throw new Error("fx not found: "+name);
+      return r.text();
+    }).then(function(txt){
+      var img=new Image();
+      img.src="data:image/svg+xml;charset=utf-8,"+
+        encodeURIComponent(txt.replace(/__TINT__/g,"rgb("+rgb+")"));
+      fxCACHE[key]=img;
+    }).catch(function(){/* keep the null: retry on the next model swap */});
+  }catch(e){}
+  return null;
+}
+function fxReady(img){return !!(img&&img.complete&&img.naturalWidth>0);}
+
 function buildArtifactModel(artifact){
   var m=ZkrReplay.artifactToModel(artifact);
   var R=mulberry(2539874);
@@ -678,6 +708,16 @@ function draw(model,tm){
     cx.lineWidth=1.5;
     cx.beginPath();cx.arc(e.x*W,e.y*H,rr,0,7);cx.stroke();
     cx.lineWidth=1;
+    /* vector blast art over the detonation, in the warhead's colour —
+       the circles below stay (they carry the precise AOE), the SVG adds
+       the flavour layer; same once-per-pass alpha as the circles */
+    var fx=fxImage("nuke_blast",e.col);
+    if(fxReady(fx)){
+      var fs=Math.max(40,rr*1.5);
+      cx.globalAlpha=0.85*a;
+      cx.drawImage(fx,e.x*W-fs/2,e.y*H-fs/2,fs,fs);
+      cx.globalAlpha=1;
+    }
   });
   // incoming strategic missiles - ZK's own incoming-strike visualisation:
   // at the DESTINATION a HOLLOW circle shows the blast AOE, ringed by a
@@ -718,6 +758,25 @@ function draw(model,tm){
         cx.setLineDash([]);
       }
     }
+  });
+  // intercepted warheads: a small vector burst where the antinuke rocket
+  // got them (the strike circle keeps telling the would-be target) - flash
+  // ONCE per pass through time, exactly like the detonation blasts; the
+  // art paints in the downed missile's colour to match its target circle
+  model.projectiles.forEach(function(pr){
+    if(!pr.intercepted)return;
+    /* seek back before the kill re-arms the flash (same semantics as the
+       detonation blasts: one flash per pass through time) */
+    if(tm<pr.impact){pr._seenfx=undefined;return;}
+    if(pr._seenfx===undefined)pr._seenfx=wallNow;
+    var a=1-(wallNow-pr._seenfx)/500;
+    if(a<=0)return;
+    var fx=fxImage("intercept",pr.mcol);
+    if(!fxReady(fx))return;
+    var s=Math.max(18,120*pxPerElmo);   /* ~120 elmos tall on the map */
+    cx.globalAlpha=0.9*a;
+    cx.drawImage(fx,pr.ix*W-s/2,pr.iy*H-s/2,s,s);
+    cx.globalAlpha=1;
   });
   // anti-nuke coverage: always visible once the launcher completes (ZK's
   // own coverage circle reads the same nuke_coverage value, 2500 elmos).
@@ -1419,6 +1478,9 @@ function installModel(model){
      on every model, so without this it keeps the previous replay's rows
      until the first seek */
   ["feed","chat","unitCounts"].forEach(function(id){var el=document.getElementById(id);if(el){el._sig=null;el._statSig=null;}});
+  /* fx art re-resolves on every artifact load: an SVG dropped into
+     mockup/fx/ shows up after the next replay switch, no hard refresh */
+  fxCACHE={};
   document.getElementById("chip").textContent=model.synthetic?"10 min/s preview (synthetic)":"rendering "+(curReplay?curReplay.art:"battle.zkr")+" ("+model.units.length+" units)";
   renderTeams(model);
   ZkrReplay.setUnitIconBase("icons/");
