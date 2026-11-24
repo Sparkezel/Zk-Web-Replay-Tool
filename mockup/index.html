@@ -87,6 +87,7 @@
   .feed li.hit{background:rgba(224,90,78,.05)}
   .feed li.warn b{color:#ffb84d}
   .feed li.news b{color:#7fd0ff}
+  .feed li.launch b{color:#8ce8a8}
   /* sticky poll card: pinned at the top of the feed while a vote runs */
   .feed li.vote-sticky{position:sticky;top:0;z-index:2;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;margin:4px 6px;color:var(--txt)}
   .feed li.vote-sticky .vt{font-weight:800;font-size:13.5px;letter-spacing:.4px}
@@ -370,6 +371,25 @@ function clusterWrecks(wrecks,mapW,mapH){
   return zones;
 }
 
+/* thin 45-degree hatch for the antinuke coverage interior: one 1px
+   diagonal line per 8px tile, in the team (or EMP-flash red) colour —
+   no translucent wash, so several overlapping coverages stay readable.
+   Patterns are cached per colour (2 entries per antinuke at most); the
+   test stubs' createPattern returns undefined, hence the plain fill
+   fallback keeps headless runs drawing. */
+var hatchCache={};
+function hatchPattern(rgb){
+  if(hatchCache[rgb])return hatchCache[rgb];
+  var p=document.createElement('canvas');p.width=p.height=8;
+  var g=p.getContext?p.getContext('2d'):null;
+  if(g){
+    g.strokeStyle="rgba("+rgb+",.55)";g.lineWidth=1;
+    g.beginPath();g.moveTo(-1,9);g.lineTo(9,-1);g.stroke();
+    try{hatchCache[rgb]=cx.createPattern(p,'repeat');}catch(e){}
+  }
+  return hatchCache[rgb]||("rgba("+rgb+",.05)");
+}
+
 function buildArtifactModel(artifact){
   var m=ZkrReplay.artifactToModel(artifact);
   var R=mulberry(2539874);
@@ -385,9 +405,14 @@ function buildArtifactModel(artifact){
       commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
       antiNuke:u.antiNuke||0,
+      /* a launched silo missile vanishes from the map at its staging time
+         (launch + up to one probe); its sweep-time engine death would park
+         the icon at the map corner for the rest of the game */
+      launched:!!u.launched,launchTm:u.launchTm||-1,
+      diedShown:u.launched&&u.launchTm>=0?u.launchTm:u.died,
       states:u.states||[],
       sr:u.shieldRadius||0,
-      posAt:function(tm){if(tm<u.born||(this.died>0&&tm>=this.died))return null;
+      posAt:function(tm){if(tm<u.born||(this.diedShown>0&&tm>=this.diedShown))return null;
         var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
   var projectiles=m.projectiles.map(function(p){
     var ip=p.path[p.path.length-1];
@@ -403,10 +428,13 @@ function buildArtifactModel(artifact){
   if(teams.length===0)teams=[0];
   /* losses per team: sorted death times + prefix sums of (count, value),
      so the grid can read casualties at any draw frame in O(log n).
-     Morph victims are excluded (the unit continues as its target). */
+     Morph victims are excluded (the unit continues as its target), and
+     so are LAUNCHED silo missiles — firing an Eos is not a combat loss
+     (The Hole: all 150 would otherwise count, the game swept them
+     post-gameover) */
   var lossByTeam={};
   units.forEach(function(u){
-    if(u.died>0&&!u.morph){
+    if(u.died>0&&!u.morph&&!u.launched){
       var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
       d.t.push(u.died);
       /* invested-at-death value: a killed nanoframe lost its build
@@ -649,7 +677,10 @@ function draw(model,tm){
     // flash = alternate red / team colour; never blank the circle — a pause
     // on the "off" phase would leave the launcher with no coverage view
     var col=(anned&&Math.floor(wallNow/180)%2===0)?"255,50,40":teamColorStr(u.t);
-    cx.fillStyle="rgba("+col+",.16)";
+    /* thinly HATCHED interior (sparse 1px diagonals, no translucent
+       wash — several overlapping coverages stay readable) + a plain
+       border; the EMP flash swaps hatch and border to red */
+    cx.fillStyle=hatchPattern(col);
     cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.fill();
     cx.strokeStyle="rgba("+col+",.7)";
     cx.lineWidth=1.4;
@@ -785,27 +816,19 @@ function draw(model,tm){
     }
     /* the whole ICON flashes (never a translucent circle around it — that
        reads as a fire effect): orange while burning, and the antinuke's
-       ring flashes red while the launcher is EMP-shocked (it cannot
+       icon flashes red while the launcher is EMP-shocked (it cannot
        intercept in that state) */
     var flash=null;
     if((b&1)!==0&&Math.floor(wallNow/150)%2===0)flash="#ff7832";
     else if(u.antiNuke>0&&(b&4)!==0&&Math.floor(wallNow/180)%2===0)flash="#ff3228";
     var mCol=flash||col;
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
-    /* the antinuke draws its ring marker below - skip the (discarded)
-       icon tint entirely for it (counter-review L3: one wasted tint +
-       cache entry per frame otherwise) */
-    var tinted=img&&!u.antiNuke?ZkrReplay.tintIcon(img,mCol):null;
-    if(u.antiNuke>0){
-      /* the antinuke marker: a slight team-coloured RING, no inner
-         filling — coverage is what matters and a filled icon/tinted blob
-         reads as a unit. The EMP flash swaps the ring itself between red
-         and the team colour */
-      cx.strokeStyle=mCol;
-      cx.lineWidth=2;
-      cx.beginPath();cx.arc(x,y,r-0.5,0,7);cx.stroke();
-      cx.lineWidth=1;
-    }else if(tinted){
+    /* every unit renders through its own icon — the antinuke included
+       (antinuke.png, tinted team colour): it is a real unit whose
+       placement matters, its coverage is told by the circle, and a bare
+       ring marker reads as a nobody-dot */
+    var tinted=img?ZkrReplay.tintIcon(img,mCol):null;
+    if(tinted){
       cx.drawImage(tinted,x-r,y-r,r*2,r*2);
     }else{
       cx.fillStyle=mCol;
@@ -874,12 +897,17 @@ function draw(model,tm){
     cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
     cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
     /* in-flight markers. Trinity warheads and antinuke interceptors carry
-       their own icon: drawn as a slight team-coloured BORDER, no inner
-       filling (a solid tinted icon reads as a blob on the trail). Icon
-       files land in mockup/icons/ as nuke_missile.png / antinuke_proj.png;
-       until dropped, the default glow dot keeps rendering */
+       their own icon files (nuke_missile.png / antinuke_proj.png). The
+       interceptor draws as a slight team-coloured BORDER (a solid tinted
+       dot would read as a warhead); the Trinity's custom art renders
+       SOLID-tinted — the destination-out erase used for the interceptor
+       would hollow its middle out into a transparent ring glyph. Until
+       an image file settles, the fallback glow dot keeps rendering */
     var fimg=pr.icon?ZkrReplay.iconFor(pr.icon):null;
-    var fcol=fimg&&fimg.complete&&fimg.naturalWidth&&pr.team!==undefined?ZkrReplay.outlineIcon(fimg,teamColor(pr.team)):null;
+    var fcol=fimg&&fimg.complete&&fimg.naturalWidth&&pr.team!==undefined?(
+      pr.icon==="antinuke_proj"
+        ?ZkrReplay.outlineIcon(fimg,teamColor(pr.team))
+        :ZkrReplay.tintIcon(fimg,teamColor(pr.team))):null;
     if(fcol){
       cx.drawImage(fcol,x-9,y-9,18,18);
     }else if(pr.mcol){
@@ -1278,11 +1306,9 @@ function warnMissingIcons(model){
     var miss=new Set();
     model.units.forEach(function(u){
       if(!u.icon)return;
-      /* the five sent missiles (Eos / Shockley / Quake / Zeno / Inferno all
-         share iconType cruisemissilesmall) are DELIBERATE plain radar-style
-         blips — their story is the flight trail, not an icon. Nobody is
-         meant to drop that file: stop calling it missing */
-      if(u.icon==="cruisemissilesmall")return;
+      /* the five silo missiles (iconType cruisemissilesmall) alias to the
+         committed cruisemissile.png inside iconFor — nothing to skip, a
+         missing file there is a real absence worth naming */
       var im=ZkrReplay.iconFor(u.icon);
       if(!im||(im.complete&&!im.naturalWidth))miss.add(u.icon);
     });

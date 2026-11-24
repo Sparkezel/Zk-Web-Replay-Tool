@@ -277,6 +277,11 @@
     iconBase = String(url || "").replace(/\/?$/, "/");
   }
   function iconFor(iconType) {
+    /* ZK's own icontypes.lua resolves iconType "cruisemissilesmall" (the
+       five stockpiled silo missiles: Eos/Shockley/Zeno/Quake/Inferno) to
+       icons/cruisemissile.dds - the silo missiles keep their radar icon
+       until they fly (in flight they become the coloured warhead dots) */
+    if (iconType === "cruisemissilesmall") iconType = "cruisemissile";
     if (!iconBase || !iconType || typeof Image === "undefined") return null;
     if (!iconCache.has(iconType)) {
       const im = new Image();
@@ -750,6 +755,27 @@
       return null;
     };
     const feedData = [];
+    /* ---- stockpiled silo missiles: launched vs killed-in-silo ----
+       A launched missile stops being a map unit: the engine moves it to
+       the staging corner at the map's right edge (measured on The Hole:
+       fraction 1,0) where it sits until a later sweep destroys it, long
+       after impact. Death TIME cannot tell launched from killed — all
+       150 of The Hole's missiles died in the post-gameover sweep, their
+       impacts notwithstanding. The only in-data launch sign is a staging
+       sample (x at the extreme edge, z at either extreme); the missile
+       stockpiles at its silo deep inside the map before that. */
+    const MISSILE_UNIT_DEFS = new Set(["tacnuke", "empmissile", "missileslow", "seismic", "napalmmissile"]);
+    const launchTmByUnit = new Map();
+    for (const uu of (artifact.pos ? artifact.pos.units : [])) {
+      const info = udef.get(uu.defID);
+      if (!info || !MISSILE_UNIT_DEFS.has(info.name)) continue;
+      for (const s of uu.samples) {
+        if (s.x > 0.95 && (s.z < 0.05 || s.z > 0.95)) {
+          launchTmByUnit.set(uu.unitID, toSec(s.frame));
+          break;
+        }
+      }
+    }
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "death") continue;
       const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
@@ -780,6 +806,21 @@
             txt: unitName + " morphed into " + intoName,
           });
         }
+        continue;
+      }
+      /* stockpiled silo missile: a LAUNCHED one's story is told by its
+         warhead flight (launch news + strike circle + blast) — its
+         later engine-side destroy leaves no line. A missile that died
+         never having staged was killed in (or swept out of) its silo,
+         which is a different story and reads as such */
+      if (deadDef && MISSILE_UNIT_DEFS.has(deadDef.name)) {
+        if (launchTmByUnit.has(r.unitID)) continue;
+        const siloKiller = defLabel(r.int1, r.int1 >= 0 ? "Unit #" + r.int1 : null);
+        feedData.push({
+          tm: toSec(r.frame), cls: "death",
+          txt: unitName + " was destroyed before launching" +
+               (siloKiller ? " — killed by " + siloKiller : ""),
+        });
         continue;
       }
       /* unfinished unit dying before gameover with no killer = the builder
@@ -1015,6 +1056,11 @@
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
         morph: morphIntoByUnit.has(u.unitID),
+        /* silo missile launch (see MISSILE_UNIT_DEFS): staging-corner
+           sample time; the page hides the unit from here on (warhead
+           flight tells the story) and drops it from the loss grid */
+        launched: launchTmByUnit.has(u.unitID),
+        launchTm: launchTmByUnit.get(u.unitID) ?? -1,
         track: u.samples.map((s) => ({
           t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build,
           ck: s.ck,
@@ -1047,6 +1093,11 @@
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "wreck") {
         nWreckEvents++;
+        /* stockpile missiles destroyed at the staging corner leave their
+           corpse OUTSIDE the playable map (measured on The Hole: all 150,
+           at fraction 1/0 — a magenta dot wall at the map corner without
+           this filter); real wrecks never sit at the literal map edge */
+        if (r.int2 >= wmw * 0.95 && (r.int3 <= wmh * 0.05 || r.int3 >= wmh * 0.95)) continue;
         wreckByFeature.set(r.unitID, {
           born: toSec(r.frame),
           x: r.int2 / wmw, y: r.int3 / wmh,
@@ -1060,7 +1111,9 @@
     let wrecks = [...wreckByFeature.values()];
     if (nWreckEvents === 0) {
       for (const u of units) {
-        if (u.died < 0 || u.morph || !u.track || !u.track.length) continue;
+        /* launched missiles staged at the corner leave no wreck at all:
+           their "corpse" (if any) sits outside the playable map */
+        if (u.died < 0 || u.morph || u.launched || !u.track || !u.track.length) continue;
         const last = u.track[u.track.length - 1];
         wrecks.push({
           born: u.died, x: last.x, y: last.y,
@@ -1223,6 +1276,45 @@
       if (isFire && (w.adr ?? 0) > 0) {
         napalm.push({ t: imp.t, x: imp.x, y: imp.z, r: w.adr, dur: (w.adu ?? 0) > 0 ? w.adu : 15 });
       }
+    }
+
+    /* ---- launch news: every tracked strategic flight is a launch ----
+       A warhead flight means the owning player actually fired. Same-type
+       same-team launches within 2.5 s of each other are one volley ->
+       one line ("24 x Eos missiles launched!"), not 24 identical rows;
+       measured on The Hole: an Eos volley of 24 + a single early shot,
+       50 Quake in two volleys, 38 Trinity warheads in groups. Trinity
+       has no missile unit (the launcher is the building), so its launch
+       line comes purely from the staticnuke flight. */
+    const LAUNCH_MISSILE_NAMES = {
+      tacnuke: "Eos", empmissile: "Shockley", missileslow: "Zeno",
+      seismic: "Quake", napalmmissile: "Inferno",
+    };
+    const launches = [];
+    for (const p of projectiles) {
+      if (!p.mcol || !p.path.length) continue;
+      const w = wdef.get(p.weaponDefID);
+      const k = w && w.name ? String(w.name).toLowerCase().split("_")[0] : null;
+      if (k && LAUNCH_MISSILE_NAMES[k]) {
+        launches.push({ tm: p.born, nm: LAUNCH_MISSILE_NAMES[k], team: p.team, nuke: false });
+      } else if (k === "staticnuke") {
+        launches.push({ tm: p.born, nm: "Trinity", team: p.team, nuke: true });
+      }
+    }
+    launches.sort((a, b) => a.tm - b.tm);
+    for (let i = 0; i < launches.length;) {
+      let j = i + 1;
+      while (j < launches.length && launches[j].nm === launches[i].nm &&
+             launches[j].team === launches[i].team &&
+             launches[j].tm - launches[j - 1].tm <= 2.5) j++;
+      const cnt = j - i, L = launches[i];
+      feedData.push({
+        tm: L.tm, cls: "launch",
+        txt: L.nuke
+          ? (cnt > 1 ? cnt + " × Trinity nukes launched!" : "Trinity launched a strategic nuke!")
+          : (cnt > 1 ? cnt + " × " + L.nm + " missiles launched!" : L.nm + " launched!"),
+      });
+      i = j;
     }
 
     const links = (artifact.link ? artifact.link.links : []).map((l) => ({

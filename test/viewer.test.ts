@@ -729,6 +729,14 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   ] });
   snap.events.push({ kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 });
   snap.events.push({ kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 });
+  // unit 14 is also an Eos but NEVER stages: it stays in its silo until an
+  // enemy kills it - a launch it is not, and the feed must say so
+  snap.units.set(14, { unitID: 14, defID: 21, samples: [
+    { frame: 100, x: 3000, z: 3000, hp: 255, build: 255 },
+    { frame: 294, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 100, unitID: 14, int1: 21, int2: 1, int3: -1 });
+  snap.events.push({ kind: "death", frame: 320, unitID: 14, int1: 33, int2: 1, int3: -1 });
   snap.weaponDefs.set(31, { defID: 31, name: "tacnuke_weapon", type: "MissileLauncher", range: 900, aoe: 192 });
   snap.projectiles.set(102, { proID: 102, weaponDefID: 31, projClass: 4, ownerTeam: 1, startFrame: 294,
     samples: [{ frame: 294, x: 8192, z: 8192, y: 200 }, { frame: 300, x: 9000, z: 9100, y: 0 }] });
@@ -738,6 +746,10 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(32, { defID: 32, name: "empmissile_emp_weapon", type: "MissileLauncher", range: 900, aoe: 140 });
   snap.projectiles.set(103, { proID: 103, weaponDefID: 32, projClass: 4, ownerTeam: 1, startFrame: 354,
     samples: [{ frame: 354, x: 1000, z: 1000, y: 200 }, { frame: 360, x: 2000, z: 2000, y: 0 }] });
+  // a second Shockley flight 2 frames after the first: same volley, and the
+  // launch news must aggregate the pair into ONE line
+  snap.projectiles.set(109, { proID: 109, weaponDefID: 32, projClass: 4, ownerTeam: 1, startFrame: 356,
+    samples: [{ frame: 356, x: 1100, z: 1100, y: 200 }, { frame: 362, x: 2100, z: 2100, y: 0 }] });
   snap.weaponDefs.set(33, { defID: 33, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
   snap.projectiles.set(104, { proID: 104, weaponDefID: 33, projClass: 3, ownerTeam: 0, startFrame: 414,
     samples: [{ frame: 414, x: 3000, z: 3000, y: 200 }, { frame: 420, x: 4000, z: 4000, y: 0 }] });
@@ -780,8 +792,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // Eos detonation anchored at the warhead FLIGHT's last sample (impact),
   // radius from WDEF aoe; the missile unit's corner death must NOT paint one
-  assert.equal(model.explosions.length, 3,
-    "exactly the Eos/Shockley/Trinity warhead flights paint one - no corner blast from the unit death, none from the antinuke interceptor");
+  assert.equal(model.explosions.length, 4,
+    "Eos + both Shockleys + the clean Trinity paint one - no corner blast from the unit deaths, none from the antinuke interceptor");
   const eos = model.explosions.find((e) => e.r === 192);
   assert.ok(eos, "Eos explosion present");
   assert.equal(eos!.fade, "fast");
@@ -789,9 +801,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(eos!.x - 9000 / 16384) < 0.01 && Math.abs(eos!.y - 9100 / 16384) < 0.01,
     "explosion at the flight's impact sample, not the missile unit's staging corner (16384/16384)");
   // prefixed real-world weapon names must still anchor their blast
-  const shockley = model.explosions.find((e) => e.col === "72,214,255");
-  assert.ok(shockley && Math.abs(shockley!.t - 12) < 0.01 && shockley!.r === 140,
-    "Shockley explosion from the unit-key-prefixed empmissile_emp_weapon at its impact");
+  assert.equal(model.explosions.filter((e) => e.col === "72,214,255").length, 2,
+    "both Shockley explosions from the unit-key-prefixed empmissile_emp_weapon at their impacts");
   const trinity = model.explosions.find((e) => e.r === 960);
   assert.ok(trinity && Math.abs(trinity!.t - 14) < 0.01,
     "Trinity explosion from staticnuke_crblmssl at its impact");
@@ -808,7 +819,7 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 4, "Eos + Shockley + both Trinities carry strike colours");
+  assert.ok(missAF.length === 5, "Eos + both Shockleys + both Trinities carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
@@ -846,6 +857,31 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // superweapon construction news in the feed
   assert.ok(model.feedData.some((f) => f.cls === "news" && /Zenith has begun construction!/.test(f.txt)),
     "superweapon news line");
+
+  // ---- launch news: every warhead flight announces the launch ----
+  assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "Eos launched!"),
+    "a single Eos flight leaves one plain launch line");
+  assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "2 \u00d7 Shockley missiles launched!"),
+    "two Shockley flights 0.07 s apart aggregate into one volley line");
+  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 2,
+    "both Trinity flights get news; their 6 s gap never aggregates them");
+
+  // ---- launched vs killed-in-silo missile units ----
+  const u12 = model.units.find((u) => u.id === 12)!;
+  assert.equal(u12.launched, true, "the staged Eos counts as launched");
+  assert.ok(Math.abs(u12.launchTm - 100 / 30) < 1e-6,
+    "launch time = the first staging-corner sample");
+  assert.ok(!model.feedData.some((f) => f.txt === "Eos destroyed"),
+    "a launched missile's later engine-side destroy leaves no destroyed line");
+  const u14 = model.units.find((u) => u.id === 14)!;
+  assert.equal(u14.launched, false, "an Eos that never staged was killed in its silo");
+  assert.ok(model.feedData.some((f) => f.cls === "death" &&
+    /^Eos was destroyed before launching/.test(f.txt)),
+    "a missile killed in its silo gets its own wording, not a plain destroy");
+  // the launched missile's staging-corner corpse never lands on the wreck
+  // layer (old-artifact fallback path: died>0 would have added one)
+  assert.ok(!model.wrecks.some((w) => w.x > 0.95 && (w.y < 0.05 || w.y > 0.95)),
+    "no fallback wreck at the staging corner");
 });
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
