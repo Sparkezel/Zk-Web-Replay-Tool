@@ -1,9 +1,8 @@
 # Deploys the mockup viewer — index.html + replay.js + map.png + icons/ +
-# battle.zkr (the pre-simulated artifact) — to GitHub Pages, so
-# https://sparkezel.github.io/Zk-Web-Replay-Tool/ shows a working replay.
-# Requires the repo's Pages setting (Settings -> Pages -> Source) to be
-# "GitHub Actions"; any push to main touching mockup/** redeploys.
-
+# battle.zkr (the pre-simulated artifact) — to GitHub Pages.
+# Upload and deploy are separate jobs: deploy-pages looks the artifact up in
+# the Actions Results service, which only indexes the artifact once the
+# uploading job has fully completed (actions/deploy-pages#451).
 name: Deploy viewer to GitHub Pages
 
 on:
@@ -16,7 +15,6 @@ on:
 
 permissions:
   contents: read
-  actions: read
   pages: write
   id-token: write
 
@@ -25,11 +23,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
@@ -38,19 +33,14 @@ jobs:
           # the viewer is self-contained: relative fetches of battle.zkr,
           # map.png and icons/ all resolve inside this directory
           path: mockup
-      - name: Wait for the github-pages artifact to be visible
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for _ in $(seq 1 30); do
-            count=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?name=github-pages" --jq '.total_count' 2>/dev/null || echo 0)
-            if [ "${count:-0}" -ge 1 ]; then
-              echo "github-pages artifact is visible to the Actions API"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::github-pages artifact did not become visible to the Actions API" >&2
-          exit 1
-      - id: deploy
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
