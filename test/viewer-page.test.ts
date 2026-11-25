@@ -246,9 +246,11 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   pick.value = 1;
   (pick.onchange as () => void).call(pick);
   // the switch re-runs the full fetch -> streamed inflate -> installModel
-  // chain; wait for it rather than racing a fixed 20 ms sleep
-  await waitFor(() => /battle2\.zkr/.test(String(byId("chip").textContent)));
-  assert.match(byId("chip").textContent, /battle2\.zkr/, "switching installs the second artifact");
+  // chain; wait for it rather than racing a fixed 20 ms sleep. The second
+  // catalog entry is the Otago 1 Hz capture (battle4.zkr) - the Otago pair
+  // sits together and Comet Catcher is parked until the decoder rewrite
+  await waitFor(() => /battle4\.zkr/.test(String(byId("chip").textContent)));
+  assert.match(byId("chip").textContent, /battle4\.zkr/, "switching installs the second artifact");
   assert.match(String(byId("infoDur").textContent), /minutes/, "battle-result duration follows the loaded model");
 });
 
