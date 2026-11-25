@@ -488,13 +488,19 @@ function buildArtifactModel(artifact){
       var dElm=Math.hypot((tgt.x-ip.x)*mapWf,(tgt.y-ip.z)*mapHf);
       strikeTm=Math.max(p.end,ip.t+dElm/sp);
     }
-    /* strategic warheads (icon flights) + the big named guns (Bertha
-       plasma, Zenith meteors, DRP shells) fly a fading 15-sample white
-       trail instead of the generic 2-point velocity line - the samples
-       are the recorded path itself, 0.2 s apart */
-    var trail=p.icon?true:!!(p.wname&&(
-      p.wname.indexOf("staticheavyarty")===0||p.wname==="meteor"||
-      p.wname.indexOf("raveparty")===0));
+    /* strategic warheads (icon flights + the five silo missiles: Eos /
+       Shockley / Zeno / Quake / Inferno fly as colour dots only) + the
+       big named guns (Bertha plasma, Zenith meteors, DRP shells) fly a
+       fading 15-sample white trail instead of the generic 2-point
+       velocity line - the samples are the recorded path itself, 0.2 s
+       apart. Silo keys match the FIRST underline token of the weapon
+       name, so the Scylla's subtacmissile_tacnuke torpedo never
+       matches (its first token is subtacmissile) */
+    var wkey=(p.wname||"").split("_")[0];
+    var trail=p.icon?true:(!!p.wname&&(
+      wkey==="tacnuke"||wkey==="empmissile"||wkey==="missileslow"||
+      wkey==="seismic"||wkey==="napalmmissile"||
+      wkey==="staticheavyarty"||wkey==="meteor"||wkey==="raveparty"));
     return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
       tgt:tgt,intercepted:!!p.intercepted,strikeTm:strikeTm,
       ix:ip.x,iy:ip.z,tpath:trail?p.path:null,
