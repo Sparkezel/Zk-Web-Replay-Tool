@@ -866,6 +866,7 @@ function draw(model,tm){profSeg("backdrop");
   // intercepted warhead (no recorded target) paints NOTHING, never a
   // fake circle at the intercept point. Trinity additionally draws a red
   // dashed line from the flying warhead to its target.
+  profSeg("strikes");
   model.projectiles.forEach(function(pr){
     if(!pr.mcol||!(pr.maoe>0))return;
     if(pr.intercepted&&!pr.tgt)return;
@@ -895,7 +896,7 @@ function draw(model,tm){profSeg("backdrop");
       }
     }
   });
-  profSeg("strikes");
+  profSeg("intercept");
   // intercepted warheads: the trefoil strike-through marks where the
   // antinuke rocket got them (the strike circle keeps telling the
   // would-be target); the marker lives for ~30 GAME-seconds past the kill
@@ -921,7 +922,7 @@ function draw(model,tm){profSeg("backdrop");
     cx.drawImage(fx,pr.ix*W-s/2,pr.iy*H-s/2,s,s);
     cx.globalAlpha=1;
   });
-  profSeg("intercept");
+  profSeg("coverage");
   // anti-nuke coverage: always visible once the launcher completes (ZK's
   // own coverage circle reads the same nuke_coverage value, 2500 elmos).
   // D+B display: the whole hatch + border uses the team's FIRST-PLAYER
@@ -1008,7 +1009,7 @@ function draw(model,tm){profSeg("backdrop");
       cx.lineWidth=1;
     }
   });
-  profSeg("coverage");
+  profSeg("zones");
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot
   if(document.getElementById("wreckZones").checked){
@@ -1039,7 +1040,7 @@ function draw(model,tm){profSeg("backdrop");
     cx.textAlign="start";
     cx.lineWidth=1;
   }
-  profSeg("zones");
+  profSeg("shields");
   // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
   // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
   if(shieldsOn){
@@ -1055,7 +1056,7 @@ function draw(model,tm){profSeg("backdrop");
       cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
     });
   }
-  profSeg("shields");
+  profSeg("cloaks");
   // cloak fields (iris/conjurer/etc.): only when the field actually runs —
   // exact field bit on artifacts that record it, own-cloak fallback on
   // older ones; a stalled field (unpowered) flashes red
@@ -1083,7 +1084,7 @@ function draw(model,tm){profSeg("backdrop");
     });
   }
 
-  profSeg("cloaks");
+  profSeg("arrows");
   // engagement arrows (toggle: targets): small yellow arrows from each
   // attacker to the victim it is currently landing hits on — the
   // recorded "engage" rows are ground truth from the engine's own
@@ -1120,7 +1121,7 @@ function draw(model,tm){profSeg("backdrop");
     cx.lineWidth=1;
   }
 
-  profSeg("arrows");
+  profSeg("units");
   model.units.forEach(function(u){
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
@@ -1255,7 +1256,7 @@ function draw(model,tm){profSeg("backdrop");
       cx.lineWidth=1;
     }
   });
-  profSeg("units");
+  profSeg("flights");
   model.projectiles.forEach(function(pr){
     var pos=pr.posAt(tm);
     if(!pos)return;
@@ -1304,7 +1305,6 @@ function draw(model,tm){profSeg("backdrop");
       cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
     }
   });
-  profSeg("flights");
   cx.restore(); /* leave the world transform before the DOM-side updates */
   profSeg("dom-stats");
   renderUnitStats(model,liveStats,tm);
