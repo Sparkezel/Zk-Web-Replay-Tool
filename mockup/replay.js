@@ -1255,9 +1255,23 @@
        shape-sorted per attacker; old artifacts carry no use rows and
        simply paint nothing. */
     const ENGAGE_TTL = 1.2;
+    /* the same artillery census as the recorder's ENG_ARTY_DEFS (every ZK
+       unit whose description says artillery): their damage already shows as
+       flight arcs; arrows to targets a map away are noise. Filtering here
+       too keeps ARTIFACTS RECORDED BEFORE THE WIDGET FIX clean - Firewalker
+       and Merlin engaged a lot in the Otago recordings. */
+    const ENG_ARTY_DEFS = new Set([
+      "cloakarty", "hoverarty", "jumparty", "shieldarty", "shiparty",
+      "shipheavyarty", "staticarty", "striderarty", "tankarty", "tankheavyarty",
+      "veharty", "vehheavyarty", "chickenblobber", "chickenr", "chickenspire",
+      "cloaksnipe",
+    ]);
+    const unitDefName = new Map();
+    for (const u of units) unitDefName.set(u.id, u.def);
     const engagements = {};
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind !== "engage") continue;
+      if (ENG_ARTY_DEFS.has(unitDefName.get(r.unitID) ?? "")) continue;
       (engagements[r.unitID] = engagements[r.unitID] || []).push({ t: toSec(r.frame), v: r.int1 });
     }
     for (const k of Object.keys(engagements)) {

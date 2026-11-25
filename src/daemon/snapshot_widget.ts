@@ -323,6 +323,20 @@ local ENG_MISSILE_DEFS = {
   tacnuke = true, empmissile = true, missileslow = true,
   seismic = true, napalmmissile = true, staticnuke = true, staticantinuke = true,
 }
+-- artillery units never draw engagement arrows: their shells/rockets already
+-- have the FLIGHT layer, and arrows to targets 1.5k elmos away are noise.
+-- Census from ZK's own unit data (every unit whose description says
+-- artillery); Firewalker's mortar is a Cannon WITHOUT trajectoryHeight and
+-- Merlin's rocket battery flies flat (th=1), so the weapon-level gates can
+-- never catch these - the exclusion is per ATTACKER UNIT, not per weapon.
+-- Lobbed skirm rockets (Recluse th=1.5, r250) stay eligible precisely
+-- because their unit is not in this table.
+local ENG_ARTY_DEFS = {
+  cloakarty = true, hoverarty = true, jumparty = true, shieldarty = true,
+  shiparty = true, shipheavyarty = true, staticarty = true, striderarty = true,
+  tankarty = true, tankheavyarty = true, veharty = true, vehheavyarty = true,
+  chickenblobber = true, chickenr = true, chickenspire = true, cloaksnipe = true,
+}
 local engLast = {}   -- attackerUnitID -> { v = victimUnitID, f = frame of last emit }
 function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
                             weaponDefID, projectileID, attackerID, attackerDefID, attackerTeam)
@@ -331,6 +345,7 @@ function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
   if ad == nil then return end
   local an = string.lower(ad.name or "")
   if ENG_MISSILE_DEFS[an] or an == "terraunit" or string.find(an, "^fakeunit") then return end
+  if ENG_ARTY_DEFS[an] then return end
   -- ballistic artillery ARTILLERY GUNS: they draw flights, not
   -- engagements. Cannon-with-trajectoryHeight only: lobbed skirm
   -- rockets (Recluse, spiderskirm, carries a gentle 1.5-elmo arc;
