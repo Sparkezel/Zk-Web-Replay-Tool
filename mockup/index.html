@@ -539,6 +539,13 @@ function buildArtifactModel(artifact){
        warheads): painted on the map, decaying per their game durations */
     explosions:m.explosions||[],
     napalmRegions:m.napalm||[],
+    /* engagement arrows: per-attacker {t, v} rows + their TTL, straight
+       from artifactToModel — plus the id->view-unit map the arrow layer
+       resolves both endpoints through (drawFrame cannot see this fn's
+       locals) */
+    engagements:m.engagements||{},
+    ENGAGE_TTL:m.ENGAGE_TTL||1.2,
+    unitById:unitById,
     wrecks:wrecks,
     unitStats:losses,
     wreckZones:clusterWrecks(wrecks,m.mapW||16384,m.mapH||16384),
@@ -978,11 +985,11 @@ function draw(model,tm){
     cx.fillStyle="rgba(255,221,68,.3)";
     cx.lineWidth=1.5;
     for(var eid in model.engagements){
-      var au=unitById[eid];
+      var au=model.unitById[eid];
       if(!au||!au.posAt)continue;
       var row=ZkrReplay.engAt(model.engagements[eid],tm,ENG_TTL);
       if(!row)continue;
-      var vu=unitById[row.v];
+      var vu=model.unitById[row.v];
       if(!vu||!vu.posAt)continue;
       var ap=au.posAt(tm),vp=vu.posAt(tm);
       if(!ap||!vp)continue;
