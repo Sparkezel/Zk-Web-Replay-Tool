@@ -1756,7 +1756,11 @@ requestAnimationFrame(loop); /* start the animation loop */
 var REPLAYS=[
   {label:"Teams All Welcome #1 · Otago (8 players)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
   {label:"Comet Catcher Remake 1.8 (stress test)",art:"battle2.zkr",title:"Comet Catcher Remake 1.8"},
-  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"}
+  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"},
+  /* the same Otago game packed at 1 Hz (--pos-rate 5) instead of the default
+     5 Hz pos rows - the artifact-size / smoothness experiment; a graceful
+     fetch-fail chip shows if the file is not present */
+  {label:"Otago 1 Hz sample (artifact-size experiment)",art:"battle4.zkr",title:"[A] Teams All Welcome #1"}
 ];
 var curReplay=REPLAYS[0];
 function loadArtifact(url){
