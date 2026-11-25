@@ -139,8 +139,17 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
     }
   }
 
-  const artifactPath = job.outPath ?? path.join(root, "artifacts", `${battleID}.zkr`);
-  log.info(`packing ${snap !== undefined && zkrLines > 0 ? "resim" : "cheap-parse"} sections ...`);
+  let artifactPath = job.outPath ?? path.join(root, "artifacts", `${battleID}.zkr`);
+  const resimPacked = snap !== undefined && zkrLines > 0;
+  if (!resimPacked && existsSync(artifactPath)) {
+    /* a run that captured nothing (broken widget, engine died on the
+       demo-port bind because a live Spring session holds it, --no-resim)
+       must NEVER regress a good artifact to the M1-only cheap parse:
+       park the fallback beside it instead */
+    artifactPath = artifactPath.replace(/\.zkr(\.\w+)?$/, ".cheap.zkr");
+    log.warn(`no resim sections captured; the existing artifact is KEPT and the cheap-parse fallback goes to ${artifactPath}`);
+  }
+  log.info(`packing ${resimPacked ? "resim" : "cheap-parse"} sections ...`);
   mkdirSync(path.dirname(artifactPath), { recursive: true });
   const zkr = snap !== undefined && zkrLines > 0
     ? buildZkrFromResim(snap, {

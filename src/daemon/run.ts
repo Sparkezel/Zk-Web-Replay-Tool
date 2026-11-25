@@ -53,6 +53,10 @@ export interface RunResult {
   phase: string;
   /** the run was stopped by stopAfterFrame (truncated test run) */
   stoppedEarly: boolean;
+  /** the engine's local demo server could not bind its recorded port —
+   *  an interactive Spring session (a live game) holds it; the demo binds
+   *  the port baked into the recording, no setting can change it */
+  bindFailure: boolean;
 }
 
 export function loadDemoFile(demoPath: string): ParsedDemo {
@@ -90,6 +94,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
   let simFrame = 0;
   let phase = "booting";
   let stoppedEarly = false;
+  let bindFailure = false;
   // every ZKR line the ingest rejected, kept FULL (the console only shows
   // the first 120 chars — the tail is what identifies the real problem);
   // written to <logDir>/zkr-errors.txt when the run ends
@@ -174,6 +179,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
         // ZKR lines are folded into the snapshot/artifact; persist only engine
         // chatter so this debug log stays small even for 100k-line sims
         if (line.indexOf("ZKR {") === -1) rawOutput.push(line);
+        if (/(UDPListener::TryBindSocket\]\] binding UDP socket .* failed|caught network_error)/.test(line)) bindFailure = true;
         if (/using writeable data-directory|\[~CBufferedArchive\]|\[AS::/.test(line)) advance("scan");
         if (/\[PreGame::StartServer\]|\[GameServer\]/.test(line)) advance("starting");
         const fm = /\[f=(\d+)\]/.exec(line);
@@ -210,6 +216,10 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       clearInterval(watchdog);
       clearInterval(statusTimer);
       log.info(`engine exited code=${code} timedOut=${timedOut} stopped=${stoppedEarly} zkrLines=${zkrLines}/${rawLines} frame=${simFrame} phase=${phase}`);
+      if (bindFailure) {
+        log.warn("engine could not bind its local demo-server port — a running interactive Spring session (a live game) holds it.");
+        log.warn("the playback port is baked into the demo recording (measured: Otago binds 8452); finish the game session and rerun the resim");
+      }
       if (opts.logDir) {
         mkdirSync(path.join(opts.logDir, "errors"), { recursive: true });
         writeFileSync(path.join(opts.logDir, "engine-stdout.log"), rawOutput.join("\n"));
@@ -233,7 +243,7 @@ export function runHeadlessCapture(opts: RunOptions): Promise<RunResult> {
       if (zkrLines === 0 && rawOutput.length > 0) {
         log.warn(`no ZKR frames captured; last engine output:\n${rawOutput.slice(-5).join("\n")}`);
       }
-      resolve({ code, timedOut, snapshot, rawLines, zkrLines, simFrame, phase, stoppedEarly });
+      resolve({ code, timedOut, snapshot, rawLines, zkrLines, simFrame, phase, stoppedEarly, bindFailure });
     });
   });
 }
