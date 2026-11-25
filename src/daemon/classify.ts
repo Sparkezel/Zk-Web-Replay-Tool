@@ -63,8 +63,29 @@ const ARTY_TYPES = new Set(["Cannon"]);
 /** Beam types rendered as origin->impact lines. */
 const BEAM_TYPES = new Set(["BeamLaser", "LaserCannon"]);
 
+/** Named big-beam overrides (the fat purple laser set): Lance's Tachyon,
+ *  Lucifer's beam, the Grizzly/Stinger lasers, the Paladin's laser and the
+ *  Detriment's three lasers. Several sit under the 900-elmo beam gate
+ *  (Grizzly r660, Detriment r550-820) and would otherwise be dropped;
+ *  the recording is only the flight path — the fat purple look is a
+ *  paint-time decision in the viewer. */
+const BEAM_WEAPON_NAMES = new Set([
+  "hoverarty_ata", "turretantiheavy_ata", "amphassault_laser",
+  "turretheavylaser_laser", "striderbantha_ata", "striderdetriment_aalaser",
+  "striderdetriment_trilaser", "striderdetriment_obliteration_blaster",
+]);
+/** Named "plain projectile" overrides: the Cyclops's main gun is a short
+ *  flat Cannon (r450, no arc) which no generic rule can catch — recorded
+ *  as artillery-class flights so it draws the normal yellow dash + blip. */
+const ARC_WEAPON_NAMES = new Set(["tankheavyassault_cor_gol"]);
+
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
+
+  // named overrides first - they are exact weapon names, more precise
+  // than any type/range rule can ever be
+  if (BEAM_WEAPON_NAMES.has(name)) return 1;
+  if (ARC_WEAPON_NAMES.has(name)) return 2;
 
   // ground napalm (ZK's own classification: description / lups fx, not merely
   // any area damage) is recorded first regardless — ZK prefixes weapon names

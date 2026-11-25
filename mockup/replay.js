@@ -1257,14 +1257,15 @@
     const ENGAGE_TTL = 1.2;
     /* the same artillery census as the recorder's ENG_ARTY_DEFS (every ZK
        unit whose description says artillery): their damage already shows as
-       flight arcs; arrows to targets a map away are noise. Filtering here
-       too keeps ARTIFACTS RECORDED BEFORE THE WIDGET FIX clean - Firewalker
-       and Merlin engaged a lot in the Otago recordings. */
+       flight arcs; arrows to targets a map away are noise. Sling, Racketeer,
+       Impaler and Phantom are REINSTATED by user ruling - they are not in
+       this list and draw arrows again, coloured by the viewer's arrow styles.
+       Filtering here too keeps ARTIFACTS RECORDED BEFORE THE WIDGET FIX
+       clean */
     const ENG_ARTY_DEFS = new Set([
-      "cloakarty", "hoverarty", "jumparty", "shieldarty", "shiparty",
-      "shipheavyarty", "staticarty", "striderarty", "tankarty", "tankheavyarty",
-      "veharty", "vehheavyarty", "chickenblobber", "chickenr", "chickenspire",
-      "cloaksnipe",
+      "hoverarty", "jumparty", "shiparty", "shipheavyarty", "staticarty",
+      "striderarty", "tankarty", "tankheavyarty", "veharty",
+      "chickenblobber", "chickenr", "chickenspire",
     ]);
     const unitDefName = new Map();
     for (const u of units) unitDefName.set(u.id, u.def);

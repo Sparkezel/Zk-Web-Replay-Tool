@@ -326,16 +326,18 @@ local ENG_MISSILE_DEFS = {
 -- artillery units never draw engagement arrows: their shells/rockets already
 -- have the FLIGHT layer, and arrows to targets 1.5k elmos away are noise.
 -- Census from ZK's own unit data (every unit whose description says
--- artillery); Firewalker's mortar is a Cannon WITHOUT trajectoryHeight and
--- Merlin's rocket battery flies flat (th=1), so the weapon-level gates can
--- never catch these - the exclusion is per ATTACKER UNIT, not per weapon.
+-- artillery). Sling, Racketeer, Impaler and Phantom are REINSTATED by user
+-- ruling - their arrows return with painterly colours in the viewer.
+-- Firewalker's mortar is a Cannon WITHOUT trajectoryHeight and Merlin's
+-- rocket battery flies flat (th=1), so the weapon-level gates can never
+-- catch these - the exclusion is per ATTACKER UNIT, not per weapon.
 -- Lobbed skirm rockets (Recluse th=1.5, r250) stay eligible precisely
 -- because their unit is not in this table.
 local ENG_ARTY_DEFS = {
-  cloakarty = true, hoverarty = true, jumparty = true, shieldarty = true,
+  hoverarty = true, jumparty = true,
   shiparty = true, shipheavyarty = true, staticarty = true, striderarty = true,
-  tankarty = true, tankheavyarty = true, veharty = true, vehheavyarty = true,
-  chickenblobber = true, chickenr = true, chickenspire = true, cloaksnipe = true,
+  tankarty = true, tankheavyarty = true, veharty = true,
+  chickenblobber = true, chickenr = true, chickenspire = true,
 }
 local engLast = {}   -- attackerUnitID -> { v = victimUnitID, f = frame of last emit }
 function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
@@ -406,6 +408,20 @@ local function isNapalmWeapon(d, cp)
   return cp ~= nil and (cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil)
 end
 local function classifyWeapon(d, cp)
+  -- NAMED OVERRIDES FIRST (mirror of classify.ts): exact weapon names beat
+  -- any type/range rule. Beam set = the fat purple lasers (Lance/Lucifer/
+  -- Grizzly/Stinger/Paladin/Detriment); several sit under the 900 beam gate.
+  -- Arc set = the Cyclops's flat r450 Cannon, otherwise dropped and invisible
+  local NAMED_BEAMS = {
+    hoverarty_ata = true, turretantiheavy_ata = true, amphassault_laser = true,
+    turretheavylaser_laser = true, striderbantha_ata = true,
+    striderdetriment_aalaser = true, striderdetriment_trilaser = true,
+    striderdetriment_obliteration_blaster = true,
+  }
+  local NAMED_ARCS = { tankheavyassault_cor_gol = true }
+  local wname = string.lower(d.name or "")
+  if NAMED_BEAMS[wname] then return 1 end
+  if NAMED_ARCS[wname] then return 2 end
   -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
   -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
   -- and a name filter would silently drop it. Class 2 (artillery) fits the
@@ -532,9 +548,11 @@ function widget:GameFrame(frame)
       if tonumber(Spring.GetUnitRulesParam(uid, "on_fire") or 0) == 1 then bits = bits + 1 end
       if tonumber(Spring.GetUnitRulesParam(uid, "disarmed") or 0) == 1 then bits = bits + 2 end
       -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
-      -- build-up is ignored by design - the effect only reads at 100%)
-      local stunned = select(1, Spring.GetUnitIsStunned(uid))
-      if stunned == true then bits = bits + 4 end
+      -- build-up is ignored by design - the effect only reads at 100%).
+      -- Gate on build COMPLETION: the engine answers GetUnitIsStunned true
+      -- for units still under construction (a nanoframe is inactive), which
+      -- smeared a yellow EMP dot over every factory bar before this gate
+      if stunned == true and (build or 1) >= 1 then bits = bits + 4 end
       if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
         -- state semantics need no "all zero" baseline row: the decode treats
         -- everything before the first event as healthy; but a transition BACK
