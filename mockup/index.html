@@ -1754,13 +1754,14 @@ requestAnimationFrame(loop); /* start the animation loop */
    its map backdrop at <art-minus-.zkr>.map.png (daemon writes one minimap
    PNG per artifact - fixed map.png would be clobbered by every resim) */
 var REPLAYS=[
-  {label:"Teams All Welcome #1 · Otago (8 players)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
-  {label:"Comet Catcher Remake 1.8 (stress test)",art:"battle2.zkr",title:"Comet Catcher Remake 1.8"},
-  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"},
-  /* the same Otago game packed at 1 Hz (--pos-rate 5) instead of the default
-     5 Hz pos rows - the artifact-size / smoothness experiment; a graceful
-     fetch-fail chip shows if the file is not present */
-  {label:"Otago 1 Hz sample (artifact-size experiment)",art:"battle4.zkr",title:"[A] Teams All Welcome #1"}
+  /* the two Otago captures sit together: arate twins of the same game,
+     the 5 Hz default against the 1 Hz --pos-rate 5 experiment */
+  {label:"Otago 8v8 · 5 Hz sample (default)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
+  {label:"Otago 8v8 · 1 Hz sample (artifact-size experiment)",art:"battle4.zkr",title:"[A] Teams All Welcome #1"},
+  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"}
+  /* Comet Catcher (battle2.zkr) is OFF THE LIST until the decoder rewrite:
+     its 15 MB full-game recording OOMs the current viewer; it gets resimmed
+     (at 1 Hz or onto typed arrays) as soon as that lands */
 ];
 var curReplay=REPLAYS[0];
 function loadArtifact(url){
