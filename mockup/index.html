@@ -600,13 +600,18 @@ function resetView(){VIEW.z=1;VIEW.px=0;VIEW.py=0;}
    opens a frame, each profSeg(name) call closes the PREVIOUS segment and
    begins the named one, profDone() closes the last segment and records the
    frame total. ~15 performance.now() stamps per frame - noise next to the
-   thousands of canvas calls. Aggregated per ~0.7 s window into #perf, avg
-   and per-segment max, so a one-off hitch (texture upload, GC pause) shows
-   up in the max column while the avg column says where the steady work is.
+   thousands of canvas calls. The "avg frame" number is the mean WALL-CLOCK
+   duration of the drawFrame calls that actually ran in the last window -
+   drawn frames only: the governor skips draws while paused, and while
+   playing it drops every other tick when a frame took >20 ms, so
+   avg × fps = how much of one CPU core the renderer is using; the panel
+   states renderer fps (drawn frames/s) and rAF ticks/s separately because
+   the replay CLOCK advances on every tick either way - the two diverge
+   exactly when frames are being dropped.
    The diagnostics panel collects UNEXPECTED behaviour at runtime (missing
    icons, NaN positions, script errors) - each unique message once, so a
    systemic problem reads as one row, not a spam line per frame. */
-var PROF={t:0,t0:0,seg:null,agg:{},frames:0,uiT:0};
+var PROF={t:0,t0:0,seg:null,agg:{},frames:0,ticks:0,uiT:0};
 function profStart(){var n=performance.now();PROF.t=PROF.t0=n;PROF.seg=null;PROF.frames++;}
 function profSeg(n){
   var t=performance.now();
@@ -637,12 +642,19 @@ function profUI(){
   var el=document.getElementById("perf");
   if(!el)return;
   var names=Object.keys(PROF.agg);
-  if(!names.length){el.innerHTML="";PROF.frames=0;return;}
+  var spans=Math.max(1,now-PROF.uiT);   /* wall time covered by this window */
+  var dps=PROF.frames*1000/spans;       /* drawn frames per second */
+  var tps=PROF.ticks*1000/spans;        /* rAF loop ticks per second */
+  if(!names.length){
+    el.innerHTML='<li style="color:#9fb0b8;list-style:none"><b>no frames drawn in the last '+
+      (spans/1000).toFixed(1)+' s</b> (rAF ticks '+tps.toFixed(0)+'/s)</li>';
+    PROF.frames=0;PROF.ticks=0;return;
+  }
   names.sort(function(a,b){return PROF.agg[b].s/(PROF.agg[b].n||1)-PROF.agg[a].s/(PROF.agg[a].n||1);});
   var tmp=PROF.agg["frame total"];
   var totAvg=tmp?tmp.s/(tmp.n||1):0;
-  var html='<li style="color:#9fb0b8;list-style:none"><b>'+PROF.frames+' frames · avg total '+
-    totAvg.toFixed(2)+' ms</b></li>';
+  var html='<li style="color:#9fb0b8;list-style:none"><b>renderer '+dps.toFixed(1)+' fps · rAF '+
+    tps.toFixed(0)+'/s · avg frame '+totAvg.toFixed(2)+' ms</b></li>';
   names.forEach(function(nm){
     if(nm==="frame total")return;
     var a=PROF.agg[nm],avg=a.s/(a.n||1),pct=totAvg>0?(100*avg/totAvg):0;
@@ -650,7 +662,7 @@ function profUI(){
       ' ms · '+a.n+'× · '+pct.toFixed(0)+'%</time></li>';
   });
   el.innerHTML=html;
-  PROF.agg={};PROF.frames=0;
+  PROF.agg={};PROF.frames=0;PROF.ticks=0;
 }
 var DIAG={rows:[],seen:{}};
 function diag(kind,txt){
@@ -1479,7 +1491,7 @@ var last=performance.now();
      unchanged), only canvas frames are dropped — exactly what a "drop frames
      at high speed" strategy should do. */
 var lastDrawnT=null,lastDrawMs=0,oddTick=false;
-function loop(now){var dt=(now-last)/1000;last=now;
+function loop(now){PROF.ticks++;var dt=(now-last)/1000;last=now;
   if(playing){t=Math.min(MODEL.END,t+dt*speed);if(t>=MODEL.END){playing=false;pb.textContent="\u25b6 Play"}}
   var moved=playing||t!==lastDrawnT;
   if(moved){

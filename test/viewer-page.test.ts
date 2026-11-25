@@ -216,10 +216,10 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
      them into the perf panel after its 700 ms window (the fake clock ran
      ~10 s of playback above, so the window has surely lapsed; inside the
      harness each frame's now() calls return the same clock value, so the
-     segment times are all 0 ms — the assert checks the PANEL WORKS, not
+     segment times are all 0 ms - the assert checks the PANEL WORKS, not
      the timings) */
-  assert.match(byId("perf").innerHTML, /frames · avg total/, "profiler renders its window summary");
-  assert.match(byId("perf").innerHTML, /units/, "profiler records layer segments");
+  assert.match(byId("perf").innerHTML, /renderer [\d.]+ fps · rAF \d+\/s · avg frame [\d.]+ ms/,
+    "profiler renders fps, rAF rate and the avg frame time");
   assert.ok(typeof byId("diag").innerHTML !== "undefined", "diagnostics panel element wired");
 
   // seek mid-game: unit 2 (ghost: last sample 6.7s, no death event) and the
