@@ -488,9 +488,16 @@ function buildArtifactModel(artifact){
       var dElm=Math.hypot((tgt.x-ip.x)*mapWf,(tgt.y-ip.z)*mapHf);
       strikeTm=Math.max(p.end,ip.t+dElm/sp);
     }
+    /* strategic warheads (icon flights) + the big named guns (Bertha
+       plasma, Zenith meteors, DRP shells) fly a fading 15-sample white
+       trail instead of the generic 2-point velocity line - the samples
+       are the recorded path itself, 0.2 s apart */
+    var trail=p.icon?true:!!(p.wname&&(
+      p.wname.indexOf("staticheavyarty")===0||p.wname==="meteor"||
+      p.wname.indexOf("raveparty")===0));
     return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
       tgt:tgt,intercepted:!!p.intercepted,strikeTm:strikeTm,
-      ix:ip.x,iy:ip.z,
+      ix:ip.x,iy:ip.z,tpath:trail?p.path:null,
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
         var s=ZkrReplay.pathAt(p.path,tm);
         var pr=ZkrReplay.pathAt(p.path,Math.max(p.born,tm-0.5));
@@ -1143,8 +1150,28 @@ function draw(model,tm){
     var pos=pr.posAt(tm);
     if(!pos)return;
     var x=pos.x*W,y=pos.y*H;
-    cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
-    cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
+    if(pr.tpath){
+      /* fading white trail over the last 15 recorded samples (0.2 s
+         apart -> ~3 s of flight): 100% at the head, 0% at the oldest.
+         Anchored to sample TIMES, so it freezes while paused - it is
+         gameplay state, speed-independent under seeks */
+      var path=pr.tpath,k=path.length-1;
+      while(k>0&&path[k].t>tm)k--;
+      var first=Math.max(0,k-14);
+      cx.lineWidth=1.6;
+      for(var j=first+1;j<=k;j++){
+        var a=(j-first)/(k-first+1);
+        cx.strokeStyle="rgba(255,255,255,"+a.toFixed(3)+")";
+        cx.beginPath();
+        cx.moveTo(path[j-1].x*W,path[j-1].z*H);
+        cx.lineTo(path[j].x*W,path[j].z*H);
+        cx.stroke();
+      }
+      cx.lineWidth=1;
+    }else{
+      cx.strokeStyle="rgba(255,220,130,.85)";cx.lineWidth=1.6;
+      cx.beginPath();cx.moveTo(pos.prev.x*W,pos.prev.y*H);cx.lineTo(x,y);cx.stroke();cx.lineWidth=1;
+    }
     /* in-flight markers. Trinity warheads and antinuke interceptors carry
        their own icon files (nuke_missile.png / antinuke_proj.png): BOTH
        render SOLID-TINTED - the destination-out border trick hollowed

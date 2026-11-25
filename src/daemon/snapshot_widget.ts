@@ -313,11 +313,12 @@ end
 -- last row, so a healthy fight never flickers. One row per (attacker,
 -- victim, 0.6 s) instead of one per damage tick keeps a big 8v8 in the
 -- low thousands of rows. Excluded, matching the user's spec: ballistic
--- artillery (weapon trajectoryHeight > 0 - the arcs already have their
--- own flight layer) and the strategic silo missiles (they have their
--- own strike/blast layers and would flood the map); everything else
--- records - assaults, raiders, riots, AA, skirms with flat launchers,
--- beams, flamethrowers.
+-- artillery GUNS (Cannon type with trajectoryHeight > 0 - the arcs
+-- already have their own flight layer) and the strategic silo missiles
+-- (they have their own strike/blast layers and would flood the map);
+-- everything else records - assaults, raiders, riots, AA, skirms with
+-- lobbed rockets (Recluse's arc is a 1.5-elmo MissileLauncher hop, not
+-- artillery), beams, lightning guns, flamethrowers.
 local ENG_MISSILE_DEFS = {
   tacnuke = true, empmissile = true, missileslow = true,
   seismic = true, napalmmissile = true, staticnuke = true, staticantinuke = true,
@@ -330,9 +331,13 @@ function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
   if ad == nil then return end
   local an = string.lower(ad.name or "")
   if ENG_MISSILE_DEFS[an] or an == "terraunit" or string.find(an, "^fakeunit") then return end
-  -- ballistic artillery arcs: they draw flights, not engagements
+  -- ballistic artillery ARTILLERY GUNS: they draw flights, not
+  -- engagements. Cannon-with-trajectoryHeight only: lobbed skirm
+  -- rockets (Recluse, spiderskirm, carries a gentle 1.5-elmo arc;
+  -- Scalpel/Fencer likewise) are MissileLaunchers, not artillery, and
+  -- their arrows WERE being swallowed by a bare trajectoryHeight test
   local wd = weaponDefID and WeaponDefs[weaponDefID]
-  if wd ~= nil and (wd.trajectoryHeight or 0) > 0 then return end
+  if wd ~= nil and wd.type == "Cannon" and (wd.trajectoryHeight or 0) > 0 then return end
   local f = Spring.GetGameFrame()
   local last = engLast[attackerID]
   if last ~= nil and last.v == unitID and f - last.f < 18 then return end
@@ -368,7 +373,7 @@ end
 -- hit stdout AND infolog.txt, so every dropped projectile skipped here is
 -- volume saved in both sinks.
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
-  LightningCannon = true, TorpedoLauncher = true }
+  TorpedoLauncher = true }
 local projClassByID = {}
 -- sent strategic missiles, by ZK's weapon-name unit key (the viewer matches
 -- the same keys): these get their COMMANDED target polled once per flight,
@@ -407,6 +412,11 @@ local function classifyWeapon(d, cp)
     return 0
   end
   if cp ~= nil and cp.interceptor == "1" then return 5 end
+  -- LightningCannon: the whole type is ZK's lightning guns (Knight, Venom,
+  -- Felon's Shield Gun, Paladin, Scorpion, the comm lightninggun module) -
+  -- beams at ANY range, so short ones (Venom 240) do not fall through the
+  -- 900-elmo beam gate
+  if wtype == "LightningCannon" then return 1 end
   if (wtype == "BeamLaser" or wtype == "LaserCannon") and range >= 900 then return 1 end
   if wtype == "Cannon" and (range >= 1000 or ((d.trajectoryHeight or 0) > 0 and range >= 800)) then return 2 end
   return 0

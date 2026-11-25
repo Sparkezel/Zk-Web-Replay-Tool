@@ -1210,6 +1210,7 @@
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
         weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
+        wname: wf ? String(wf.name || "").toLowerCase() : "",
         mcol, maoe,
         born: toSec(seg[0].frame),
         end: toSec(seg[seg.length - 1].frame),
@@ -1306,6 +1307,12 @@
       ["staticheavyarty_plasma",        { col: "150,190,255", r: 88, dur: 2 }],
       ["striderdante_napalm_rockets",       { col: "255,138,40", r: 84, dur: 3 }],
       ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 84, dur: 3 }],
+      /* EMP lightning strikes: the only lightning guns with a real AoE -
+         Venom's stunner (lua aoe 128 -> r 64) and the Scorpion's
+         multi-stunner (lua 160 -> r 80); the rest (Knight/Felon/Paladin/
+         comm lightninggun, aoe 8) stay plain beams. Cyan = EMP */
+      ["spideremp_spider",              { col: "72,214,255", r: 64, dur: 2 }],
+      ["striderscorpion_multilightning", { col: "72,214,255", r: 80, dur: 2 }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
@@ -1523,7 +1530,7 @@
       "benzcom1": { r: 420 },   // Siege Commander (ESTOR_BUILDINGEX)
       "armcom1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
       "shieldbomb": { r: 384 },   // Snitch (shieldbomb_DEATH)
-      "cloakbomb": { r: 352 },   // Imp (cloakbomb_DEATH)
+      "cloakbomb": { r: 176, col: "72,214,255" },   // Imp (cloakbomb_DEATH, lua aoe 352 -> radius 176 per the Skuttle convention); electric-blue blast, not fire
       "turretsunlance": { r: 340 },   // Sunlance (LARGE_BUILDINGEX)
       "turretriot": { r: 340 },   // Stardust (LARGE_BUILDINGEX)
       "turretaafar": { r: 340 },   // Chainsaw (LARGE_BUILDINGEX)

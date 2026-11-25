@@ -37,9 +37,14 @@ const ARTY_LOBED_MIN_RANGE = 800;
 /** Missile path threshold (elmo); spec §C. */
 const MISSILE_MIN_RANGE = 900;
 
-/** Weapon types that never get a path or line (dropped bucket). */
+/** Weapon types that never get a path or line (dropped bucket).
+ *  LightningCannon is NOT here: every lightning gun in ZK (Knight, Venom,
+ *  Felon's Shield Gun, Paladin, Scorpion, the comm lightninggun module)
+ *  is a short sharp arc worth showing — they classify as beams below
+ *  regardless of range, so short ones like Venom's 240 or the Scorpion's
+ *  490 do not fall through the 900-elmo beam gate. */
 const DROPPED_TYPES = new Set([
-  "AircraftBomb", "Melee", "Shield", "LightningCannon", "TorpedoLauncher",
+  "AircraftBomb", "Melee", "Shield", "TorpedoLauncher",
 ]);
 
 /** Name substrings of junk / fake weapons (dropped bucket). "party" was
@@ -83,6 +88,10 @@ export function classifyProjectile(w: WeaponDefInfo): number {
   if (MISSILE_TYPES.has(type) && range >= MISSILE_MIN_RANGE) {
     return name.includes("nuke") || w.customParams?.["isnuke"] === "1" ? 3 : 4;
   }
+
+  // lightning guns: beams at ANY range - the whole type is lightning
+  // guns (see the DROPPED_TYPES comment)
+  if (type === "LightningCannon") return 1;
 
   if (BEAM_TYPES.has(type) && range >= BEAM_MIN_RANGE) return 1;
 
