@@ -262,6 +262,20 @@
           <li>vrod2000regensburg</li><li>LOB_imperialfist</li><li>KetchupStreamer</li>
         </ul>
       </div>
+
+      <div class="panel">
+        <h2>Renderer profile</h2>
+        <div class="bd" style="padding:6px 8px">
+          <ul class="feed" id="perf" style="max-height:200px;overflow:auto;font-size:11.5px"></ul>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Diagnostics (unexpected behaviour)</h2>
+        <div class="bd" style="padding:6px 8px">
+          <ul class="feed" id="diag" style="max-height:220px;overflow:auto;font-size:11.5px"></ul>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -581,7 +595,85 @@ var mapImg=new Image();mapImg.src="battle.map.png";
    zoomed-in panning cannot push the map edge past the panel edge) */
 var VIEW={z:1,px:0,py:0};
 function resetView(){VIEW.z=1;VIEW.px=0;VIEW.py=0;}
-function draw(model,tm){
+/* ---- frame profiler & diagnostics panel ----------------------------------
+   The profiler measures WHERE a frame's time actually goes: profStart()
+   opens a frame, each profSeg(name) call closes the PREVIOUS segment and
+   begins the named one, profDone() closes the last segment and records the
+   frame total. ~15 performance.now() stamps per frame - noise next to the
+   thousands of canvas calls. Aggregated per ~0.7 s window into #perf, avg
+   and per-segment max, so a one-off hitch (texture upload, GC pause) shows
+   up in the max column while the avg column says where the steady work is.
+   The diagnostics panel collects UNEXPECTED behaviour at runtime (missing
+   icons, NaN positions, script errors) - each unique message once, so a
+   systemic problem reads as one row, not a spam line per frame. */
+var PROF={t:0,t0:0,seg:null,agg:{},frames:0,uiT:0};
+function profStart(){var n=performance.now();PROF.t=PROF.t0=n;PROF.seg=null;PROF.frames++;}
+function profSeg(n){
+  var t=performance.now();
+  if(PROF.seg!==null){
+    var a=PROF.agg[PROF.seg]||(PROF.agg[PROF.seg]={s:0,m:0,n:0});
+    var d=t-PROF.t;
+    a.s+=d;
+    if(d>a.m)a.m=d;
+  }
+  PROF.seg=n;PROF.t=t;
+}
+function profDone(){
+  var t=performance.now();
+  if(PROF.seg!==null){
+    var a=PROF.agg[PROF.seg]||(PROF.agg[PROF.seg]={s:0,m:0,n:0});
+    var d=t-PROF.t;
+    a.s+=d;if(d>a.m)a.m=d;
+  }
+  var ta=PROF.agg["frame total"]||(PROF.agg["frame total"]={s:0,m:0,n:0});
+  var td=t-PROF.t0;
+  ta.s+=td;if(td>ta.m)ta.m=td;
+  PROF.seg=null;
+}
+function profUI(){
+  var now=performance.now();
+  if(now-PROF.uiT<700)return;
+  PROF.uiT=now;
+  var el=document.getElementById("perf");
+  if(!el)return;
+  var names=Object.keys(PROF.agg);
+  if(!names.length){el.innerHTML="";PROF.frames=0;return;}
+  names.sort(function(a,b){return PROF.agg[b].s/(PROF.agg[b].n||1)-PROF.agg[a].s/(PROF.agg[a].n||1);});
+  var tmp=PROF.agg["frame total"];
+  var totAvg=tmp?tmp.s/(tmp.n||1):0;
+  var html='<li style="color:#9fb0b8;list-style:none"><b>'+PROF.frames+' frames · avg total '+
+    totAvg.toFixed(2)+' ms</b></li>';
+  names.forEach(function(nm){
+    if(nm==="frame total")return;
+    var a=PROF.agg[nm],avg=a.s/(a.n||1),pct=totAvg>0?(100*avg/totAvg):0;
+    html+='<li><b>'+nm+'</b> <time>avg '+avg.toFixed(2)+' ms · max '+a.m.toFixed(2)+
+      ' ms · '+a.n+'× · '+pct.toFixed(0)+'%</time></li>';
+  });
+  el.innerHTML=html;
+  PROF.agg={};PROF.frames=0;
+}
+var DIAG={rows:[],seen:{}};
+function diag(kind,txt){
+  var key=kind+"\u0000"+txt;
+  if(DIAG.seen[key])return;
+  DIAG.seen[key]=1;
+  DIAG.rows.unshift("["+kind+"] "+txt);
+  if(DIAG.rows.length>200)DIAG.rows.length=200;
+  var el=document.getElementById("diag");
+  if(!el)return;
+  var html="",empty="no unexpected behaviour so far";
+  for(var i=0;i<DIAG.rows.length;i++)html+='<li>'+DIAG.rows[i]+'</li>';
+  el.innerHTML=html||empty;
+}
+window.addEventListener("error",function(ev){
+  var msg=ev&&ev.message?ev.message:"script error (see console)";
+  diag("js-error",String(msg).slice(0,160));
+});
+window.addEventListener("unhandledrejection",function(){
+  diag("promise","unhandled rejection (see console)");
+});
+
+function draw(model,tm){profSeg("backdrop");
   var Wc=cv.width,Hc=cv.height;
   cx.fillStyle="#161b1d";cx.fillRect(0,0,Wc,Hc);
   var fit=ZkrReplay.mapFitRect(model.mapW||0,model.mapH||0,Wc,Hc);
@@ -656,6 +748,7 @@ function draw(model,tm){
      axes and fields stay real circles on square AND wide maps.
      Artifacts without map dims (synthetic fixtures) still render at
      the 16384-elmo default scale. */
+  profSeg("under-fields");
   var pxPerElmo=W/(model.mapW>0?model.mapW:16384);
   // metal spots: grey circles with a bright dotted border; a spot claimed by
   // a live mex (nearest within 60 elmos) takes the owner's team colour —
@@ -802,6 +895,7 @@ function draw(model,tm){
       }
     }
   });
+  profSeg("strikes");
   // intercepted warheads: the trefoil strike-through marks where the
   // antinuke rocket got them (the strike circle keeps telling the
   // would-be target); the marker lives for ~30 GAME-seconds past the kill
@@ -827,6 +921,7 @@ function draw(model,tm){
     cx.drawImage(fx,pr.ix*W-s/2,pr.iy*H-s/2,s,s);
     cx.globalAlpha=1;
   });
+  profSeg("intercept");
   // anti-nuke coverage: always visible once the launcher completes (ZK's
   // own coverage circle reads the same nuke_coverage value, 2500 elmos).
   // D+B display: the whole hatch + border uses the team's FIRST-PLAYER
@@ -913,6 +1008,7 @@ function draw(model,tm){
       cx.lineWidth=1;
     }
   });
+  profSeg("coverage");
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot
   if(document.getElementById("wreckZones").checked){
@@ -943,6 +1039,7 @@ function draw(model,tm){
     cx.textAlign="start";
     cx.lineWidth=1;
   }
+  profSeg("zones");
   // area-shield fields (aspis/aegis/funnelweb/comm areashield): charge-
   // coloured circle, ZK's own deep blue -> deep red gradient at 0.2 alpha
   if(shieldsOn){
@@ -958,6 +1055,7 @@ function draw(model,tm){
       cx.beginPath();cx.arc(pos.x*W,pos.y*H,rx,0,7);cx.stroke();
     });
   }
+  profSeg("shields");
   // cloak fields (iris/conjurer/etc.): only when the field actually runs —
   // exact field bit on artifacts that record it, own-cloak fallback on
   // older ones; a stalled field (unpowered) flashes red
@@ -985,6 +1083,7 @@ function draw(model,tm){
     });
   }
 
+  profSeg("cloaks");
   // engagement arrows (toggle: targets): small yellow arrows from each
   // attacker to the victim it is currently landing hits on — the
   // recorded "engage" rows are ground truth from the engine's own
@@ -1021,6 +1120,7 @@ function draw(model,tm){
     cx.lineWidth=1;
   }
 
+  profSeg("arrows");
   model.units.forEach(function(u){
     var r=u.kind=="str"?5:u.kind=="sup"?4:u.kind=="base"?3:
       (u.metalCost>0?Math.min(9,2.2+Math.log2(1+u.metalCost)*1.6):3);
@@ -1040,6 +1140,9 @@ function draw(model,tm){
     r=Math.max(4.5*DPR,Math.min(12*DPR,r*VIEW.z))/VIEW.z;
     var pos=u.posAt(tm);
     if(!pos)return;
+    /* NaN positions are always a data bug (and would smear NaN into the
+       per-player value sums) — name the unit in the diag panel, once */
+    if(!isFinite(pos.x)||!isFinite(pos.y)){diag("nan-position","unit "+u.id+" ("+(u.def||"?")+" at "+tm.toFixed(1)+"s)");return;}
     if(u.t!==undefined){
       var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
       st.n++;
@@ -1152,6 +1255,7 @@ function draw(model,tm){
       cx.lineWidth=1;
     }
   });
+  profSeg("units");
   model.projectiles.forEach(function(pr){
     var pos=pr.posAt(tm);
     if(!pos)return;
@@ -1200,7 +1304,9 @@ function draw(model,tm){
       cx.fillStyle="rgba(255,230,160,.15)";cx.beginPath();cx.arc(x,y,6,0,7);cx.fill();
     }
   });
+  profSeg("flights");
   cx.restore(); /* leave the world transform before the DOM-side updates */
+  profSeg("dom-stats");
   renderUnitStats(model,liveStats,tm);
   document.getElementById("frameInfo").textContent="frame "+Math.round(tm*30);
   document.getElementById("clock").textContent=fmt(tm)+" / "+fmt(model.END);
@@ -1363,7 +1469,7 @@ document.getElementById("timeline").oninput=function(e){t=+e.target.value;drawFr
 /* wall-clock ms at draw time — explosion flashes and state flickers decay
    by REAL time so their look is identical at every replay speed */
 var wallNow=0;
-function drawFrame(){if(!MODEL)return;wallNow=performance.now();fitCanvas();draw(MODEL,t);renderFeed(MODEL,t);renderChat(MODEL,t);drawEco(MODEL,t);}
+function drawFrame(){if(!MODEL)return;wallNow=performance.now();profStart();fitCanvas();draw(MODEL,t);profSeg("feed");renderFeed(MODEL,t);profSeg("chat");renderChat(MODEL,t);profSeg("eco");drawEco(MODEL,t);profDone();profUI();}
 var last=performance.now();
 /* frame governor: the rAF loop is what taxes weak CPUs.
    - paused and the time not moved (no seek): nothing changed, draw nothing —
@@ -1618,6 +1724,9 @@ function warnMissingIcons(model){
     model.feedData.push({tm:0,cls:"warn",
       txt:"Missing unit icons (shown as backup circles): "+groups.join(", ")});
     model.feedData.sort(function(a,b){return a.tm-b.tm;});
+    /* the same finding also lands in the diagnostics panel: it is exactly
+       the kind of unexpected behaviour that log exists for */
+    diag("missing-icon","shown as backup circles: "+groups.join(", "));
     var el=document.getElementById("feed");if(el)el._sig=null;
     /* the governor skips draws while paused and the timeline is untouched,
        so a page left auto-paused after load would never show the warn —
