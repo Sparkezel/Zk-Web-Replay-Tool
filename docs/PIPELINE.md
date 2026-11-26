@@ -144,14 +144,14 @@ The compression is `deflate` (browsers ship
 
 Current known limits, deliberately parked:
 
-- The decode is **object-per-sample**: ~100–130 bytes in RAM for what the
-  file keeps in 9. The full Comet Catcher stress recording (15 MB, 10.5M
-  pos samples + 13.8M stat samples) needs >8 GB to load — the viewer OOMs.
-  The stress replay is therefore parked off the picker until the planned
-  **typed-array (structure-of-arrays) decode**, which brings decoded
-  memory to ~10–11 bytes/sample (~300–400 MB for Comet), kills the
-  multi-second GC pauses (measured 3.2 s mark-compacts), and speeds up
-  `trackAt` binary searches 2–4×.
+- The decode is **typed-array (structure-of-arrays)** as of the
+  viewer/typed-arrays rewrite: per-unit column buffers (t/x/y Float32,
+  hp/bd/flags/shield Uint8, ~15 bytes per pos sample) instead of the
+  original object-per-sample (~100–130 bytes). Measured on the 5 Hz
+  Otago artifact: ~1 GB heap → ~100 MB total, load 1,589 ms → 453 ms,
+  identical rendering (byte-identical canvas-call counts in the smoke).
+  The object decode OOMed at >8 GB on the full Comet Catcher stress
+  recording; the typed-array decode brings it to a loadable size.
 - The profiler names the **unit icon loop** as the heaviest render layer;
   the follow-ups are a per-frame `posAt` memo, viewport culling, an icon
   atlas, and (endgame) WebGL instancing.

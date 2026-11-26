@@ -456,13 +456,13 @@ function buildArtifactModel(artifact){
   var R=mulberry(2539874);
   var blobs=[];for(var i=0;i<14;i++){blobs.push({x:R(),y:R(),r:.06+R()*.09,s:.5+R()})}
   var units=m.units.map(function(u){
-    var hpMax=0;u.track.forEach(function(s){if(s.hp>hpMax)hpMax=s.hp});
+    var hpMax=0;for(var i=0;i<u.track.n;i++)if(u.track.hp[i]/255>hpMax)hpMax=u.track.hp[i]/255;
     return {id:u.id,t:u.team,born:u.born,died:u.died,morph:!!u.morph,metalCost:u.metalCost,
       kind:u.kind,icon:u.icon,hpMax:hpMax>0?hpMax:undefined,
       cls:u.cls||"combat",def:u.def,
       /* build fraction at the last track sample: what was actually
          invested when the unit died (nanoframe kills lost a fraction) */
-      bdEnd:u.track.length?u.track[u.track.length-1].bd:undefined,
+      bdEnd:u.track.n?u.track.bd[u.track.n-1]/255:undefined,
       commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
       track:u.track,cr:u.cloakRadius||0,
       antiNuke:u.antiNuke||0,
@@ -479,7 +479,7 @@ function buildArtifactModel(artifact){
   var unitById={};
   units.forEach(function(u){unitById[u.id]=u;});
   var projectiles=m.projectiles.map(function(p){
-    var ip=p.path[p.path.length-1];
+    var ip={t:p.path.t[p.path.n-1],x:p.path.x[p.path.n-1],z:p.path.z[p.path.n-1]};
     /* strike estimate: with a RECORDED target, impact time = last sample
        + remaining distance / measured cruise speed (ZK strategic
        missiles fly a straight constant-speed line); without one it is
@@ -491,10 +491,10 @@ function buildArtifactModel(artifact){
        never the how-long). */
     var mapWf=m.mapW||16384,mapHf=m.mapH||16384;
     var sp=0;
-    if(p.path.length>=2){
-      var a2=p.path[p.path.length-1],b2=p.path[p.path.length-2];
-      var dT=a2.t-b2.t;
-      if(dT>0.01)sp=Math.hypot((a2.x-b2.x)*mapWf,(a2.z-b2.z)*mapHf)/dT;
+    if(p.path.n>=2){
+      var a2t=p.path.t[p.path.n-1],b2t=p.path.t[p.path.n-2];
+      var dT=a2t-b2t;
+      if(dT>0.01)sp=Math.hypot((p.path.x[p.path.n-1]-p.path.x[p.path.n-2])*mapWf,(p.path.z[p.path.n-1]-p.path.z[p.path.n-2])*mapHf)/dT;
     }
     var tgt=p.tgt?{x:p.tgt.x,y:p.tgt.z}:null;
     var strikeTm=p.end;
@@ -518,7 +518,7 @@ function buildArtifactModel(artifact){
     return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
       tgt:tgt,intercepted:!!p.intercepted,strikeTm:strikeTm,
       ix:ip.x,iy:ip.z,tpath:trail?p.path:null,
-      wname:p.wname||"",bo:{x:p.path[0].x,z:p.path[0].z},
+      wname:p.wname||"",bo:{x:p.path.x[0],z:p.path.z[0]},
       posAt:function(tm){if(tm<this.born||tm>this.impact)return null;
         var s=ZkrReplay.pathAt(p.path,tm);
         var pr=ZkrReplay.pathAt(p.path,Math.max(p.born,tm-0.5));
@@ -959,7 +959,7 @@ function draw(model,tm){profSeg("backdrop");
     var pos=u.posAt(tm);
     if(!pos||(pos.bd!==undefined&&pos.bd<1))return;
     var b=0;
-    for(var si=0;si<(u.states?u.states.length:0);si++){var s=u.states[si];if(s.t>tm)break;b=s.b;}
+    for(var si=0;si<(u.states?u.states.n:0);si++){if(u.states.t[si]>tm)break;b=u.states.b[si];}
     var anned=(b&4)!==0;
     var rx=u.antiNuke*pxPerElmo;
     if(rx<3)return;
@@ -978,7 +978,7 @@ function draw(model,tm){profSeg("backdrop");
         var vp=v.posAt(tm);
         if(!vp||(vp.bd!==undefined&&vp.bd<1))return;
         var vb=0;
-        for(var si2=0;si2<(v.states?v.states.length:0);si2++){var s2=v.states[si2];if(s2.t>tm)break;vb=s2.b;}
+        for(var si2=0;si2<(v.states?v.states.n:0);si2++){if(v.states.t[si2]>tm)break;vb=v.states.b[si2];}
         if((vb&4)!==0)return;
         if(allyOfTeam(model,v.t)!==allyOfTeam(model,u.t))return;
         working.push({x:vp.x*W,y:vp.y*H,r:v.antiNuke*pxPerElmo});
@@ -1189,7 +1189,7 @@ function draw(model,tm){profSeg("backdrop");
        battle ended (wrecks / missing kills) — drawn transparent, or hidden
        with the "wrecks" toggle; under-construction units fade in
        (synthetic-preview units carry no track — the guard keeps them drawn) */
-    if(u.track&&u.died<0&&u.track.length&&tm>u.track[u.track.length-1].t+0.01&&u.track[u.track.length-1].t<model.END-4){
+    if(u.track&&u.died<0&&u.track.n&&tm>u.track.t[u.track.n-1]+0.01&&u.track.t[u.track.n-1]<model.END-4){
       if(!wrecksOn)return;
       alpha=0.45;
     }else if(pos.bd!==undefined&&pos.bd<1){
@@ -1208,8 +1208,8 @@ function draw(model,tm){profSeg("backdrop");
        the on-fire colour flash and the antinuke EMP flash tint the marker
        itself */
     var b=0,sl=0;
-    if(u.states&&u.states.length){
-      for(var si=0;si<u.states.length;si++){var s=u.states[si];if(s.t>tm)break;b=s.b;sl=s.sl;}
+    if(u.states&&u.states.n){
+      for(var si=0;si<u.states.n;si++){if(u.states.t[si]>tm)break;b=u.states.b[si];sl=u.states.sl[si];}
     }
     /* the whole ICON flashes (never a translucent circle around it — that
        reads as a fire effect): orange while burning, and the antinuke's
@@ -1251,7 +1251,7 @@ function draw(model,tm){profSeg("backdrop");
        orange (handled above). Dots sit on their own row BELOW the cloak dot
        and the build bar (y+r+6.8) so cloaked+slowed stays readable and the
        3 px bar band is not overwritten */
-    if(u.states&&u.states.length){
+    if(u.states&&u.states.n){
       /* dot ROW, centred under the icon (the old code pinned EMP to the
          left edge and disarm to the right, which read as off-centre):
          whichever combination is active lays out symmetrically around x */
@@ -1323,17 +1323,18 @@ function draw(model,tm){profSeg("backdrop");
       /* fading white trail over the last 15 recorded samples (0.2 s
          apart -> ~3 s of flight): 100% at the head, 0% at the oldest.
          Anchored to sample TIMES, so it freezes while paused - it is
-         gameplay state, speed-independent under seeks */
-      var path=pr.tpath,k=path.length-1;
-      while(k>0&&path[k].t>tm)k--;
+         gameplay state, speed-independent under seeks. Columnar path:
+         t/x/z are typed arrays */
+      var path=pr.tpath,k=path.n-1;
+      while(k>0&&path.t[k]>tm)k--;
       var first=Math.max(0,k-14);
       cx.lineWidth=1.6;
       for(var j=first+1;j<=k;j++){
         var a=(j-first)/(k-first+1);
         cx.strokeStyle="rgba(255,255,255,"+a.toFixed(3)+")";
         cx.beginPath();
-        cx.moveTo(path[j-1].x*W,path[j-1].z*H);
-        cx.lineTo(path[j].x*W,path[j].z*H);
+        cx.moveTo(path.x[j-1]*W,path.z[j-1]*H);
+        cx.lineTo(path.x[j]*W,path.z[j]*H);
         cx.stroke();
       }
       cx.lineWidth=1;

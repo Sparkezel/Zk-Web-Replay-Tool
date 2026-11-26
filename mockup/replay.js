@@ -379,6 +379,20 @@
      compressed unit motion to a sixth of real time. */
   const POS_PROBE_EVERY = 6;
 
+  /* POS decode is TYPED-ARRAY (structure-of-arrays): one set of column
+     buffers per unit instead of an object per sample. The file already
+     stores 9 bytes per sample; the old decode inflated that to ~100-130
+     bytes of heap objects (~25M objects on the stress replay — >8 GB,
+     multi-second GC pauses). Columns:
+       t  Float32  seconds (frame / 30)
+       x  Float32  map-x fraction
+       y  Float32  map-z fraction
+       hp Uint8    raw 0..255 (fraction = /255, converted in trackAt)
+       bd Uint8    raw 0..255
+       fl Uint8    bit0 cloaked, bit1 own area-field active, bit2 stalled
+       sh Uint8    raw 0..254 charge, 255 = unknown/no shield
+     v1/v2 artifacts only ever carry bit0; cf/cs read back as undefined
+     (the track keeps the section version for that decision). */
   function decodePos(dv, u8, version) {
     const p = { version, units: [], maxFrame: 0 };
     let o = 0;
@@ -390,36 +404,36 @@
       const sampleCount = dv.getUint16(o, true); o += 2;
       const originX = dv.getUint16(o, true) / 65535; o += 2;
       const originZ = dv.getUint16(o, true) / 65535; o += 2;
-      let x = originX, z = originZ;
-      const samples = [];
+      const n = sampleCount;
+      const t = new Float32Array(n), x = new Float32Array(n), y = new Float32Array(n);
+      const hp = new Uint8Array(n), bd = new Uint8Array(n), fl = new Uint8Array(n), sh = new Uint8Array(n);
+      let cx = originX, cz = originZ;
       let frame = firstFrame;
-      for (let k = 0; k < sampleCount; k++) {
-        x += dv.getInt16(o, true) / 65535; o += 2;
-        z += dv.getInt16(o, true) / 65535; o += 2;
+      for (let k = 0; k < n; k++) {
+        cx += dv.getInt16(o, true) / 65535; o += 2;
+        cz += dv.getInt16(o, true) / 65535; o += 2;
         if (version >= 2) {
           frame += dv.getInt16(o, true); o += 2;
         } else {
           frame = firstFrame + k * POS_PROBE_EVERY;
         }
-        const hp = u8[o] / 255; o += 1;
-        const build = u8[o] / 255; o += 1;
-        let ck = false, cf = undefined, cs = undefined, sh = undefined;
-        // v3 adds the own-field/cloak-stall bits and a shield charge byte;
-        // v1/v2 artifacts predate them — bit1/bit2 are padding there, so cf/cs
-        // stay undefined and the viewer falls back to ck for the field state
+        t[k] = frame / 30;
+        x[k] = cx;
+        y[k] = cz;
+        // sample layout: dX, dZ, frameDelta, u8 hp, u8 build, [u8 flags, u8 shield]
+        hp[k] = u8[o]; o += 1;
+        bd[k] = u8[o]; o += 1;
         if (version >= 3) {
-          const flags = u8[o]; o += 1;
-          ck = (flags & 1) !== 0;
-          cf = (flags & 2) !== 0;
-          cs = (flags & 4) !== 0;
-          const sv = u8[o]; o += 1;
-          if (sv !== 255) sh = sv / 254;
+          fl[k] = u8[o] & 7; o += 1;
+          sh[k] = u8[o]; o += 1;
         } else if (version === 2) {
-          ck = (u8[o] & 1) !== 0; o += 1;
+          fl[k] = u8[o] & 1; o += 1;
+        } else {
+          fl[k] = 0;
         }
-        samples.push({ frame, x, z, hp, build, ck, cf, cs, sh });
       }
-      p.units.push({ unitID, defID, firstFrame, samples });
+      p.units.push({ unitID, defID, firstFrame,
+        samples: { n, t, x, y, hp, bd, fl, sh, v3: version >= 3 } });
       if (frame > p.maxFrame) p.maxFrame = frame;
     }
     return p;
@@ -456,21 +470,27 @@
       const ox = dv.getUint16(o, true) / 65535; o += 2;
       const oy = dv.getUint16(o, true) / 65535; o += 2;
       const oz = dv.getUint16(o, true) / 65535; o += 2;
-      const samples = [{ frame: startFrame, x: ox, z: oz, y: oy }];
-      let x = ox, z = oz;
+      /* columnar, same rationale as decodePos: t seconds, x/z map
+         fractions, y the raw height fraction. Row 0 is the origin. */
+      const m = sampleCount + 1;
+      const t = new Float32Array(m), x = new Float32Array(m), y = new Float32Array(m), z = new Float32Array(m);
+      t[0] = startFrame / 30;
+      x[0] = ox; y[0] = oy; z[0] = oz;
+      let cx = ox, cz = oz;
       let frame = startFrame;
-      for (let k = 0; k < sampleCount; k++) {
-        x += dv.getInt16(o, true) / 65535; o += 2;
-        z += dv.getInt16(o, true) / 65535; o += 2;
-        const y = dv.getInt16(o, true) / 65535; o += 2;
+      for (let k = 1; k < m; k++) {
+        cx += dv.getInt16(o, true) / 65535; o += 2;
+        cz += dv.getInt16(o, true) / 65535; o += 2;
+        const cy = dv.getInt16(o, true) / 65535; o += 2;
         if (version >= 2) {
           frame += dv.getInt16(o, true); o += 2;
         } else {
-          frame = startFrame + (k + 1) * POS_PROBE_EVERY;
+          frame = startFrame + k * POS_PROBE_EVERY;
         }
-        samples.push({ frame, x, z, y });
+        t[k] = frame / 30;
+        x[k] = cx; y[k] = cy; z[k] = cz;
       }
-      p.paths.push({ proID, weaponDefID, cls, team: ownerTeam, startFrame, samples });
+      p.paths.push({ proID, weaponDefID, cls, team: ownerTeam, startFrame, samples: { n: m, t, x, y, z } });
       if (frame > p.maxFrame) p.maxFrame = frame;
     }
     return p;
@@ -518,18 +538,22 @@
    *  [frame u32][unitID u32][bits u8][slowQ u8]; bits 1=fire, 2=disarm,
    *  4=EMP-stunned, slowQ = slowFrac * 16. Only transitions are recorded —
    *  a unit with no records was never affected. */
+  /* STAT decode columnar too — the stress replay carries ~13.8M state rows,
+     which as objects would alone outweigh the whole typed-array POS gain */
   function decodeStates(dv, u8) {
-    const p = { records: [] };
+    const p = { records: null };
     if (u8.length < 4) return p;
     let o = 0;
     const n = dv.getUint32(o, true); o += 4;
+    const unitID = new Uint32Array(n), bits = new Uint8Array(n);
+    const t = new Float32Array(n), sl = new Float32Array(n);
     for (let i = 0; i < n; i++) {
-      const frame = dv.getUint32(o, true); o += 4;
-      const unitID = dv.getUint32(o, true); o += 4;
-      const bits = dv.getUint8(o); o += 1;
-      const slowQ = dv.getUint8(o); o += 1;
-      p.records.push({ frame, unitID, bits, slow: slowQ / 16 });
+      t[i] = dv.getUint32(o, true) / 30; o += 4;
+      unitID[i] = dv.getUint32(o, true); o += 4;
+      bits[i] = u8[o]; o += 1;
+      sl[i] = u8[o] / 16; o += 1;
     }
+    p.records = { n, t, unitID, bits, sl };
     return p;
   }
 
@@ -691,18 +715,18 @@
       const mh = dims0 && dims0[1] > 0 ? dims0[1] : mw;
       const spawnsByTeam = {};
       for (const u of (artifact.pos ? artifact.pos.units : [])) {
-        if (!u.samples.length || isExcludedDef(defNameOfUnit(u.unitID))) continue;
-        lastBuildByUnit.set(u.unitID, u.samples[u.samples.length - 1].build);
+        if (!u.samples.n || isExcludedDef(defNameOfUnit(u.unitID))) continue;
+        lastBuildByUnit.set(u.unitID, u.samples.bd[u.samples.n - 1] / 255);
         const team = teamByUnit.has(u.unitID) ? teamByUnit.get(u.unitID) : 0;
         (spawnsByTeam[team] = spawnsByTeam[team] || []).push({
           unitID: u.unitID, t: toSec(u.firstFrame),
-          x: u.samples[0].x, y: u.samples[0].z,
-          b0: u.samples[0].build,
+          x: u.samples.x[0], y: u.samples.y[0],
+          b0: u.samples.bd[0] / 255,
         });
       }
       for (const list of Object.values(spawnsByTeam)) list.sort((a, b) => a.t - b.t);
       for (const u of (artifact.pos ? artifact.pos.units : [])) {
-        if (!u.samples.length || !deathByUnit.has(u.unitID)) continue;
+        if (!u.samples.n || !deathByUnit.has(u.unitID)) continue;
         if (isExcludedDef(defNameOfUnit(u.unitID))) continue;
         if ((lastBuildByUnit.get(u.unitID) ?? 1) < 0.99) continue;
         /* a morph victim destroys itself: a real kill (killer >= 0) is a
@@ -712,7 +736,7 @@
         const list = spawnsByTeam[team];
         if (!list) continue;
         const diedT = toSec(deathByUnit.get(u.unitID));
-        const last = u.samples[u.samples.length - 1];
+        const last = { x: u.samples.x[u.samples.n - 1], z: u.samples.y[u.samples.n - 1] };
         for (const s of list) {
           if (s.unitID === u.unitID) continue;
           if (s.t < diedT - MORPH_PAIR_WINDOW_SEC) continue;
@@ -789,9 +813,10 @@
     for (const uu of (artifact.pos ? artifact.pos.units : [])) {
       const info = udef.get(uu.defID);
       if (!info || !MISSILE_UNIT_DEFS.has(info.name)) continue;
-      for (const s of uu.samples) {
-        if (s.x > 0.95 && (s.z < 0.05 || s.z > 0.95)) {
-          launchTmByUnit.set(uu.unitID, toSec(s.frame));
+      const sp = uu.samples;
+      for (let k = 0; k < sp.n; k++) {
+        if (sp.x[k] > 0.95 && (sp.y[k] < 0.05 || sp.y[k] > 0.95)) {
+          launchTmByUnit.set(uu.unitID, sp.t[k]);
           break;
         }
       }
@@ -1030,10 +1055,28 @@
     /* sparse per-unit state transitions (slow / EMP / disarm / on-fire);
      * grouped per unit and pre-converted to seconds — the arrays are tiny
      * and already in frame order, a linear scan per drawn unit is free */
+    /* group the flat STAT columns into per-unit columns: {n, t, b, sl} */
     const statesByUnit = new Map();
-    for (const r of (artifact.states ? artifact.states.records : [])) {
-      if (!statesByUnit.has(r.unitID)) statesByUnit.set(r.unitID, []);
-      statesByUnit.get(r.unitID).push({ t: toSec(r.frame), b: r.bits, sl: r.slow });
+    {
+      const st = artifact.states ? artifact.states.records : null;
+      if (st) {
+        const buckets = new Map();
+        for (let i = 0; i < st.n; i++) {
+          const uid = st.unitID[i];
+          if (!buckets.has(uid)) buckets.set(uid, []);
+          buckets.get(uid).push(i);
+        }
+        for (const [uid, idx] of buckets) {
+          const m = idx.length;
+          const t = new Float32Array(m), b = new Uint8Array(m), sl = new Float32Array(m);
+          for (let k = 0; k < m; k++) {
+            t[k] = st.t[idx[k]];
+            b[k] = st.bits[idx[k]];
+            sl[k] = st.sl[idx[k]];
+          }
+          statesByUnit.set(uid, { n: m, t, b, sl });
+        }
+      }
     }
 
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
@@ -1044,7 +1087,8 @@
          Kept when no UDEF section exists (lightweight fixtures). */
       if (info === undefined && udef.size > 0 && !spawnedUnitIds.has(u.unitID)) return null;
       let hpMax = 0;
-      for (const s of u.samples) if (s.hp > hpMax) hpMax = s.hp;
+      for (let k = 0; k < u.samples.n; k++) if (u.samples.hp[k] > hpMax) hpMax = u.samples.hp[k];
+      hpMax = hpMax / 255;
       const commLevel = commLevelOfDef(info ? info.name : undefined);
       return {
         id: u.unitID, defID: u.defID,
@@ -1081,17 +1125,10 @@
            flight tells the story) and drops it from the loss grid */
         launched: launchTmByUnit.has(u.unitID),
         launchTm: launchTmByUnit.get(u.unitID) ?? -1,
-        track: u.samples.map((s) => ({
-          t: toSec(s.frame), x: s.x, y: s.z, hp: s.hp, bd: s.build,
-          ck: s.ck,
-          /* own area-cloak field active; undefined on artifacts packed
-             before the field bit existed — the caller falls back to ck */
-          cf: s.cf,
-          /* own field stalled/unpowered (flashes red in the viewer) */
-          cs: s.cs,
-          /* shield charge fraction; undefined = no shield / not recorded */
-          sh: s.sh,
-        })),
+        /* the COLUMNAR track straight from the decoder — zero-copy: the old
+           .map() doubled peak memory per artifact. Fields read via
+           trackAt (fractions + flag semantics incl. v2 cf/cs undefined) */
+        track: u.samples,
       };
     }).filter((u) => u && !isExcludedDef(u.def));
 
@@ -1156,8 +1193,8 @@
       for (const u of units) {
         /* launched missiles staged at the corner leave no wreck at all:
            their "corpse" (if any) sits outside the playable map */
-        if (u.died < 0 || u.morph || u.launched || !u.track || !u.track.length) continue;
-        const last = u.track[u.track.length - 1];
+        if (u.died < 0 || u.morph || u.launched || !u.track || !u.track.n) continue;
+        const last = { x: u.track.x[u.track.n - 1], y: u.track.y[u.track.n - 1] };
         wrecks.push({
           born: u.died, x: last.x, y: last.y,
           metal: (u.metalCost > 0 ? u.metalCost : 0) * 0.4, gone: -1,
@@ -1207,26 +1244,36 @@
         const mc = MISSILE_COLORS.find(([n]) => wkey === n);
         if (mc) { mcol = mc[1]; maoe = wf.aoe ?? 0; }
       }
-      const mkPath = (seg) => ({
-        proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
-        weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
-        wname: wf ? String(wf.name || "").toLowerCase() : "",
-        mcol, maoe,
-        born: toSec(seg[0].frame),
-        end: toSec(seg[seg.length - 1].frame),
-        path: seg.map((s) => ({ t: toSec(s.frame), x: s.x, y: s.y, z: s.z })),
-      });
-      if (!p.samples.length) continue;
-      let seg = [p.samples[0]];
-      for (let i = 1; i < p.samples.length; i++) {
-        const s = p.samples[i];
-        if (s.frame - seg[seg.length - 1].frame > PROJ_REUSE_GAP_FRAMES) {
-          projectiles.push(mkPath(seg));
-          seg = [];
+      /* columnar segment view: flights share the parent path's buffers via
+         subarray (zero-copy); splitting only happens on proID reuse */
+      const mkPath = (from, to) => {
+        const segN = to - from;
+        return {
+          proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
+          weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
+          wname: wf ? String(wf.name || "").toLowerCase() : "",
+          mcol, maoe,
+          born: p.samples.t[from],
+          end: p.samples.t[to - 1],
+          path: {
+            n: segN,
+            t: p.samples.t.subarray(from, to),
+            x: p.samples.x.subarray(from, to),
+            y: p.samples.y.subarray(from, to),
+            z: p.samples.z.subarray(from, to),
+          },
+        };
+      };
+      if (!p.samples.n) continue;
+      const sp = p.samples;
+      let segStart = 0;
+      for (let i = 1; i < sp.n; i++) {
+        if ((sp.t[i] - sp.t[i - 1]) * 30 > PROJ_REUSE_GAP_FRAMES) {
+          projectiles.push(mkPath(segStart, i));
+          segStart = i;
         }
-        seg.push(s);
       }
-      projectiles.push(mkPath(seg));
+      projectiles.push(mkPath(segStart, sp.n));
     }
 
     /* ---- superweapon events, missile explosions, ground napalm ---- */
@@ -1357,12 +1404,12 @@
     const rocketEnds = projectiles
       .filter((p) => {
         const w = wdef.get(p.weaponDefID);
-        return w && String(w.name || "").toLowerCase().split("_")[0] === "staticantinuke" && p.path.length;
+        return w && String(w.name || "").toLowerCase().split("_")[0] === "staticantinuke" && p.path.n;
       })
-      .map((p) => ({ t: p.end, x: p.path[p.path.length - 1].x, z: p.path[p.path.length - 1].z }));
+      .map((p) => ({ t: p.end, x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1] }));
     for (const p of projectiles) {
-      if (!p.mcol || !p.path.length) continue;
-      const imp = p.path[p.path.length - 1];
+      if (!p.mcol || !p.path.n) continue;
+      const imp = { t: p.path.t[p.path.n - 1], x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1] };
       if (rocketEnds.some((r) => Math.abs(r.t - p.end) <= ICEPT_SPAN_SEC
         && Math.hypot((r.x - imp.x) * wmw, (r.z - imp.z) * wmh) <= ICEPT_RADIUS)) {
         p.intercepted = true;
@@ -1393,8 +1440,8 @@
     }
     for (const p of projectiles) {
       const w = wdef.get(p.weaponDefID);
-      if (!w || !p.path.length) continue;
-      const imp = p.path[p.path.length - 1];
+      if (!w || !p.path.n) continue;
+      const imp = { t: p.path.t[p.path.n - 1], x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1] };
       const ex = w.name && EXPLOSION_DEFS.find(([n]) => String(w.name).toLowerCase().split("_")[0] === n);
       if (ex && !p.intercepted) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur, fx: ex[1].fx === true });
@@ -1471,7 +1518,7 @@
     };
     const launches = [];
     for (const p of projectiles) {
-      if (!p.mcol || !p.path.length) continue;
+      if (!p.mcol || !p.path.n) continue;
       const w = wdef.get(p.weaponDefID);
       const k = w && w.name ? String(w.name).toLowerCase().split("_")[0] : null;
       if (k && LAUNCH_MISSILE_NAMES[k]) {
@@ -1620,15 +1667,17 @@
       if (!db && !pd) continue;
       /* an unfinished nanoframe crumples - it does not go up in its full
          death blast; the table is for complete units */
-      const last = u.track.length ? u.track[u.track.length - 1] : null;
-      if (!last || (last.bd !== undefined && last.bd < 0.99)) continue;
-      if (db) {
-        explosions.push({ t: u.died, x: last.x, y: last.y, r: db.r,
-          col: db.col ?? "255,150,90", fade: "fast", dur: 0,
-          fx: db.fx === true });
-      }
-      if (pd) {
-        napalm.push({ t: u.died, x: last.x, y: last.y, r: pd.r, dur: pd.dur });
+      if (!u.track.n || u.track.bd[u.track.n - 1] / 255 < 0.99) continue;
+      if (db || pd) {
+        const lx = u.track.x[u.track.n - 1], ly = u.track.y[u.track.n - 1];
+        if (db) {
+          explosions.push({ t: u.died, x: lx, y: ly, r: db.r,
+            col: db.col ?? "255,150,90", fade: "fast", dur: 0,
+            fx: db.fx === true });
+        }
+        if (pd) {
+          napalm.push({ t: u.died, x: lx, y: ly, r: pd.r, dur: pd.dur });
+        }
       }
     }
 
@@ -1740,48 +1789,65 @@
   /** Sample a unit track at time tm — coordinate + hp + build + cloak state
    *  interpolated between probes. Track points are {t, x, y} with y the map
    *  z-axis; hp/bd/ck step at the segment mid-point. */
+  /* Sample a unit's columnar track at time tm (linear between probes for
+     position; hp/build/flags/shield read from the NEAR sample, matching the
+     object-era behaviour). Returns a fresh small object — short-lived, young-
+     generation garbage, which is cheap; the columns are the long-lived data. */
   function trackAt(track, tm) {
-    if (track.length === 0) return null;
-    if (tm <= track[0].t) return track[0];
-    const last = track[track.length - 1];
-    if (tm >= last.t) return last;
-    let lo = 0, hi = track.length - 1;
+    const n = track.n;
+    if (!n) return null;
+    if (tm <= track.t[0]) return trackSample(track, 0);
+    if (tm >= track.t[n - 1]) return trackSample(track, n - 1);
+    let lo = 0, hi = n - 1;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
-      if (track[mid].t <= tm) lo = mid; else hi = mid;
+      if (track.t[mid] <= tm) lo = mid; else hi = mid;
     }
-    const a = track[lo], b = track[hi];
-    const f = (tm - a.t) / (b.t - a.t || 1);
-    const near = f < 0.5 ? a : b;
+    const f = (tm - track.t[lo]) / (track.t[hi] - track.t[lo] || 1);
+    const near = f < 0.5 ? lo : hi;
+    const s = trackSample(track, near);
+    s.x = track.x[lo] + (track.x[hi] - track.x[lo]) * f;
+    s.y = track.y[lo] + (track.y[hi] - track.y[lo]) * f;
+    return s;
+  }
+
+  /* one track row as the page-facing object (fractions, flag semantics) */
+  function trackSample(track, i) {
+    const fl = track.fl[i];
     return {
-      x: a.x + (b.x - a.x) * f,
-      y: a.y + (b.y - a.y) * f,
-      hp: near.hp,
-      bd: near.bd,
-      ck: near.ck,
-      cf: near.cf,
-      cs: near.cs,
-      sh: near.sh,
+      x: track.x[i],
+      y: track.y[i],
+      hp: track.hp[i] / 255,
+      bd: track.bd[i] / 255,
+      ck: (fl & 1) !== 0,
+      /* own area-cloak field bits exist only on v3 sections — on older
+         artifacts the padding must read as undefined, not false */
+      cf: track.v3 ? (fl & 2) !== 0 : undefined,
+      cs: track.v3 ? (fl & 4) !== 0 : undefined,
+      sh: track.sh[i] === 255 ? undefined : track.sh[i] / 254,
     };
   }
 
   /** Sample a projectile path at time tm (linear between probes). */
   function pathAt(path, tm) {
-    if (tm <= path[0].t) return path[0];
-    const last = path[path.length - 1];
-    if (tm >= last.t) return last;
-    let lo = 0, hi = path.length - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (path[mid].t <= tm) lo = mid; else hi = mid;
+    const n = path.n;
+    let i;
+    if (tm <= path.t[0]) i = 0;
+    else if (tm >= path.t[n - 1]) i = n - 1;
+    else {
+      let lo = 0, hi = n - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (path.t[mid] <= tm) lo = mid; else hi = mid;
+      }
+      const f = (tm - path.t[lo]) / (path.t[hi] - path.t[lo] || 1);
+      return {
+        x: path.x[lo] + (path.x[hi] - path.x[lo]) * f,
+        y: path.y[lo] + (path.y[hi] - path.y[lo]) * f,
+        z: path.z[lo] + (path.z[hi] - path.z[lo]) * f,
+      };
     }
-    const a = path[lo], b = path[hi];
-    const f = (tm - a.t) / (b.t - a.t || 1);
-    return {
-      x: a.x + (b.x - a.x) * f,
-      y: a.y + (b.y - a.y) * f,
-      z: a.z + (b.z - a.z) * f,
-    };
+    return { x: path.x[i], y: path.y[i], z: path.z[i] };
   }
 
   global.ZkrReplay = {
