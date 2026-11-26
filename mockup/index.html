@@ -543,7 +543,8 @@ function buildArtifactModel(artifact){
     var trail=p.icon?true:(!!p.wname&&(
       wkey==="tacnuke"||wkey==="empmissile"||wkey==="missileslow"||
       wkey==="seismic"||wkey==="napalmmissile"||
-      wkey==="staticheavyarty"||wkey==="meteor"||wkey==="raveparty"));
+      wkey==="staticheavyarty"||wkey==="raveparty"||p.wname==="zenith_meteor"||
+      p.wname==="zenith_meteor_aim"||p.wname==="zenith_meteor_uncontrolled"));
     return {born:p.born,impact:p.end,icon:p.icon,team:p.team,mcol:p.mcol,maoe:p.maoe,
       tgt:tgt,intercepted:!!p.intercepted,strikeTm:strikeTm,
       ix:ip.x,iy:ip.z,tpath:trail?p.path:null,

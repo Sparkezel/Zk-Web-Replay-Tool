@@ -1355,6 +1355,10 @@
          uses the missile's own icon (nuke_missile.png, converted from
          ZK's icons/nuke_missile.dds), NOT the Trinity structure's. */
       const wf = wdef.get(p.weaponDefID);
+      /* the Zenith's hovering stock (zenith_meteor_float, up to 300 per
+         Zenith) is not a shot: a meteor shows only once the Zenith fires
+         it and it becomes zenith_meteor_aim, then zenith_meteor (#46) */
+      if (wf && String(wf.name || "").toLowerCase() === "zenith_meteor_float") continue;
       let flIcon;
       let mcol;
       let maoe = 0;
@@ -1539,8 +1543,12 @@
       const vp = trackAt(v.track, imp.t);
       return vp ? { x: vp.x, z: vp.y } : null;
     };
-    /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
-       napalm patches are FIRE only — ZK's lups_napalm classification
+    /* Zenith meteors that reach the ground are zenith_meteor (the fired
+       shot) and zenith_meteor_uncontrolled (dropped when the Zenith loses
+       power or dies); the aim stage is swapped for the shot in mid-air
+       (Zero-K scripts/zenith.lua, TransformMeteor) */
+    const ZENITH_IMPACT_DEFS = new Set(["zenith_meteor", "zenith_meteor_uncontrolled"]);
+    /* Ground napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
        which doubles as the fallback for artifacts recorded before the nd
        flag existed). Zeno's slow field (missileslow) is area damage but
@@ -1636,7 +1644,7 @@
       if (ex && !p.intercepted) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur, fx: ex[1].fx === true });
       }
-      if (String(w.name) === "Meteor" && (w.aoe ?? 0) > 0) {
+      if (ZENITH_IMPACT_DEFS.has(String(w.name || "").toLowerCase()) && (w.aoe ?? 0) > 0) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
       }
       const ib = IMPACT_BLAST_DEFS.find(([n]) => String(w.name || "").toLowerCase() === n);
