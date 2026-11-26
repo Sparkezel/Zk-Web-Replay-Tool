@@ -56,6 +56,13 @@ local excludedUnitIDs = {}
 -- UDEF section and decides circle vs fallback bar in the viewer
 local shieldPowerByDef = {}
 
+-- stockpile counters: "stock" = engine stockpile (Trinity, Scylla, Reef,
+-- Artemis - every def with canStockpile), "meteors" = the Zenith's
+-- meteorsControlled rules param (Zero-K's own tooltip count); lastStock is
+-- the last emitted count per unit, so rows land only on a change
+local stockKindByDef = {}
+local lastStock = {}
+
 -- live per-unit states (slow/EMP/disarm/fire): last-emitted snapshot per
 -- unit for sparsity, plus the overflow rows for the current probe (the
 -- flush emits them chunked under the engine's console-line cap, exactly
@@ -162,6 +169,11 @@ local function maybeUdef(defID)
   if shieldRadius ~= nil then
     shieldPowerByDef[defID] = shieldPower
   end
+  if d.canStockpile then
+    stockKindByDef[defID] = "stock"
+  elseif d.name == "zenith" then
+    stockKindByDef[defID] = "meteors"
+  end
   local cr = ""
   if cloakRadius ~= nil then cr = ',"cr":' .. cloakRadius end
   local sr = ""
@@ -245,6 +257,7 @@ end
 
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
   lastStates[unitID] = nil
+  lastStock[unitID] = nil
   if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
   if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
@@ -406,6 +419,39 @@ local function pollWreckFeatures()
   end
 end
 
+-- 1-second stockpile poll: one row per unit whose count changed since its
+-- last row (a Trinity changes every few minutes, a gathering Zenith about
+-- once a second); rows are chunked under the console-line cap like stat rows
+local function pollStockpiles(units, frame)
+  local rows, len = {}, 0
+  for i = 1, #units do
+    local uid = units[i]
+    local kind = stockKindByDef[Spring.GetUnitDefID(uid)]
+    if kind ~= nil then
+      local n
+      if kind == "stock" then
+        n = Spring.GetUnitStockpile(uid)
+      else
+        n = Spring.GetUnitRulesParam(uid, "meteorsControlled")
+      end
+      n = math.floor(tonumber(n) or 0)
+      if lastStock[uid] ~= n then
+        lastStock[uid] = n
+        local row = "[" .. uid .. "," .. frame .. "," .. n .. "]"
+        if len + #row + 1 > 2048 then
+          emit('{"t":"stk","p":[' .. table.concat(rows, ",") .. ']}')
+          rows, len = {}, 0
+        end
+        rows[#rows + 1] = row
+        len = len + #row + 1
+      end
+    end
+  end
+  if #rows > 0 then
+    emit('{"t":"stk","p":[' .. table.concat(rows, ",") .. ']}')
+  end
+end
+
 -- port of the daemon-side spec §C classifier (src/daemon/classify.ts): only
 -- projectiles whose class survives the preset are echo'd. Spring.Echo lines
 -- hit stdout AND infolog.txt, so every dropped projectile skipped here is
@@ -523,6 +569,7 @@ function widget:GameFrame(frame)
   -- never delivers the FeatureCreated/FeatureDestroyed callins
   if frame % 30 == 0 then pollWreckFeatures() end
   local units = Spring.GetAllUnits()
+  if frame % 30 == 0 then pollStockpiles(units, frame) end
   -- pos rows are CHUNKED into several short lines per probe: the engine
   -- hard-caps a single console line near 32 KB, and a large battle with
   -- hundreds of live units blows that cap - the JSON tail gets chopped

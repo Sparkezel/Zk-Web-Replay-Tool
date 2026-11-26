@@ -643,6 +643,20 @@
     return p;
   }
 
+  /** STCK v1 - stockpile counts (missiles / meteors held):
+   *  [count u32][[frame u32][unitID u32][count u16]], one row per change */
+  function decodeStock(dv) {
+    const n = dv.getUint32(0, true);
+    const t = new Float32Array(n), unitID = new Uint32Array(n), count = new Uint16Array(n);
+    let o = 4;
+    for (let i = 0; i < n; i++) {
+      t[i] = dv.getUint32(o, true) / 30; o += 4;
+      unitID[i] = dv.getUint32(o, true); o += 4;
+      count[i] = dv.getUint16(o, true); o += 2;
+    }
+    return { records: { n, t, unitID, count } };
+  }
+
   async function parse(buf) {
     const u8 = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
     if (u8.length < 4 || u8[0] !== 0x5a || u8[1] !== 0x4b || u8[2] !== 0x52) {
@@ -696,6 +710,7 @@
       ptgt: raw["PTGT"] ? decodePtgt(new DataView(raw["PTGT"].buffer, raw["PTGT"].byteOffset, raw["PTGT"].byteLength)) : null,
       link: raw["LINK"] ? decodeLink(new DataView(raw["LINK"].buffer, raw["LINK"].byteOffset, raw["LINK"].byteLength), raw["LINK"]) : null,
       states: raw["STAT"] ? decodeStates(new DataView(raw["STAT"].buffer, raw["STAT"].byteOffset, raw["STAT"].byteLength), raw["STAT"]) : null,
+      stock: raw["STCK"] ? decodeStock(new DataView(raw["STCK"].buffer, raw["STCK"].byteOffset, raw["STCK"].byteLength)) : null,
     };
   }
 
@@ -723,12 +738,13 @@
     const teamByUnit = new Map();
     const defByUnit = new Map();
     const deathByUnit = new Map();
+    const builderByUnit = new Map();
     const killerByUnit = new Map();
     let winner = null;
     let endFrame = 0;
     let gameOverFrame = -1;
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
-      if (r.kind === "spawn") { teamByUnit.set(r.unitID, r.int2); defByUnit.set(r.unitID, r.int1); }
+      if (r.kind === "spawn") { teamByUnit.set(r.unitID, r.int2); defByUnit.set(r.unitID, r.int1); builderByUnit.set(r.unitID, r.int3); }
       else if (r.kind === "death") {
         deathByUnit.set(r.unitID, r.frame);
         killerByUnit.set(r.unitID, r.int1);
@@ -1168,6 +1184,52 @@
       }
     }
 
+    /* stockpile counts per unit as step tracks {n, t, c} (#47): recorded
+       STCK rows (Trinity, Scylla, Reef, Artemis stockpile; Zenith
+       meteorsControlled), and for a Missile Silo the missiles it built that
+       are finished and not yet launched or dead - those are units already
+       in the artifact, so old artifacts get the silo count too */
+    const stockByUnit = new Map();
+    {
+      const sr = artifact.stock ? artifact.stock.records : null;
+      if (sr) {
+        const rows = new Map();
+        for (let i = 0; i < sr.n; i++) {
+          if (!rows.has(sr.unitID[i])) rows.set(sr.unitID[i], []);
+          rows.get(sr.unitID[i]).push([sr.t[i], sr.count[i]]);
+        }
+        for (const [uid, list] of rows) {
+          stockByUnit.set(uid, { n: list.length, t: Float32Array.from(list, (r) => r[0]), c: Uint16Array.from(list, (r) => r[1]) });
+        }
+      }
+      const siloSteps = new Map();
+      for (const uu of (artifact.pos ? artifact.pos.units : [])) {
+        const info = udef.get(uu.defID);
+        if (!info || !MISSILE_UNIT_DEFS.has(info.name)) continue;
+        const silo = builderByUnit.get(uu.unitID);
+        const siloInfo = silo !== undefined ? udef.get(defByUnit.get(silo)) : undefined;
+        if (!siloInfo || siloInfo.name !== "staticmissilesilo" || stockByUnit.has(silo)) continue;
+        const sp = uu.samples;
+        let ready = -1;
+        for (let k = 0; k < sp.n; k++) {
+          if (sp.bd[k] >= 255) { ready = sp.t[k]; break; }
+        }
+        if (ready < 0) continue;
+        const gone = launchTmByUnit.has(uu.unitID) ? launchTmByUnit.get(uu.unitID)
+          : deathByUnit.has(uu.unitID) ? toSec(deathByUnit.get(uu.unitID)) : Infinity;
+        if (!siloSteps.has(silo)) siloSteps.set(silo, []);
+        siloSteps.get(silo).push([ready, 1]);
+        if (gone !== Infinity) siloSteps.get(silo).push([gone, -1]);
+      }
+      for (const [silo, steps] of siloSteps) {
+        steps.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+        const t = new Float32Array(steps.length), c = new Uint16Array(steps.length);
+        let cur = 0;
+        steps.forEach(([tm, d], k) => { cur += d; t[k] = tm; c[k] = Math.max(0, cur); });
+        stockByUnit.set(silo, { n: steps.length, t, c });
+      }
+    }
+
     const units = (artifact.pos ? artifact.pos.units : []).map((u) => {
       const info = udef.get(u.defID);
       /* defID unresolvable in UDEF AND no spawn event: engine-side helper
@@ -1209,6 +1271,8 @@
         /* sparse state track: [{t, b, sl}] — b bits: 1 fire, 2 disarm, 4 EMP;
          * sl = slow fraction (the purple dot fades in as slow stacks) */
         states: statesByUnit.get(u.unitID) ?? [],
+        /* stockpile count track {n, t, c} or null (read with stockAt) */
+        stock: stockByUnit.get(u.unitID) ?? null,
         born: toSec(u.firstFrame),
         died: deathByUnit.has(u.unitID) ? toSec(deathByUnit.get(u.unitID)) : -1,
         /* ZK morph victim: no wreck marker under the live morphed unit */
@@ -2115,6 +2179,14 @@
     return { x: path.x[i], y: path.y[i], z: path.z[i] };
   }
 
+  /** stockpile count at time tm from a {n, t, c} step track (0 before the first step) */
+  function stockAt(track, tm) {
+    if (!track) return 0;
+    let c = 0;
+    for (let i = 0; i < track.n && track.t[i] <= tm; i++) c = track.c[i];
+    return c;
+  }
+
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt, mapFitRect,
     parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, iconSize, tintIcon, outlineIcon,
@@ -2123,6 +2195,6 @@
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
     MORPH_PAIR_WINDOW_SEC,
-    engAt,
+    engAt, stockAt,
   };
 })(typeof window !== "undefined" ? window : globalThis);

@@ -363,6 +363,22 @@ function encodeStates(snap: SnapshotData): Uint8Array {
   return out;
 }
 
+/** stockpile counts (missiles / meteors held), sorted by frame:
+ *  [count u32][[frame u32][unitID u32][count u16]] - 10 bytes per record */
+function encodeStockpile(snap: SnapshotData): Uint8Array {
+  const sorted = [...(snap.stockpile ?? [])].sort((a, b) => a.frame - b.frame || a.unitID - b.unitID);
+  const out = new Uint8Array(4 + sorted.length * 10);
+  const dv = new DataView(out.buffer);
+  dv.setUint32(0, sorted.length, true);
+  let o = 4;
+  for (const r of sorted) {
+    dv.setUint32(o, r.frame, true); o += 4;
+    dv.setUint32(o, r.unitID, true); o += 4;
+    dv.setUint16(o, Math.max(0, Math.min(65535, Math.round(r.count))), true); o += 2;
+  }
+  return out;
+}
+
 const PROJ_CLASS_NAME: Record<number, string> = {
   0: "dropped", 1: "beam", 2: "artillery", 3: "nuke", 4: "missile", 5: "interceptor",
 };
@@ -435,6 +451,11 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
   // that predate the stat rows — old artifacts simply lack the section
   if ((snap.states?.length ?? 0) > 0) {
     secs.push({ id: SECTION.STATES, version: 1, payload: encodeStates(snap), codec });
+  }
+  // stockpile counts (Trinity/Scylla/Reef/Artemis stockpile, Zenith
+  // meteors); absent on artifacts recorded before the widget's stk rows
+  if ((snap.stockpile?.length ?? 0) > 0) {
+    secs.push({ id: SECTION.STOCKPILE, version: 1, payload: encodeStockpile(snap), codec });
   }
   // commanded targets of sent strategic missiles — absent until the
   // resim that grew the widget's ptgt lines; harmless to skip when empty
