@@ -280,8 +280,11 @@
     /* ZK's own icontypes.lua resolves iconType "cruisemissilesmall" (the
        five stockpiled silo missiles: Eos/Shockley/Zeno/Quake/Inferno) to
        icons/cruisemissile.dds - the silo missiles keep their radar icon
-       until they fly (in flight they become the coloured warhead dots) */
+       until they fly (in flight they become the coloured warhead dots).
+       "stealth" likewise resolves to icons/sniper.dds (size 1.6); the
+       game ships no stealth.* of its own */
     if (iconType === "cruisemissilesmall") iconType = "cruisemissile";
+    if (iconType === "stealth") iconType = "sniper";
     if (!iconBase || !iconType || typeof Image === "undefined") return null;
     if (!iconCache.has(iconType)) {
       const im = new Image();

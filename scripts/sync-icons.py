@@ -37,6 +37,9 @@ ICON_ALIASES = {
     # sync must not consider it missing when the game ships no
     # cruisemissilesmall.* of its own
     "cruisemissilesmall": "cruisemissile",
+    # ZK maps stealth to the sniper icon (icontypes.lua:751) - the game
+    # ships no stealth.* of its own
+    "stealth": "sniper",
 }
 
 

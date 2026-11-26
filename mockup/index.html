@@ -1168,8 +1168,13 @@ function draw(model,tm){profSeg("backdrop");
     /* clamp the ON-SCREEN size (device px) into a readable band instead
       of the raw backing-store px: phones run this canvas at 2-3x DPR
       where unclamped icons land at ~2 CSS px, while big zooms would
-      turn every icon into a blob. 4.5..12 CSS px at any zoom or panel */
-    r=Math.max(4.5*DPR,Math.min(12*DPR,r*VIEW.z))/VIEW.z;
+      turn every icon into a blob. 4.5..12 CSS px at any zoom or panel.
+      EXCEPTION: the band ceiling scales with a commander's LEVEL - the
+      x1..x2 growth is a gameplay signal and comms are rare (a handful
+      per game); the flat 12px cap flattened level 3+ into no visible
+      growth (the icon itself draws at 2r, so capping r capped it all) */
+    var band=(u.commLevel?12*Math.min(2,1+0.2*u.commLevel):12)*DPR;
+    r=Math.max(4.5*DPR,Math.min(band,r*VIEW.z))/VIEW.z;
     var pos=u.posAt(tm);
     if(!pos)return;
     /* NaN positions are always a data bug (and would smear NaN into the
