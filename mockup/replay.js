@@ -407,6 +407,10 @@
       const n = sampleCount;
       const t = new Float32Array(n), x = new Float32Array(n), y = new Float32Array(n);
       const hp = new Uint8Array(n), bd = new Uint8Array(n), fl = new Uint8Array(n), sh = new Uint8Array(n);
+      /* v1/v2 sections carry no shield byte: the column stays at the
+         "unknown" sentinel, so trackAt reads sh as undefined (0 would
+         paint a fully-drained red shield on every pre-v3 shield unit) */
+      if (version < 3) sh.fill(255);
       let cx = originX, cz = originZ;
       let frame = firstFrame;
       for (let k = 0; k < n; k++) {
@@ -430,8 +434,7 @@
           fl[k] = u8[o] & 1; o += 1;
         } else {
           fl[k] = 0;
-        }
-      }
+        }      }
       p.units.push({ unitID, defID, firstFrame,
         samples: { n, t, x, y, hp, bd, fl, sh, v3: version >= 3 } });
       if (frame > p.maxFrame) p.maxFrame = frame;
@@ -1268,7 +1271,12 @@
       const sp = p.samples;
       let segStart = 0;
       for (let i = 1; i < sp.n; i++) {
-        if ((sp.t[i] - sp.t[i - 1]) * 30 > PROJ_REUSE_GAP_FRAMES) {
+        /* the t column is Float32 seconds, so the gap lands on the HALF-frame
+           midpoint between the integer frame gaps: an exactly-18-frame gap
+           (3 missed probes) still merges like the old integer rule, 19+ still
+           splits - raw (t[i]-t[i-1])*30 > 18 flipped on 60% of exact-18 gaps
+           under the rounding (measured) */
+        if ((sp.t[i] - sp.t[i - 1]) * 30 > PROJ_REUSE_GAP_FRAMES + 0.5) {
           projectiles.push(mkPath(segStart, i));
           segStart = i;
         }

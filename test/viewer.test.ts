@@ -356,6 +356,10 @@ test("legacy POS v2 decodes cloaked but leaves the field bit undefined (fallback
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units[0]!;
   assert.deepEqual([s0.cf, s1.cf], [undefined, undefined]);
+  /* v2 carries no shield byte either: sh must read as undefined, never 0
+     (a zero would paint every pre-v3 shield unit as fully drained) */
+  assert.deepEqual([s0.sh, s1.sh], [undefined, undefined],
+    "v2 trackAt shield reads undefined, not a drained 0");
 });
 
 test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () => {
