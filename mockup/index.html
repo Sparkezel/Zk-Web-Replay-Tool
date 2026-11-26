@@ -88,6 +88,7 @@
   .feed li.warn b{color:#ffb84d}
   .feed li.news b{color:#7fd0ff}
   .feed li.launch b{color:#8ce8a8}
+  .feed li.intercept b{color:#7fd4ff}
   /* sticky poll card: pinned at the top of the feed while a vote runs */
   .feed li.vote-sticky{position:sticky;top:0;z-index:2;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:6px 10px;margin:4px 6px;color:var(--txt)}
   .feed li.vote-sticky .vt{font-weight:800;font-size:13.5px;letter-spacing:.4px}
@@ -464,6 +465,7 @@ function buildArtifactModel(artifact){
          invested when the unit died (nanoframe kills lost a fraction) */
       bdEnd:u.track.n?u.track.bd[u.track.n-1]/255:undefined,
       commLevel:u.commLevel,metalValue:u.metalValue===undefined?u.metalCost:u.metalValue,
+      drone:!!u.drone,
       track:u.track,cr:u.cloakRadius||0,
       antiNuke:u.antiNuke||0,
       /* a launched silo missile vanishes from the map at its staging time
@@ -535,7 +537,7 @@ function buildArtifactModel(artifact){
      post-gameover) */
   var lossByTeam={};
   units.forEach(function(u){
-    if(u.died>0&&!u.morph&&!u.launched){
+    if(u.died>0&&!u.morph&&!u.launched&&!u.drone){
       var d=lossByTeam[u.t]||(lossByTeam[u.t]={t:[],v:[]});
       d.t.push(u.died);
       /* invested-at-death value: a killed nanoframe lost its build
@@ -800,7 +802,10 @@ function draw(model,tm){profSeg("backdrop");
     cx.globalAlpha=.5;
     (model.wrecks||[]).forEach(function(w){
       if(!(tm>=w.born&&(w.gone<0||tm<w.gone)))return;
-      cx.beginPath();cx.arc(w.x*W,w.y*H,2.2,0,7);cx.fill();
+      /* falling aircraft wrecks carry a short position trail; the dot
+         follows it until the feature settles (static wrecks: plain x/y) */
+      var p=w.posAt?w.posAt(tm):w;
+      cx.beginPath();cx.arc(p.x*W,p.y*H,2.2,0,7);cx.fill();
     });
     cx.globalAlpha=1;
   }
@@ -1165,6 +1170,12 @@ function draw(model,tm){profSeg("backdrop");
       near-invisible at equal px - give them a flat bump before the
       on-screen clamps */
     if(u.cls==="econ")r*=1.4;
+    /* ZK's own per-iconType size (icontypes.lua): Phantom (2.4) reads
+      bigger than Scythe (1.6), striders/superweapons (2.6..4) as the
+      landmarks they are, silo (2.5) 2.5x its stockpiled missiles (1.0)
+      — size/2.0 so the common 1.8..2.0 bot icons stay untouched */
+    var icMult=(ZkrReplay.iconSize(u.icon)||2)/2;
+    r*=icMult;
     /* clamp the ON-SCREEN size (device px) into a readable band instead
       of the raw backing-store px: phones run this canvas at 2-3x DPR
       where unclamped icons land at ~2 CSS px, while big zooms would
@@ -1172,15 +1183,20 @@ function draw(model,tm){profSeg("backdrop");
       EXCEPTION: the band ceiling scales with a commander's LEVEL - the
       x1..x2 growth is a gameplay signal and comms are rare (a handful
       per game); the flat 12px cap flattened level 3+ into no visible
-      growth (the icon itself draws at 2r, so capping r capped it all) */
-    var band=(u.commLevel?12*Math.min(2,1+0.2*u.commLevel):12)*DPR;
+      growth (the icon itself draws at 2r, so capping r capped it all) —
+      and with the icon's own ZK size, so the superweapon/strider
+      multipliers are not flattened back out at the cap */
+    var band=(u.commLevel?12*Math.min(2,1+0.2*u.commLevel):12)*icMult*DPR;
     r=Math.max(4.5*DPR,Math.min(band,r*VIEW.z))/VIEW.z;
     var pos=u.posAt(tm);
     if(!pos)return;
     /* NaN positions are always a data bug (and would smear NaN into the
        per-player value sums) — name the unit in the diag panel, once */
     if(!isFinite(pos.x)||!isFinite(pos.y)){diag("nan-position","unit "+u.id+" ("+(u.def||"?")+" at "+tm.toFixed(1)+"s)");return;}
-    if(u.t!==undefined){
+    /* live stats grid counts every real unit except carrier drones —
+       they spawn/die by the dozen and swamp the per-player columns
+       (#36); the drones themselves still draw on the map */
+    if(u.t!==undefined&&!u.drone){
       var st=liveStats[u.t]||(liveStats[u.t]={n:0,combat:0,econ:0,other:0});
       st.n++;
       /* value on the field counts what is invested: units still under

@@ -1048,7 +1048,112 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(detBlast && detBlast.fx === true && detBlast.col === "255,72,56" &&
     Math.abs(detBlast.t - 366 / 30) < 1e-6,
     "Detriment death blast: nuke-grade, red, uses the vector blast art");
+
+  // ---- interception news (#33): the feed tells the whole nuke story ----
+  assert.ok(model.feedData.some((f) => f.cls === "intercept" &&
+    f.txt === "Trinity nuke intercepted by antinuke!" &&
+    Math.abs(f.tm - 600 / 30) < 1e-3),
+    "the mid-air intercept (proID 107 vs the antinuke rocket) gets its feed line");
 });
+
+test("wreck movement rows: falling aircraft wrecks leave a position trail", async () => {
+  const snap = syntheticSnapshot();
+  // an aircraft dies in the air: the feature is announced at the death
+  // spot, then MOVES (falls/tumbles) for two more poll rows before rest
+  snap.events.push(
+    { kind: "wreck", frame: 900, unitID: 90001, int1: 88, int2: 3072, int3: 6144 },
+    { kind: "wreck", frame: 930, unitID: 90001, int1: 88, int2: 4000, int3: 7000 },
+    { kind: "wreck", frame: 960, unitID: 90001, int1: 88, int2: 4200, int3: 7200 },
+    { kind: "unwreck", frame: 1500, unitID: 90001, int1: -1, int2: -1, int3: -1 },
+  );
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.wrecks.length, 1, "the feature stays ONE wreck, not three");
+  const w = model.wrecks[0]!;
+  assert.ok(Math.abs(w.born - 30) < 1e-6, "born stays at the FIRST row");
+  assert.ok(Math.abs(w.x - 4200 / 16384) < 1e-4 && Math.abs(w.y - 7200 / 16384) < 1e-4,
+    "x/y track the resting spot (zone clustering sees where it settled)");
+  assert.equal(w.pts.length, 3, "all three rows land in the trail");
+  assert.ok(w.posAt, "a moving wreck gets a time lookup");
+  const early = w.posAt(30.5);
+  assert.ok(Math.abs(early.x - 3072 / 16384) < 1e-4, "before the first move row: death spot");
+  const mid = w.posAt(31.5);
+  assert.ok(Math.abs(mid.x - 4000 / 16384) < 1e-4, "mid-fall: the second row");
+  const late = w.posAt(100);
+  assert.ok(Math.abs(late.x - 4200 / 16384) < 1e-4, "at rest: the final row");
+  assert.ok(Math.abs(w.gone - 50) < 1e-6, "the reclaim still ends the wreck");
+});
+
+test("staging corpse: a later movement row must not resurrect it", async () => {
+  const snap = syntheticSnapshot();
+  // a staged Eos dies at the corner (same shape as the big fixture): its
+  // corner corpse is filtered as staging carrion, and a LATER movement row
+  // landing inside the map must not bring it back
+  snap.unitDefs.set(21, { defID: 21, name: "tacnuke", metalCost: 0, health: 100, canMove: true, iconType: "cruisemissilesmall", humanName: "Eos" });
+  snap.units.set(12, { unitID: 12, defID: 21, samples: [
+    { frame: 100, x: 16384, z: 16384, hp: 255, build: 255 },
+    { frame: 294, x: 16384, z: 16384, hp: 255, build: 255 },
+  ] });
+  snap.events.push(
+    { kind: "spawn", frame: 100, unitID: 12, int1: 21, int2: 1, int3: -1 },
+    { kind: "death", frame: 300, unitID: 12, int1: -1, int2: 1, int3: -1 },
+    { kind: "wreck", frame: 300, unitID: 95001, int1: 40, int2: 16384, int3: 16384 },
+    { kind: "wreck", frame: 330, unitID: 95001, int1: 40, int2: 8000, int3: 8000 },
+  );
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  assert.equal(model.wrecks.length, 0,
+    "the skipped staging feature stays dead through its movement rows");
+});
+
+test("carrier drones stay on the map but leave the feed (#36)", async () => {
+  const snap = syntheticSnapshot();
+  snap.unitDefs.set(50, { defID: 50, name: "dronelight", metalCost: 45, health: 60, canMove: true, iconType: "gunshipraider", humanName: "Firefly" });
+  snap.units.set(50, { unitID: 50, defID: 50, samples: [
+    { frame: 6, x: 2000, z: 2000, hp: 255, build: 255 },
+    { frame: 300, x: 2100, z: 2100, hp: 0, build: 255 },
+  ] });
+  snap.events.push(
+    { kind: "spawn", frame: 6, unitID: 50, int1: 50, int2: 0, int3: -1 },
+    { kind: "death", frame: 306, unitID: 50, int1: 1, int2: 0, int3: -1 },
+  );
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
+  const model = ZkrReplay.artifactToModel(artifact);
+  const u = model.units.find((x) => x.id === 50)!;
+  assert.equal(u.drone, true, "the Firefly is flagged as a carrier drone");
+  assert.ok(!model.feedData.some((f) => f.cls === "death" && /Firefly/.test(f.txt)),
+    "a drone death leaves no feed row");
+  assert.ok(model.feedData.some((f) => f.cls === "death"),
+    "non-drone deaths keep their rows");
+  // chicken-mode drones are genuine combat units and stay fed
+  snap.unitDefs.set(51, { defID: 51, name: "chicken_drone", metalCost: 20, health: 40, canMove: true, iconType: "chicken", humanName: "Hopper" });
+  snap.units.set(51, { unitID: 51, defID: 51, samples: [
+    { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
+    { frame: 300, x: 3100, z: 3100, hp: 0, build: 255 },
+  ] });
+  snap.events.push(
+    { kind: "spawn", frame: 6, unitID: 51, int1: 51, int2: 0, int3: -1 },
+    { kind: "death", frame: 312, unitID: 51, int1: 1, int2: 0, int3: -1 },
+  );
+  const zkr2 = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model2 = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr2))));
+  assert.ok(model2.feedData.some((f) => f.cls === "death" && /Hopper/.test(f.txt)),
+    "chicken drones are real combat units and stay in the feed");
+});
+
+test("iconSize reads ZK's per-iconType size table", () => {
+  assert.equal(ZkrReplay.iconSize("stealth"), 1.6, "Scythe: stealth keeps its own 1.6");
+  assert.equal(ZkrReplay.iconSize("sniper"), 2.4, "Phantom: sniper is 2.4");
+  assert.equal(ZkrReplay.iconSize("cruisemissile"), 2.5, "the Missile Silo icon");
+  assert.equal(ZkrReplay.iconSize("cruisemissilesmall"), 1, "stockpiled missiles: half the silo pair");
+  assert.equal(ZkrReplay.iconSize("nuke"), 3, "Trinity silo");
+  assert.equal(ZkrReplay.iconSize("none"), 2, "untabled iconTypes read as the neutral 2.0");
+  assert.equal(ZkrReplay.iconSize(undefined), 2, "no iconType at all: neutral");
+});
+
 
 test("unitValueClass buckets defs into econ/other/combat for the stats grid", () => {
   assert.equal(ZkrReplay.unitValueClass("energysolar", "energy_med"), "econ");

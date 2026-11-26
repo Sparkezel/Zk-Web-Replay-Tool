@@ -45,6 +45,18 @@
     return EXCLUDED_UNIT_DEFS.has(n) || n.indexOf("fakeunit") === 0;
   }
 
+  /** carrier-spawn drones (Reef/carrier pads: dronelight = Firefly,
+   *  droneheavyslow = Viper, dronefighter = Spicula, dronecarry = Gull):
+   *  unlike terraunit they ARE real map units and stay rendered, but their
+   *  deaths are excluded from the battle feed and the stats grid — a
+   *  drone skirmish is 40+ feed rows of noise that also skews the
+   *  units/loss aggregates (#36). Chicken-mode `chicken_drone*` is a
+   *  genuine combat unit and stays. */
+  const DRONE_UNIT_DEFS = new Set(["dronelight", "droneheavyslow", "dronefighter", "dronecarry"]);
+  function isDroneDef(defName) {
+    return DRONE_UNIT_DEFS.has(String(defName || "").toLowerCase());
+  }
+
   /** Coarse unit-value class for the per-player stats grid, from the UDEF
    *  iconType (Spring icons are reliable well past per-fallback heuristics):
    *  econ = production & storage (energy icons, mex, pylon), other = factories, pads,
@@ -295,6 +307,58 @@
       iconCache.set(iconType, im);
     }
     return iconCache.get(iconType);
+  }
+
+  /* ZK's own per-iconType SIZE (LuaUI/Configs/icontypes.lua, "size" field,
+     Spring's standard icons draw at size 2.0): the game itself renders a
+     Phantom (sniper, 2.4) visibly larger than a Scythe (stealth, 1.6) even
+     though both use sniper.dds, a Missile Silo (cruisemissile, 2.5) 2.5x its
+     stockpiled missiles (cruisemissilesmall, 1.0), and superweapons
+     (nuke/antinuke 3.0, singu 3.2) as landmarks. The viewer honours the same
+     ratios so the map reads like the game. Lookup uses the RAW iconType:
+     "stealth" aliases to sniper ART but keeps its own 1.6 size, exactly as
+     ZK draws it. Entries below = every iconType used by the tracked replays
+     (152/153; "none" has no entry and reads as the neutral 2.0). */
+  const ICON_TYPE_SIZE = {
+advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
+    amphsupport:1.9,amphtorpraider:1.9,amphtorpriot:2.2,antinuke:3,
+    bomberassault:2.1,bomberassaultshield:2.5,bombernuke:2.5,
+    bomberraider:2.1,bomberriot:2.1,builder:1.8,builderair:1.8,building:0.8,
+    clogger:2,commander1:2,commander2:2.2,commander3:2.4,corcommander:2,
+    cruisemissile:2.5,cruisemissilesmall:1,defense:2,defenseaa:2,
+    defenseheavy:2,defenseraider:2,defenseriot:2,defenseshield:2,
+    defenseskirm:2,defenseskirmaa:2,defensespecial:2,defensesupport:2,
+    energy_med:2.1,energyfusion:2,energygeo:2,energyheavygeo:2.4,
+    energysingu:3.2,energywind:2,facair:2.6,facamph:2.6,facgunship:2.6,
+    fachover:2.6,facjumpjet:2.6,fackbot:2.6,facspider:2.6,factank:2.6,
+    facvehicle:2.6,facwalker:2.6,fatbotarty:2.1,fatbotsupport:1.8,
+    fighter:1.5,fixedtachyon:2,gunshipaa:2,gunshipraider:2,gunshipscout:1.5,
+    gunshipskirm:2,gunshipspecial:1.5,gunshiptransport:2,
+    heavygunshipskirm:2.4,heavygunshiptransport:2.4,heavysam:2.2,
+    hoverassault:1.8,hoverraider:1.8,hoverskirm:1.8,jumpjetaa:1.8,
+    jumpjetassault:1.8,jumpjetbomb:1.8,jumpjetraider:1.8,kbotaa:1.8,
+    kbotarty:1.8,kbotassault:2,kbotbomb:1.8,kbotjammer:2,kbotraider:1.8,
+    kbotriot:1.8,kbotskirm:1.8,kbotwideriot:2,krogoth:3,lrpc:2.4,mahlazer:3,
+    mex:1.1,mine:1.2,mobiletachyon:2.3,nuke:3,padair:2.15,padbot:2.15,
+    padgunship:2.15,padjumpjet:2.15,padspider:2.15,padtank:2.15,padveh:2.15,
+    padwalker:2.15,pylon:1.8,radar:2,radarplane:2,scoutplane:1.6,sniper:2.4,
+    spideraa:1.8,spiderassault:1.8,spiderbomb:1.8,spiderriot:1.8,
+    spiderriotspecial:1.8,spiderscout:1.7,spiderskirm:1.8,
+    spiderspecialscout:2,spidersupport:2.4,staticaa:2,staticarty:2.2,
+    staticassaultriot:2,staticbuilder:1.5,staticjammer:2,staticskirmaa:2,
+    stealth:1.6,stealthfighter:1.7,storage:1,supergunship:2.8,t3arty:2.7,
+    t3generic:2.9,t3hub:2.4,t3jumpjetriot:2.4,t3riot:2.6,
+    t3spiderbuilder:2.7,t3spidergeneric:2.7,tankaa:2,tankarty:2,
+    tankassault:2,tanklrarty:2.2,tankraider:2,tankriot:2,tankscout:2,
+    tankskirm:2.3,tempshield:1.2,vehicleaa:1.8,vehiclearty:1.8,
+    vehicleassault:1.8,vehiclelrarty:2.2,vehicleraider:1.8,vehicleriot:1.8,
+    vehiclescout:1.8,vehiclespecial:2.1,vehiclesupport:1.8,walkeraa:1.6,
+    walkerassault:1.7,walkerbomb:1.8,walkerlrarty:2,walkerraider:1.6,
+    walkerriot:1.6,walkershield:2,walkerskirm:1.7,walkersupport:2,
+  };
+  function iconSize(iconType) {
+    const s = ICON_TYPE_SIZE[String(iconType || "").toLowerCase()];
+    return s === undefined ? 2 : s;
   }
 
   /* Recolour a unit icon into the owning player's colour, exactly like the
@@ -831,6 +895,9 @@
       if (r.kind !== "death") continue;
       const deadDef = defByUnit.has(r.unitID) ? udef.get(defByUnit.get(r.unitID)) : null;
       if (isExcludedDef(deadDef && deadDef.name)) continue;
+      /* carrier drones die by the dozen; their feed rows would drown out
+         the units that matter (issue #36) — the drones stay on the map */
+      if (isDroneDef(deadDef && deadDef.name)) continue;
       const unitName = defLabel(r.unitID, "Unit #" + r.unitID) || ("Unit #" + r.unitID);
       if (morphIntoByUnit.has(r.unitID)) {
         const childID = morphIntoByUnit.get(r.unitID);
@@ -1111,6 +1178,10 @@
         icon: info ? (info.iconType || (info.name ? info.name.toLowerCase() : undefined)) : undefined,
         /* value-class bucket for the per-player stats grid (econ/other/combat) */
         cls: info ? unitValueClass(info.name, info.iconType) : "combat",
+        /* carrier-spawn drones (Firefly/Viper/Spicula/Gull): real map
+         * units, but excluded from the feed and the stats grid — they
+         * die by the dozen and drown out the units that matter (#36) */
+        drone: info ? isDroneDef(info.name) : false,
         cloakRadius: info ? info.cloakRadius : undefined,
         /* Shield weapon radius/power; >= 200 elmos = area shield (circle),
            smaller personal shields only feed the fallback charge bar */
@@ -1174,6 +1245,10 @@
       return Math.abs(hi2 - f) <= 36 || Math.abs(lo2 - f) <= 36;
     };
     const wreckByFeature = new Map();
+    /* staging corpses stay dead even if a later MOVEMENT row arrives for
+       the same feature id — without this the update row would resurrect
+       the filtered-out corpse at its (in-map) resting position */
+    const wreckSkipped = new Set();
     for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
       if (r.kind === "wreck") {
         nWreckEvents++;
@@ -1183,15 +1258,39 @@
            this filter); gated on a matching missile death so the corner
            band alone can never eat a real wreck */
         if (r.int2 >= wmw * 0.95 && (r.int3 <= wmh * 0.05 || r.int3 >= wmh * 0.95) &&
-            nearMissileDeath(r.frame)) continue;
-        wreckByFeature.set(r.unitID, {
-          born: toSec(r.frame),
-          x: r.int2 / wmw, y: r.int3 / wmh,
-          metal: Math.max(0, r.int1), gone: -1,
-        });
+            nearMissileDeath(r.frame)) { wreckSkipped.add(r.unitID); continue; }
+        if (wreckSkipped.has(r.unitID)) continue;
+        const w = wreckByFeature.get(r.unitID);
+        if (w) {
+          /* movement update (aircraft wrecks: the feature is created at
+             the in-air death spot, then falls/tumbles to rest — the
+             recorder re-emits wrk rows while it moves). x/y track the
+             LATEST row so the zone clustering sees the resting spot */
+          w.pts.push([toSec(r.frame), r.int2 / wmw, r.int3 / wmh]);
+          w.x = r.int2 / wmw; w.y = r.int3 / wmh;
+        } else {
+          wreckByFeature.set(r.unitID, {
+            born: toSec(r.frame),
+            x: r.int2 / wmw, y: r.int3 / wmh,
+            metal: Math.max(0, r.int1), gone: -1,
+            pts: [[toSec(r.frame), r.int2 / wmw, r.int3 / wmh]],
+          });
+        }
       } else if (r.kind === "unwreck") {
         const w = wreckByFeature.get(r.unitID);
         if (w) w.gone = toSec(r.frame);
+      }
+    }
+    /* only MOVING wrecks need the time lookup — everything else keeps its
+       plain x/y (and the synthetic fallback wrecks below never move) */
+    for (const w of wreckByFeature.values()) {
+      if (w.pts.length > 1) {
+        w.posAt = (tm) => {
+          let lo = 0, hi = w.pts.length - 1;
+          if (tm < w.pts[0][0]) return { x: w.pts[0][1], y: w.pts[0][2] };
+          while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (w.pts[mid][0] <= tm) lo = mid; else hi = mid - 1; }
+          return { x: w.pts[lo][1], y: w.pts[lo][2] };
+        };
       }
     }
     let wrecks = [...wreckByFeature.values()];
@@ -1417,13 +1516,23 @@
         const w = wdef.get(p.weaponDefID);
         return w && String(w.name || "").toLowerCase().split("_")[0] === "staticantinuke" && p.path.n;
       })
-      .map((p) => ({ t: p.end, x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1] }));
+      /* the interceptor's team rides along: the feed line credits the
+         antinuke's owner, not the (now very sad) launcher */
+      .map((p) => ({ t: p.end, x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1], team: p.team }));
+    const intercepts = [];
     for (const p of projectiles) {
       if (!p.mcol || !p.path.n) continue;
       const imp = { t: p.path.t[p.path.n - 1], x: p.path.x[p.path.n - 1], z: p.path.z[p.path.n - 1] };
-      if (rocketEnds.some((r) => Math.abs(r.t - p.end) <= ICEPT_SPAN_SEC
-        && Math.hypot((r.x - imp.x) * wmw, (r.z - imp.z) * wmh) <= ICEPT_RADIUS)) {
+      const hit = rocketEnds.find((r) => Math.abs(r.t - p.end) <= ICEPT_SPAN_SEC
+        && Math.hypot((r.x - imp.x) * wmw, (r.z - imp.z) * wmh) <= ICEPT_RADIUS);
+      if (hit) {
         p.intercepted = true;
+        /* warhead name key for the feed line (tacnuke/empmissile/.../
+           staticnuke), resolved to the display name in the launch-news
+           block below */
+        const w = wdef.get(p.weaponDefID);
+        intercepts.push({ tm: p.end, team: hit.team,
+          k: w && w.name ? String(w.name).toLowerCase().split("_")[0] : null });
       }
     }
     /* ---- commanded destinations (PTGT) ----
@@ -1550,6 +1659,25 @@
         txt: L.nuke
           ? (cnt > 1 ? cnt + " × Trinity nukes launched!" : "Trinity launched a strategic nuke!")
           : (cnt > 1 ? cnt + " × " + L.nm + " missiles launched!" : L.nm + " launched!"),
+      });
+      i = j;
+    }
+
+    /* ---- interception news: the other half of the nuke story (#33) ----
+       The feed now reads launch -> intercepted/landed end to end. A volley
+       swallowed by antinukes is one line, same 2.5 s grouping as launches;
+       the interceptor's team is the one that made the play. */
+    intercepts.sort((a, b) => a.tm - b.tm);
+    for (let i = 0; i < intercepts.length;) {
+      let j = i + 1;
+      while (j < intercepts.length && intercepts[j].team === intercepts[i].team &&
+             intercepts[j].tm - intercepts[j - 1].tm <= 2.5) j++;
+      const cnt = j - i, E = intercepts[i];
+      const nm = E.k === "staticnuke" ? "Trinity nuke"
+        : LAUNCH_MISSILE_NAMES[E.k] ? LAUNCH_MISSILE_NAMES[E.k] + " missile" : "missile";
+      feedData.push({
+        tm: E.tm, cls: "intercept",
+        txt: (cnt > 1 ? cnt + " × " + nm + "s" : nm) + " intercepted by antinuke!",
       });
       i = j;
     }
@@ -1863,7 +1991,7 @@
 
   global.ZkrReplay = {
     parse, artifactToModel, trackAt, pathAt, mapFitRect,
-    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, tintIcon, outlineIcon,
+    parseStartboxes, parseStartboxesBlob, setUnitIconBase, iconFor, iconSize, tintIcon, outlineIcon,
     teamColor, hpColor, hslToRgb, damageShade, shieldColor, TEAL16, WARM16,
     EXCLUDED_UNIT_DEFS, unitValueClass,
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
