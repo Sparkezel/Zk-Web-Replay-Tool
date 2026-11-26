@@ -1328,6 +1328,9 @@
          comm lightninggun, aoe 8) stay plain beams. Cyan = EMP */
       ["spideremp_spider",              { col: "72,214,255", r: 64, dur: 2 }],
       ["striderscorpion_multilightning", { col: "72,214,255", r: 80, dur: 2 }],
+      /* the Ogre's Banisher rocket salvo (lua aoe 160 -> r 80): the heavy
+         riot tank's splashes deserve their ring */
+      ["tankriot_tawf_banisher",        { col: "255,160,90", r: 80, dur: 2 }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground

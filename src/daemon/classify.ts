@@ -76,8 +76,10 @@ const BEAM_WEAPON_NAMES = new Set([
 ]);
 /** Named "plain projectile" overrides: the Cyclops's main gun is a short
  *  flat Cannon (r450, no arc) which no generic rule can catch — recorded
- *  as artillery-class flights so it draws the normal yellow dash + blip. */
-const ARC_WEAPON_NAMES = new Set(["tankheavyassault_cor_gol"]);
+ *  as artillery-class flights so it draws the normal yellow dash + blip.
+ *  The Ogre's Banisher rockets (r320 MissileLauncher) same story, and they
+ *  additionally carry an AoE the viewer paints as an impact ring. */
+const ARC_WEAPON_NAMES = new Set(["tankheavyassault_cor_gol", "tankriot_tawf_banisher"]);
 
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();

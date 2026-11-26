@@ -418,7 +418,8 @@ local function classifyWeapon(d, cp)
     striderdetriment_aalaser = true, striderdetriment_trilaser = true,
     striderdetriment_obliteration_blaster = true,
   }
-  local NAMED_ARCS = { tankheavyassault_cor_gol = true }
+  local NAMED_ARCS = { tankheavyassault_cor_gol = true,
+    tankriot_tawf_banisher = true }
   local wname = string.lower(d.name or "")
   if NAMED_BEAMS[wname] then return 1 end
   if NAMED_ARCS[wname] then return 2 end
