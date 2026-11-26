@@ -47,8 +47,10 @@ The widget samples the engine and echoes one JSON per line to stdout:
   malformed JSON on big battles.
 - **STAT** — sparse state events at 1 Hz, only on change: slow level
   (quantized to 1/16) and a bit set for on-fire / disarmed / EMP-stunned.
-  EMP is gated on build completion because Spring reports nanoframes as
-  "stunned" (see Part 2).
+  EMP reads the second value of `GetUnitIsStunned` (paralysis alone); the
+  first value also counts nanoframes (see Part 2). Hidden units are skipped:
+  Zero-K scripts paralyze a popped Claw mine and a launched silo missile
+  while they wait unseen to be removed.
 - **EVNT** — lifecycle: spawn, death (with killer unit/team/weapon),
   finished, transfer, gameover, wreck created/reclaimed, and **engage**
   rows (who damaged whom — victim change plus a 0.6 s keep-alive, so a
@@ -197,10 +199,10 @@ measured on real artifacts, and fixed:
   "on_fire") == "1"` never fires — the engine returns numbers (ZK's own
   healthbars compare `== 1`). Two of four live states silently never
   recorded until this was found by diffing a fresh STAT census.
-- **`GetUnitIsStunned` is true for nanoframes.** Every unit under
-  construction wore a yellow EMP dot. The bit is now gated on build
-  completion — in both the widget (future recordings) and the page
-  (existing artifacts).
+- **`GetUnitIsStunned` is true for nanoframes.** Its first value is
+  "stunned or being built", so every unit under construction wore a yellow
+  EMP dot. The widget now reads the second value (paralysis alone); the
+  page keeps a build-completion gate for artifacts recorded before.
 - **`GetProjectileTarget` shape.** The recorder accepted
   `(a,b,c,d)` numbers or a table with `.x/.z`. The engine actually returns
   `(typeChar, target)` with ground targets as an **array** table
