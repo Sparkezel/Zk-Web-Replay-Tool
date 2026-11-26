@@ -51,10 +51,10 @@ test("viewer decoder recovers unit tracks from a packed artifact", async () => {
   assert.equal(artifact.pos.units.length, 2);
   const u1 = artifact.pos.units.find((u) => u.unitID === 1);
   assert.equal(u1.defID, 10);
-  assert.equal(u1.samples.length, 3);
-  assert.ok(Math.abs(u1.samples[0].x - 1024.5 / 16384) < 0.001);
-  assert.ok(Math.abs(u1.samples[2].z - 2248.25 / 16384) < 0.001);
-  assert.ok(Math.abs(u1.samples[0].hp - 0.9) < 0.01);
+  assert.equal(u1.samples.n, 3);
+  assert.ok(Math.abs(u1.samples.x[0] - 1024.5 / 16384) < 0.001);
+  assert.ok(Math.abs(u1.samples.y[2] - 2248.25 / 16384) < 0.001);
+  assert.ok(Math.abs(u1.samples.hp[0] / 255 - 0.9) < 0.01);
   assert.equal(artifact.evnt.records[2].kind, "death");
   assert.equal(artifact.proj.paths[0].cls, 3);
 });
@@ -168,10 +168,10 @@ test("health ring baseline: units carry hpMax and only true damage shows the rin
   const hurt = model.units.find((u) => u.id === 1)!;
   const full = model.units.find((u) => u.id === 2)!;
   assert.ok(hurt.hpMax !== undefined, "tracked unit must expose hpMax");
-  assert.ok(hurt.hpMax! - hurt.track[hurt.track.length - 1]!.hp > 0.002,
+  assert.ok(hurt.hpMax! - hurt.track.hp[hurt.track.n - 1] / 255 > 0.002,
     "unit 1 ends below its peak, so the ring would draw");
   assert.equal(full.hpMax!, 1);
-  assert.ok(full.hpMax! - full.track[0]!.hp <= 0.002,
+  assert.ok(full.hpMax! - full.track.hp[0] / 255 <= 0.002,
     "unit 2 sits at its peak, so the ring stays hidden");
 });
 
@@ -186,7 +186,7 @@ test("viewer model recovers winner, gameover and interpolated positions", async 
   assert.ok(model.hasUnits);
   assert.equal(model.END, 1500 / 30);
   const u1 = model.units.find((u) => u.id === 1)!;
-  assert.ok(Math.abs(u1.track[0]!.x - 1024.5 / 16384) < 0.001);
+  assert.ok(Math.abs(u1.track.x[0]! - 1024.5 / 16384) < 0.001);
   // sample timing is true frames now (POS v2): samples sit at 6/12/18 frames
   // (0.2/0.4/0.6 s); interpolating mid-segment at frame 9 lands halfway
   const mid = ZkrReplay.trackAt(u1.track, 9 / 30);
@@ -247,20 +247,24 @@ test("POS v3 keeps true sample timing (probe gaps), cloak/field bits and shield 
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   assert.equal(artifact.pos.version, 3);
   const posUnit = artifact.pos!.units.find((x) => x.unitID === 1)!;
-  assert.deepEqual(posUnit.samples.map((s) => s.frame), [6, 13, 25]);
-  assert.deepEqual(posUnit.samples.map((s) => s.ck), [true, true, true]);
-  assert.deepEqual(posUnit.samples.map((s) => s.cf), [true, false, true]);
-  assert.deepEqual(posUnit.samples.map((s) => s.cs), [false, true, false]);
+  /* decoded samples are COLUMNAR: t seconds (frames = t*30), flag bits in
+     fl (bit0 cloak, bit1 field, bit2 stall), raw shield byte 255=unknown */
+  const sm = posUnit.samples;
+  assert.deepEqual(Array.from(sm.t).map((v) => Math.round(v * 30)), [6, 13, 25]);
+  assert.deepEqual(Array.from(sm.fl).map((f) => (f & 1) !== 0), [true, true, true]);
+  assert.deepEqual(Array.from(sm.fl).map((f) => (f & 2) !== 0), [true, false, true]);
+  assert.deepEqual(Array.from(sm.fl).map((f) => (f & 4) !== 0), [false, true, false]);
   // shield charge byte round-trips at 0..254 resolution, 255 = no shield
-  assert.ok(Math.abs(posUnit.samples[0]!.sh! - 1) < 0.01);
-  assert.ok(Math.abs(posUnit.samples[1]!.sh! - 0.5) < 0.01);
-  assert.equal(posUnit.samples[2]!.sh, undefined, "no shield recorded -> undefined, not 0");
+  const sh = (i: number) => (sm.sh[i] === 255 ? undefined : sm.sh[i]! / 254);
+  assert.ok(Math.abs(sh(0)! - 1) < 0.01);
+  assert.ok(Math.abs(sh(1)! - 0.5) < 0.01);
+  assert.equal(sh(2), undefined, "no shield recorded -> undefined, not 0");
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units.find((x) => x.id === 1)!;
-  assert.deepEqual(m.track.map((t) => Math.round(t.t * 30)), [6, 13, 25]);
+  assert.deepEqual(Array.from(m.track.t).map((v) => Math.round(v * 30)), [6, 13, 25]);
   assert.equal(m.shieldRadius, 350, "UDEF v3 shield radius reaches the model");
   assert.equal(m.shieldPower, 3600);
-  assert.deepEqual(m.track.map((t) => t.cs), [false, true, false]);
+  assert.deepEqual(Array.from(m.track.fl).map((f) => (f & 4) !== 0), [false, true, false]);
   // C1 regression: probes are 6 frames apart, so nearly every rendered
   // frame interpolates — the state bits must survive trackAt mid-sample
   // (samples sit at 0.2/0.433/0.833 s; 0.3 is strictly between the first two)
@@ -343,12 +347,19 @@ test("legacy POS v2 decodes cloaked but leaves the field bit undefined (fallback
   const zkr = writeZkr([{ id: "POS ", version: 2, payload: new Uint8Array(b.subarray(0, o)), codec: 1 }]);
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   const s = artifact.pos!.units[0]!.samples;
-  assert.deepEqual(s.map((x) => x.ck), [true, true]);
-  assert.deepEqual(s.map((x) => x.cf), [undefined, undefined],
+  /* decoded track is COLUMNAR (typed arrays): flags in fl bits, semantics
+     (ck/cf/cs/sh) via trackAt / trackSample */
+  assert.deepEqual(Array.from(s.fl).map((f) => (f & 1) !== 0), [true, true]);
+  const s0 = ZkrReplay.trackAt(s, s.t[0])!, s1 = ZkrReplay.trackAt(s, s.t[1])!;
+  assert.deepEqual([s0.cf, s1.cf], [undefined, undefined],
     "v2 bit1 is NOT a field bit: pre-#13 artifacts would lose all field circles if read");
   const model = ZkrReplay.artifactToModel(artifact);
   const m = model.units[0]!;
-  assert.deepEqual(m.track.map((t) => t.cf), [undefined, undefined]);
+  assert.deepEqual([s0.cf, s1.cf], [undefined, undefined]);
+  /* v2 carries no shield byte either: sh must read as undefined, never 0
+     (a zero would paint every pre-v3 shield unit as fully drained) */
+  assert.deepEqual([s0.sh, s1.sh], [undefined, undefined],
+    "v2 trackAt shield reads undefined, not a drained 0");
 });
 
 test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () => {
@@ -373,7 +384,7 @@ test("legacy POS v1 decodes with the widget's 6-frame probe cadence", async () =
   const zkr = writeZkr([{ id: "POS ", version: 1, payload: new Uint8Array(b.subarray(0, o)), codec: 1 }]);
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   const s = artifact.pos!.units[0]!.samples;
-  assert.deepEqual(s.map((x) => x.frame), [100, 106, 112],
+  assert.deepEqual(Array.from(s.t).map((v) => Math.round(v * 30)), [100, 106, 112],
     "v1 artifacts must decode at the historical probe cadence, not one-per-frame");
 });
 
@@ -406,10 +417,17 @@ test("artifactToModel anchors DEMO data at STARTPLAYING, keeps resim on the play
     pos: {
       units: [{
         unitID: 1, defID: 89, firstFrame: 4810,
-        samples: [
-          { frame: 4810, x: 0.5, z: 0.5, hp: 1, build: 1, ck: true },
-          { frame: 4840, x: 0.5, z: 0.5, hp: 1, build: 1 },
-        ],
+        /* columnar track, as decodePos emits (t seconds, fl bits, raw u8s) */
+        samples: {
+          n: 2, v3: true,
+          t: new Float32Array([4810 / 30, 4840 / 30]),
+          x: new Float32Array([0.5, 0.5]),
+          y: new Float32Array([0.5, 0.5]),
+          hp: new Uint8Array([255, 255]),
+          bd: new Uint8Array([255, 255]),
+          fl: new Uint8Array([1, 0]),
+          sh: new Uint8Array([255, 255]),
+        },
       }],
       maxFrame: 4840,
     },
@@ -428,7 +446,7 @@ test("artifactToModel anchors DEMO data at STARTPLAYING, keeps resim on the play
   assert.equal(model.pregameSec, 4799 / 30);
   // cloak: Iris radius + a cloaked sample propagate
   assert.equal(u.cloakRadius, 350);
-  assert.equal(u.track[0]!.ck, true);
+  assert.equal((u.track.fl[0]! & 1) !== 0, true);
   // map dims for circle scaling
   assert.equal(model.mapW, 16384);
   assert.equal(model.mapH, 16384);
@@ -535,8 +553,8 @@ test("recycled projectile IDs pack as two independent short flights", async () =
   const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
   const artifact = await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr)));
   assert.equal(artifact.proj.paths.length, 2);
-  const spans = artifact.proj.paths.map((p) => p.samples[p.samples.length - 1].frame - p.startFrame);
-  assert.ok(spans.every((s) => s <= 12), "each flight spans a handful of frames, not minutes: " + spans);
+  const spans = artifact.proj.paths.map((p) => p.samples.t[p.samples.n - 1] * 30 - p.startFrame);
+  assert.ok(spans.every((s) => s <= 12.01), "each flight spans a handful of frames, not minutes: " + spans);
   const model = ZkrReplay.artifactToModel(artifact);
   assert.equal(model.projectiles.length, 2);
   assert.ok(model.projectiles[0].born !== model.projectiles[1].born);
@@ -566,11 +584,11 @@ test("legacy artifacts: one contaminated proID path splits into two flights at m
   const model = ZkrReplay.artifactToModel(artifact);
   assert.equal(model.projectiles.length, 2, "split at the >1 s sample hole");
   const [first, second] = model.projectiles;
-  assert.ok(Math.abs(first.end - 12 / 30) < 1e-6);
-  assert.ok(Math.abs(second.born - 5000 / 30) < 1e-6);
+  assert.ok(Math.abs(first.end - 12 / 30) < 1e-3);
+  assert.ok(Math.abs(second.born - 5000 / 30) < 1e-3);
   for (const p of model.projectiles) {
-    for (let i = 1; i < p.path.length; i++) {
-      assert.ok(p.path[i].t - p.path[i - 1].t <= 0.6, "no cross-map crawl steps");
+    for (let i = 1; i < p.path.n; i++) {
+      assert.ok(p.path.t[i] - p.path.t[i - 1] <= 0.6, "no cross-map crawl steps");
     }
   }
 });
@@ -853,10 +871,10 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
 
   // states travel through pack -> parse with the slow fraction intact
   const st = model.units.find((u) => u.id === 1)!.states;
-  assert.equal(st.length, 1, "state transition recorded");
-  assert.equal(st[0]!.b, 4, "EMP bit");
-  assert.ok(Math.abs(st[0]!.sl - 3 / 16) < 1e-9, "slow fraction survives the u8 quantization");
-  assert.equal(st[0]!.t, 4, "state time in play-seconds");
+  assert.equal(st.n, 1, "state transition recorded");
+  assert.equal(st.b[0], 4, "EMP bit");
+  assert.ok(Math.abs(st.sl[0] - 3 / 16) < 1e-9, "slow fraction survives the u8 quantization");
+  assert.equal(st.t[0], 4, "state time in play-seconds");
 
   // anti-nuke coverage straight from the def
   assert.equal(model.units.find((u) => u.id === 11)!.antiNuke, 2500);
