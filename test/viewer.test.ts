@@ -1188,3 +1188,41 @@ test("mapFitRect contain-fits the map at its true aspect ratio", () => {
   assert.equal(fb.fh, 500);
   assert.equal(fb.ox, 150);
 });
+
+test("engagement rows decode into per-attacker arrow sessions with engAt TTL", async () => {
+  const snap = syntheticSnapshot();
+  // two glaives and a bandit: units 1 and 2 exist in the base fixture
+  snap.unitDefs.set(11, { defID: 11, name: "bandit", metalCost: 130, health: 90, canMove: true, iconType: "raider3", humanName: "Bandit" });
+  snap.units.set(30, { unitID: 30, defID: 11, samples: [
+    { frame: 6, x: 4000, z: 4000, hp: 255, build: 255 },
+    { frame: 600, x: 4000, z: 4000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 30, int1: 11, int2: 1, int3: -1 });
+  // attacker 30 (bandit) fights unit 1 from frame 100, switches to unit 2
+  // at 400, refreshes the pair at 520, then goes quiet
+  snap.events.push({ kind: "engage", frame: 100, unitID: 30, int1: 1, int2: -1, int3: -1 });
+  snap.events.push({ kind: "engage", frame: 400, unitID: 30, int1: 2, int2: -1, int3: -1 });
+  snap.events.push({ kind: "engage", frame: 520, unitID: 30, int1: 2, int2: -1, int3: -1 });
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+
+  const rows = model.engagements[30];
+  assert.ok(rows && rows.length === 3, "three engage rows survive pack/decode");
+  assert.equal(rows[0]!.v, 1);
+  assert.equal(rows[1]!.v, 2);
+  assert.ok(Math.abs(rows[0]!.t - 100 / 30) < 0.01, "frame -> sim seconds");
+
+  const TTL = model.ENGAGE_TTL;
+  // before the first recorded hit: nothing
+  assert.equal(ZkrReplay.engAt(rows, 2, TTL), null, "no target before the first hit");
+  // mid-fight: current victim follows the latest row at-or-before tm
+  assert.equal(ZkrReplay.engAt(rows, 100 / 30 + 0.3, TTL)!.v, 1, "victim 1 mid-fight");
+  assert.equal(ZkrReplay.engAt(rows, 400 / 30 + 0.05, TTL)!.v, 2, "switch to victim 2");
+  assert.equal(ZkrReplay.engAt(rows, 520 / 30 + 0.2, TTL)!.v, 2, "keep-alive refresh holds the pair");
+  // past the TTL after the last refresh: the fight went quiet
+  assert.equal(ZkrReplay.engAt(rows, 520 / 30 + TTL + 0.01, TTL), null, "arrow expires past the TTL");
+  // custom ttl (the page may tighten the window)
+  assert.equal(ZkrReplay.engAt(rows, 520 / 30 + 0.7, 0.5), null, "shorter ttl expires sooner");
+  // units with no engagements carry no entry; no other attacker keys appear
+  assert.equal(Object.keys(model.engagements).length, 1);
+});

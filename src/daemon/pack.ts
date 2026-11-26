@@ -155,7 +155,7 @@ export function encodePos(snap: SnapshotData): Uint8Array {
   return w.finish();
 }
 
-const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3, gameover: 4, wreck: 5, unwreck: 6 };
+const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, transfer: 3, gameover: 4, wreck: 5, unwreck: 6, engage: 7 };
 
 /** `EVNT` — unit lifecycle + wreck-feature events.
  *
@@ -164,7 +164,9 @@ const EVNT_KIND: Record<string, number> = { spawn: 0, death: 1, finished: 2, tra
  *   (spawn: defID, team, builderID — death: killerUnit, killerTeam, weaponDef
  *    gameover: unitID -1, int1 first winner allyteam, int2 winner count
  *    wreck: unitID = featureID, int1 = reclaimable metal, int2/int3 = x/z elmos
- *    unwreck: unitID = featureID, int1..3 = -1)
+ *    unwreck: unitID = featureID, int1..3 = -1
+ *    engage: unitID = attacker, int1 = victim unitID (rows on victim change
+ *    or 0.6 s keep-alive; viewer TTLs arrows out ~1.2 s past the last row))
  */
 export function encodeEvents(snap: SnapshotData): Uint8Array {
   const w = new ByteWriter();

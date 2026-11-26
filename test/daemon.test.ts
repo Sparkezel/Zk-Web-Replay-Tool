@@ -24,6 +24,11 @@ test("projectile classifier follows the section C policy", () => {
   assert.equal(classifyProjectile(W("bogus_bomb", { type: "AircraftBomb", range: 100 })), 0);
   assert.equal(classifyProjectile(W("anl_fake", { type: "Cannon", range: 50 })), 0);
   assert.equal(classifyProjectile(W("interceptormini", { type: "StarburstLauncher", range: 3000, customParams: { interceptor: "1" } })), 5);
+  /* lightning guns: beams at ANY range - Venom's 240-elmo stunner must
+     not fall through the 900-elmo beam gate */
+  assert.equal(classifyProjectile(W("spideremp_spider", { type: "LightningCannon", range: 240 })), 1);
+  assert.equal(classifyProjectile(W("striderscorpion_multilightning", { type: "LightningCannon", range: 490 })), 1);
+  assert.equal(classifyProjectile(W("striderscorpion_lightning", { type: "LightningCannon", range: 490 })), 1);
 });
 
 test("ZKR line ingest builds snapshot state", () => {

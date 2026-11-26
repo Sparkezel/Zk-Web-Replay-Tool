@@ -22,7 +22,7 @@
   "use strict";
 
   const FPS = 30;
-  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck"];
+  const EVNT_KIND_NAME = ["spawn", "death", "finished", "transfer", "gameover", "wreck", "unwreck", "engage"];
   const PROJ_CLASS_NAME = ["dropped", "beam", "artillery", "nuke", "missile", "interceptor"];
   const LINK_OPEN_SENTINEL = 0xffffffff;
   const STARTBOX_FADE_SEC = 30;
@@ -1210,6 +1210,7 @@
       const mkPath = (seg) => ({
         proID: p.proID, cls: p.cls, clsName: PROJ_CLASS_NAME[p.cls] ?? "dropped",
         weaponDefID: p.weaponDefID, team: p.team, icon: flIcon,
+        wname: wf ? String(wf.name || "").toLowerCase() : "",
         mcol, maoe,
         born: toSec(seg[0].frame),
         end: toSec(seg[seg.length - 1].frame),
@@ -1242,6 +1243,40 @@
           txt: (info.humanName || info.name) + " has begun construction!",
         });
       }
+    }
+
+    /* ---- engagements: who is fighting whom ---------------------------
+       Each "engage" row says: attacker u landed damage on victim v at
+       frame f. The widget emits on victim CHANGE plus a keep-alive every
+       0.6 s, so at any playback time the attacker's current target is
+       the LATEST row at-or-before tm whose keep-alive has not expired:
+       the arrow layer TTLs out ~1.2 s after the last hit (rows refresh
+       twice per TTL, so an ongoing fight never flickers). Rows are
+       shape-sorted per attacker; old artifacts carry no use rows and
+       simply paint nothing. */
+    const ENGAGE_TTL = 1.2;
+    /* the same artillery census as the recorder's ENG_ARTY_DEFS (every ZK
+       unit whose description says artillery): their damage already shows as
+       flight arcs; arrows to targets a map away are noise. Sling, Racketeer,
+       Impaler and Phantom are REINSTATED by user ruling - they are not in
+       this list and draw arrows again, coloured by the viewer's arrow styles.
+       Filtering here too keeps ARTIFACTS RECORDED BEFORE THE WIDGET FIX
+       clean */
+    const ENG_ARTY_DEFS = new Set([
+      "hoverarty", "jumparty", "shiparty", "shipheavyarty", "staticarty",
+      "striderarty", "tankarty", "tankheavyarty", "veharty",
+      "chickenblobber", "chickenr", "chickenspire",
+    ]);
+    const unitDefName = new Map();
+    for (const u of units) unitDefName.set(u.id, u.def);
+    const engagements = {};
+    for (const r of (artifact.evnt ? artifact.evnt.records : [])) {
+      if (r.kind !== "engage") continue;
+      if (ENG_ARTY_DEFS.has(unitDefName.get(r.unitID) ?? "")) continue;
+      (engagements[r.unitID] = engagements[r.unitID] || []).push({ t: toSec(r.frame), v: r.int1 });
+    }
+    for (const k of Object.keys(engagements)) {
+      engagements[k].sort((a, b) => a.t - b.t);
     }
 
     /* Eos / Shockley / Quake / Inferno / Trinity: the stockpiled missile
@@ -1287,6 +1322,15 @@
       ["staticheavyarty_plasma",        { col: "150,190,255", r: 88, dur: 2 }],
       ["striderdante_napalm_rockets",       { col: "255,138,40", r: 84, dur: 3 }],
       ["striderdante_napalm_rockets_salvo", { col: "255,138,40", r: 84, dur: 3 }],
+      /* EMP lightning strikes: the only lightning guns with a real AoE -
+         Venom's stunner (lua aoe 128 -> r 64) and the Scorpion's
+         multi-stunner (lua 160 -> r 80); the rest (Knight/Felon/Paladin/
+         comm lightninggun, aoe 8) stay plain beams. Cyan = EMP */
+      ["spideremp_spider",              { col: "72,214,255", r: 64, dur: 2 }],
+      ["striderscorpion_multilightning", { col: "72,214,255", r: 80, dur: 2 }],
+      /* the Ogre's Banisher rocket salvo (lua aoe 160 -> r 80): the heavy
+         riot tank's splashes deserve their ring */
+      ["tankriot_tawf_banisher",        { col: "255,160,90", r: 80, dur: 2 }],
     ];
     const explosions = [];
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
@@ -1504,7 +1548,7 @@
       "benzcom1": { r: 420 },   // Siege Commander (ESTOR_BUILDINGEX)
       "armcom1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
       "shieldbomb": { r: 384 },   // Snitch (shieldbomb_DEATH)
-      "cloakbomb": { r: 352 },   // Imp (cloakbomb_DEATH)
+      "cloakbomb": { r: 176, col: "72,214,255" },   // Imp (cloakbomb_DEATH, lua aoe 352 -> radius 176 per the Skuttle convention); electric-blue blast, not fire
       "turretsunlance": { r: 340 },   // Sunlance (LARGE_BUILDINGEX)
       "turretriot": { r: 340 },   // Stardust (LARGE_BUILDINGEX)
       "turretaafar": { r: 340 },   // Chainsaw (LARGE_BUILDINGEX)
@@ -1644,6 +1688,12 @@
       /* superweapon detonations (Eos/Shockley/Quake/Inferno + Zenith
          meteors) and ground napalm patches — page paints both on the map */
       explosions, napalm,
+      /* engagements: concise rows keep the attacker->victim arrow layer
+         fed — per ATTACKER, a time-sorted array of {t, v} (victim) rows,
+         emitted on victim change or as a 0.6 s keep-alive while the pair
+         keeps landing hits; engAt(rows, tm) resolves the current target */
+      engagements,
+      ENGAGE_TTL,
       END: Math.max(endTime, metaEnd),
       mapName: artifact.meta ? artifact.meta.map.name : "",
       gameVersion: artifact.meta ? artifact.meta.gameVersion : "",
@@ -1668,6 +1718,23 @@
     const fw = Math.min(cw, ch * ar);
     const fh = Math.min(ch, cw / ar);
     return { ox: (cw - fw) / 2, oy: (ch - fh) / 2, fw, fh };
+  }
+
+  /** Resolve an attacker's CURRENT target at playback time tm: the latest
+   *  engagement row at-or-before tm, when the keep-alive has not expired
+   *  (ttl, default 1.2 sim-seconds — the half-life of "still fighting"
+   *  between the widget's 0.6 s refreshes). Returns the row {t, v} or
+   *  null before the first recorded hit / once the fight went quiet.
+   *  Binary search over shape-sorted per-attacker rows — O(log n) per
+   *  attacker per frame, no per-frame state. */
+  function engAt(rows, tm, ttl) {
+    let lo = 0, hi = rows.length - 1, cand = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].t <= tm) { cand = mid; lo = mid + 1; } else hi = mid - 1;
+    }
+    if (cand < 0 || tm - rows[cand].t > ttl) return null;
+    return rows[cand];
   }
 
   /** Sample a unit track at time tm — coordinate + hp + build + cloak state
@@ -1725,5 +1792,6 @@
     commLevelOfDef, commValueOfDef, COMM_MORPH_BASE_COSTS,
     FPS, PROJ_CLASS_NAME, EVNT_KIND_NAME, STARTBOX_FADE_SEC,
     MORPH_PAIR_WINDOW_SEC,
+    engAt,
   };
 })(typeof window !== "undefined" ? window : globalThis);

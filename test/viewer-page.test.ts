@@ -212,6 +212,15 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
     `artifact model must load (simState says: ${byId("simState").textContent})`);
   assert.ok(state.calls > 1000, `canvas must do real drawing (got ${state.calls} calls)`);
   assert.ok(state.raf.length > 0, "the rAF loop must keep scheduling frames");
+  /* frame profiler: drawFrame stamps per-layer segments and profUI renders
+     them into the perf panel after its 700 ms window (the fake clock ran
+     ~10 s of playback above, so the window has surely lapsed; inside the
+     harness each frame's now() calls return the same clock value, so the
+     segment times are all 0 ms - the assert checks the PANEL WORKS, not
+     the timings) */
+  assert.match(byId("perf").innerHTML, /renderer [\d.]+ fps · rAF \d+\/s · avg frame [\d.]+ ms/,
+    "profiler renders fps, rAF rate and the avg frame time");
+  assert.ok(typeof byId("diag").innerHTML !== "undefined", "diagnostics panel element wired");
 
   // seek mid-game: unit 2 (ghost: last sample 6.7s, no death event) and the
   // alive units must all draw — the pre-fix page threw right here
@@ -237,9 +246,11 @@ test("page renders a packed artifact: play + seek survive, units are drawn", asy
   pick.value = 1;
   (pick.onchange as () => void).call(pick);
   // the switch re-runs the full fetch -> streamed inflate -> installModel
-  // chain; wait for it rather than racing a fixed 20 ms sleep
-  await waitFor(() => /battle2\.zkr/.test(String(byId("chip").textContent)));
-  assert.match(byId("chip").textContent, /battle2\.zkr/, "switching installs the second artifact");
+  // chain; wait for it rather than racing a fixed 20 ms sleep. The second
+  // catalog entry is the Otago 1 Hz capture (battle4.zkr) - the Otago pair
+  // sits together and Comet Catcher is parked until the decoder rewrite
+  await waitFor(() => /battle4\.zkr/.test(String(byId("chip").textContent)));
+  assert.match(byId("chip").textContent, /battle4\.zkr/, "switching installs the second artifact");
   assert.match(String(byId("infoDur").textContent), /minutes/, "battle-result duration follows the loaded model");
 });
 
