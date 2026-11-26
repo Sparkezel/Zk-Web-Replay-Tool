@@ -63,11 +63,12 @@ export function parseDemo(demoBytes: Uint8Array, opts: ParseOptions = {}): Parse
 
   const teamStats = new Map<number, TeamStatistics[]>();
   if (complete && pos + 4 * header.numTeams <= demoBytes.byteLength) {
-    // counts array: numTeams × u32 (as written by DemoRecorder::WriteTeamStats)
-    let cpos = pos;
+    // DemoRecorder::WriteTeamStats writes ALL counts first (numTeams × u32),
+    // then every team's records in team order
+    const counts = new DataView(demoBytes.buffer, demoBytes.byteOffset + pos, 4 * header.numTeams);
+    let cpos = pos + 4 * header.numTeams;
     for (let team = 0; team < header.numTeams; team++) {
-      const count = new DataView(demoBytes.buffer, demoBytes.byteOffset + cpos, 4).getUint32(0, true);
-      cpos += 4;
+      const count = counts.getUint32(4 * team, true);
       const hist: TeamStatistics[] = [];
       for (let k = 0; k < count && cpos + TEAM_STAT_ELEM_SIZE <= demoBytes.byteLength; k++) {
         hist.push(parseTeamStat(demoBytes.subarray(cpos, cpos + TEAM_STAT_ELEM_SIZE)));

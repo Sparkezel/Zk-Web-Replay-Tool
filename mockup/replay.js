@@ -1843,9 +1843,12 @@
       lampX: l.lampQX, lampZ: l.lampQZ,
     }));
 
+    /* demo team stats carry the engine's SIM frame (Team.cpp: frame =
+       gs->frameNum), so they run on the play clock like the resim
+       sections - no pick-phase anchor */
     const ecoPts = [];
     for (const t of (artifact.eco ? artifact.eco.teams : [])) {
-      ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toDemo(s.frame), s.metalProduced]) });
+      ecoPts.push({ team: t.team, pts: t.stats.map((s) => [toPlay(s.frame), s.metalProduced]) });
     }
 
     /* resolved votes leave a line in the feed history; pre-game lobby polls

@@ -452,6 +452,25 @@ test("artifactToModel anchors DEMO data at STARTPLAYING, keeps resim on the play
   assert.equal(model.mapH, 16384);
 });
 
+test("demo team stats stay on the play clock (engine sim frames, no pick-phase anchor)", () => {
+  /* TeamStatistics.frame is gs->frameNum: 0 at play start, like the resim
+     sections, while the pick phase shifts only demo-stream rows */
+  const artifact = {
+    containerVersion: 1, sections: [],
+    meta: { schema: 1, gameTime: 30, map: { name: "Otago 1.4", dims: [16384, 16384] } },
+    macro: { startPlayingFrame: 4799 },
+    roster: { players: [], teams: [], allyteams: [], modoptions: null },
+    unitDefs: null, weaponDefs: null, chat: null, psta: null, link: null, proj: null,
+    eco: { period: 15, teams: [{ team: 0, stats: [
+      { frame: 0, metalProduced: 0 }, { frame: 450, metalProduced: 120 }, { frame: 900, metalProduced: 300 },
+    ] }] },
+    evnt: { records: [], maxFrame: 0 },
+    pos: { units: [], maxFrame: 0 },
+  };
+  const model = ZkrReplay.artifactToModel(artifact as never);
+  assert.deepEqual(model.ecoPts[0]!.pts, [[0, 0], [15, 120], [30, 300]]);
+});
+
 test("parseDemoStream anchors at the STARTPLAYING with its countdown elapsed", () => {
   const { parseDemoStream } = require("../dist/demo/stream.js");
   // chunk layout: [f32 modGameTime][u32 length][type u8][payload]
