@@ -987,8 +987,12 @@ function draw(model,tm){profSeg("backdrop");
       if(!pos)return;
       var sx=fit.ox+VIEW.px+pos.x*W*VIEW.z,sy=fit.oy+VIEW.py+pos.y*H*VIEW.z;
       if(Math.hypot(PTR[0]-sx,PTR[1]-sy)<=Math.max(13*VIEW.z,22))hoveredAnti=u;
+      else if(Math.hypot(PTR[0]-sx,PTR[1]-sy)<=90*VIEW.z)
+        diag("anti-hover","near-miss on launcher #"+u.id+": pointer ("+Math.round(PTR[0])+","+Math.round(PTR[1])+") device px, icon at ("+Math.round(sx)+","+Math.round(sy)+") - "+Math.round(Math.hypot(PTR[0]-sx,PTR[1]-sy))+" px apart");
     });
   }
+  /* debug/test exposure (hover state, not art) */
+  window._antiHover=hoveredAnti;
   /* alive-at-tm launchers grouped per ally team */
   var antiByAlly={},antiGroups=[];
   (model.antiNukeUnits||[]).forEach(function(u){
@@ -1301,12 +1305,14 @@ function draw(model,tm){profSeg("backdrop");
       for(var si=0;si<u.states.n;si++){if(u.states.t[si]>tm)break;b=u.states.b[si];sl=u.states.sl[si];}
     }
     /* the whole ICON flashes (never a translucent circle around it — that
-       reads as a fire effect): orange while burning, and the antinuke's
-       icon flashes red while the launcher is EMP-shocked (it cannot
-       intercept in that state) */
+       reads as a fire effect): orange while burning, blue while
+       EMP-shocked (the game's own stun rendering is blue), and the
+       antinuke's icon flashes red instead — a shocked launcher cannot
+       intercept, a distinctly alarmed state */
     var flash=null;
     if((b&1)!==0&&Math.floor(wallNow/150)%2===0)flash="#ff7832";
     else if(u.antiNuke>0&&(b&4)!==0&&Math.floor(wallNow/180)%2===0)flash="#ff3228";
+    else if((b&4)!==0&&Math.floor(wallNow/180)%2===0)flash="#5db3ff";
     var mCol=flash||col;
     var img=u.icon?ZkrReplay.iconFor(u.icon):null;
     /* every unit renders through its own icon — the antinuke included
@@ -1666,10 +1672,15 @@ function clampView(fit,cw,ch){
   if(mh<=ch)VIEW.py=(ch-mh)/2-fit.oy;
   else VIEW.py=Math.max(ch-mh-fit.oy,Math.min(-fit.oy,VIEW.py));
 }
-function cssToDevice(x){
+/* css -> device px, BOTH axes: the old single-axis helper subtracted
+   rect.left from clientY too and scaled it by the WIDTH ratio, so every
+   pointer sat (canvasTop - canvasLeft)*DPR device px BELOW where the
+   cursor actually was - the antinuke hover hitbox floated far below
+   the icon, and wheel zoom anchored off-cursor by the same offset */
+function cssToDevice(x,y){
   var rect=cv.getBoundingClientRect?cv.getBoundingClientRect():{left:0,top:0,width:cv.width,height:cv.height};
-  if(!rect||!rect.width)return x*(cv.width/1000);
-  return (x-rect.left)*cv.width/rect.width;
+  if(!rect||!rect.width)return [x*(cv.width/1000),y*(cv.height/1000)];
+  return [(x-rect.left)*cv.width/rect.width,(y-rect.top)*cv.height/rect.height];
 }
 function viewAt(sx,sy){ /* device px -> unzoomed fitted-map px */
   var fit=lastFit||{ox:0,oy:0};
@@ -1689,20 +1700,23 @@ function zoomAt(sx,sy,factor){
   var ptrs={},lastPinch=0,drag=null;
   cv.addEventListener("wheel",function(e){
     e.preventDefault();
-    zoomAt(cssToDevice(e.clientX),cssToDevice(e.clientY),e.deltaY<0?1.18:1/1.18);
+    var wz=cssToDevice(e.clientX,e.clientY);zoomAt(wz[0],wz[1],e.deltaY<0?1.18:1/1.18);
   },{passive:false});
   cv.addEventListener("dblclick",function(e){resetView();drawFrame();});
   cv.addEventListener("pointerdown",function(e){
-    ptrs[e.pointerId]=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+    ptrs[e.pointerId]=cssToDevice(e.clientX,e.clientY);
     if(Object.keys(ptrs).length===2){
       var k=Object.keys(ptrs);
       lastPinch=Math.hypot(ptrs[k[0]][0]-ptrs[k[1]][0],ptrs[k[0]][1]-ptrs[k[1]][1]);
-    }else drag=[e.pointerId,cssToDevice(e.clientX),cssToDevice(e.clientY),VIEW.px,VIEW.py];
+    }else{
+      var dp=cssToDevice(e.clientX,e.clientY);
+      drag=[e.pointerId,dp[0],dp[1],VIEW.px,VIEW.py];
+    }
     e.preventDefault();
   },{passive:false});
   cv.addEventListener("pointermove",function(e){
     if(!(e.pointerId in ptrs))return;
-    var cur=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+    var cur=cssToDevice(e.clientX,e.clientY);
     ptrs[e.pointerId]=cur;
     if(Object.keys(ptrs).length===2&&lastPinch>0){
       var k=Object.keys(ptrs);
@@ -1728,7 +1742,7 @@ function zoomAt(sx,sy,factor){
    draws, and the antinuke spotlight follows the cursor. */
 var PTR=null;
 cv.addEventListener("pointermove",function(e){
-  PTR=[cssToDevice(e.clientX),cssToDevice(e.clientY)];
+  PTR=cssToDevice(e.clientX,e.clientY);
   if(!playing)drawFrame();
 });
 cv.addEventListener("pointerleave",function(){PTR=null;if(!playing)drawFrame();});

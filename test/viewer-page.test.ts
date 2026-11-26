@@ -363,3 +363,51 @@ test("#48: same-side antinukes merge into one coverage per ally team, attributed
   assert.equal(gs[0]!.working.length, 1);
   assert.equal(gs[0]!.emp, true);
 });
+
+test("antinuke hover: pointer css->device chain lands the hit test on the icon (#48 follow-up)", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-page-hover-"));
+  const artifact = buildArtifact(dir);
+  const page = await runPage(artifact);
+  const g: Record<string, any> = globalThis;
+  /* a real browser: the canvas sits at a page offset and the device pixel
+     ratio is not 1 - cssToDevice must go through getBoundingClientRect */
+  const cv = page.byId("replay");
+  cv.getBoundingClientRect = () => ({ left: 5, top: 50, width: 800, height: 460 });
+  g.devicePixelRatio = 1.25;
+
+  const tl = page.byId("timeline");
+  tl.value = 10;
+  (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 10 } });
+
+  const u = g.MODEL.antiNukeUnits.find((x: { id: number }) => x.id === 4);
+  const pos = u.posAt(10);
+  const fit = g.lastFit;
+  const iconDevX = fit.ox + g.VIEW.px + pos.x * fit.fw * g.VIEW.z;
+  const iconDevY = fit.oy + g.VIEW.py + pos.y * fit.fh * g.VIEW.z;
+  // the client coords a browser would report for a cursor ON the icon
+  const clientX = 5 + iconDevX / 1.25, clientY = 50 + iconDevY / 1.25;
+  g.PTR = g.cssToDevice(clientX, clientY);
+  assert.equal(g.PTR[0], iconDevX, "cssToDevice maps the cursor to the icon's device px (DPR 1.25)");
+  assert.equal(g.PTR[1], iconDevY, "the Y axis maps through rect.top and the height ratio (the old helper subtracted rect.left from clientY)");
+  g.drawFrame();
+  assert.equal(g._antiHover && g._antiHover.id, 4,
+    "pointing exactly at the icon's device position hovers it");
+
+  // zoomed + panned: the same chain must still land on the icon
+  g.VIEW.z = 3; g.VIEW.px = -400; g.VIEW.py = -150;
+  g.drawFrame();
+  const zX = fit.ox + g.VIEW.px + pos.x * fit.fw * g.VIEW.z;
+  const zY = fit.oy + g.VIEW.py + pos.y * fit.fh * g.VIEW.z;
+  g.PTR = g.cssToDevice(5 + zX / 1.25, 50 + zY / 1.25);
+  g.drawFrame();
+  assert.equal(g._antiHover && g._antiHover.id, 4,
+    "the hit test follows the icon through zoom and pan");
+
+  // far away: no hover
+  g.PTR = g.cssToDevice(700, 400);
+  g.drawFrame();
+  assert.equal(g._antiHover, null, "a distant pointer does not hover");
+
+  g.PTR = null;
+  g.devicePixelRatio = undefined;
+});
