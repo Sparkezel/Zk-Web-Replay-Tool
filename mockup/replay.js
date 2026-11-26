@@ -1330,6 +1330,10 @@
        artifacts packed before the daemon-side fix render correctly too. */
     const PROJ_REUSE_GAP_FRAMES = 18;
     const projectiles = [];
+    /* where each hovering meteor (zenith_meteor_float) appears: a dropped
+       meteor the Zenith takes back when its power returns continues as a
+       new hovering meteor from that spot (RegainControlOfMeteors) */
+    const floatStarts = [];
     /* the sent strategic missiles get ZK's own incoming-strike visualisa-
      * tion (target circle + coloured head dot): Eos red, Shockley blue,
      * Zeno purple, Quake green, Inferno orange - Trinity shares Eos's
@@ -1358,7 +1362,10 @@
       /* the Zenith's hovering stock (zenith_meteor_float, up to 300 per
          Zenith) is not a shot: a meteor shows only once the Zenith fires
          it and it becomes zenith_meteor_aim, then zenith_meteor (#46) */
-      if (wf && String(wf.name || "").toLowerCase() === "zenith_meteor_float") continue;
+      if (wf && String(wf.name || "").toLowerCase() === "zenith_meteor_float") {
+        if (p.samples.n) floatStarts.push({ t: p.samples.t[0], x: p.samples.x[0], z: p.samples.z[0] });
+        continue;
+      }
       let flIcon;
       let mcol;
       let maoe = 0;
@@ -1548,6 +1555,25 @@
        power or dies); the aim stage is swapped for the shot in mid-air
        (Zero-K scripts/zenith.lua, TransformMeteor) */
     const ZENITH_IMPACT_DEFS = new Set(["zenith_meteor", "zenith_meteor_uncontrolled"]);
+    /* a dropped meteor only lands if the Zenith did not take it back: a
+       taken-back one ends where a new hovering meteor starts */
+    const meteorRefloated = (p) => {
+      const n = p.path.n;
+      return floatStarts.some((f) => Math.abs(f.t - p.end) <= 0.2 &&
+        Math.hypot((f.x - p.path.x[n - 1]) * wmw, (f.z - p.path.z[n - 1]) * wmh) <= 64);
+    };
+    /* the recorder samples every 6th frame, so a falling meteor's last
+       sample is up to one probe step short of where it lands (Comet
+       Catcher: median 218 elmos per step); half a step further is the
+       expected landing point */
+    const meteorImpact = (p) => {
+      const n = p.path.n;
+      if (n < 2) return { x: p.path.x[n - 1], z: p.path.z[n - 1] };
+      return {
+        x: p.path.x[n - 1] + (p.path.x[n - 1] - p.path.x[n - 2]) * 0.5,
+        z: p.path.z[n - 1] + (p.path.z[n - 1] - p.path.z[n - 2]) * 0.5,
+      };
+    };
     /* Ground napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
        which doubles as the fallback for artifacts recorded before the nd
@@ -1644,8 +1670,11 @@
       if (ex && !p.intercepted) {
         explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: (w.aoe ?? 0) > 0 ? w.aoe : ex[1].r, col: ex[1].col, fade: ex[1].fade, dur: ex[1].dur, fx: ex[1].fx === true });
       }
-      if (ZENITH_IMPACT_DEFS.has(String(w.name || "").toLowerCase()) && (w.aoe ?? 0) > 0) {
-        explosions.push({ t: imp.t, x: imp.x, y: imp.z, r: w.aoe, col: "168,96,255", fade: "normal", dur: 8 });
+      const meteorName = String(w.name || "").toLowerCase();
+      if (ZENITH_IMPACT_DEFS.has(meteorName) && (w.aoe ?? 0) > 0 &&
+          !(meteorName === "zenith_meteor_uncontrolled" && meteorRefloated(p))) {
+        const hit = meteorImpact(p);
+        explosions.push({ t: imp.t, x: hit.x, y: hit.z, r: w.aoe, col: "255,150,90", fade: "normal", dur: 8 });
       }
       const ib = IMPACT_BLAST_DEFS.find(([n]) => String(w.name || "").toLowerCase() === n);
       if (ib && !p.intercepted) {
