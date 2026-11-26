@@ -261,6 +261,11 @@ end
 -- lifecycle is POLLED once per second over Spring.GetAllFeatures() - new
 -- wreck-named features are announced, disappeared ones uwrk'd. Where the
 -- callins do fire they share the same registry and nothing double-emits.
+-- The registry value is the last EMITTED {x, z}: the poll also re-emits a
+-- wrk row for any KNOWN feature that has moved >= 4 elmos since its last
+-- row, so falling/tumbling aircraft wrecks (the engine spawns the feature
+-- at the death spot in the air, then it falls and can slide) leave a short
+-- position trail instead of a dot parked at the point of death.
 local wreckFeatures = {}
 local wreckDefCache = {}
 
@@ -288,12 +293,17 @@ local function emitWreck(featureID, fdid)
   emit('{"t":"wrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID ..
     ',"m":' .. num(fd and fd.metal) ..
     ',"x":' .. num(x) .. ',"z":' .. num(z) .. '}')
+  -- the registry carries the last EMITTED position: the movement poll
+  -- below compares against it, so a wreck row lands only when the
+  -- feature actually moved since the last row (aircraft wrecks fall
+  -- and tumble for a second or two; ground wrecks never move and
+  -- never re-emit)
+  wreckFeatures[featureID] = { x = x or 0, z = z or 0 }
 end
 
 function widget:FeatureCreated(featureID)
   local fdid = Spring.GetFeatureDefID(featureID)
   if not isWreckDefID(fdid) or wreckFeatures[featureID] then return end
-  wreckFeatures[featureID] = true
   emitWreck(featureID, fdid)
 end
 
@@ -372,8 +382,19 @@ local function pollWreckFeatures()
     if not wreckFeatures[fid] then
       local fdid = Spring.GetFeatureDefID(fid)
       if isWreckDefID(fdid) then
-        wreckFeatures[fid] = true
         emitWreck(fid, fdid)
+      end
+    else
+      -- movement poll: a wreck feature that MOVED since its last row
+      -- re-emits one (falling aircraft wrecks tumble for a second or
+      -- two before settling; ground wrecks never move, so the common
+      -- case costs one GetFeaturePosition per feature per second and
+      -- emits nothing). Threshold 4 elmos absorbs the num()
+      -- quantization and feature-origin jitter
+      local x, _, z = Spring.GetFeaturePosition(fid)
+      local last = wreckFeatures[fid]
+      if x and last and (math.abs(x - last.x) >= 4 or math.abs(z - last.z) >= 4) then
+        emitWreck(fid, Spring.GetFeatureDefID(fid))
       end
     end
   end
