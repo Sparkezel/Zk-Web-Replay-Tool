@@ -406,14 +406,41 @@ function hatchPattern(rgb){
   return hatchCache[rgb]||("rgba("+rgb+",.05)");
 }
 
-/* antinuke tint: the FIRST roster player of the team — ZK itself colours
-   a team by its first player, so coverage never drifts from the player
-   rows; on 1:1 teams (today's games) it is the team's own colour, and
-   the pinning is the assurance for FFA replays where team and player
-   lists can diverge */
-function antiColorStr(model,t){
-  var ps=(model.players||[]).filter(function(p){return p.team===t;});
-  return teamColorStr(ps.length?ps[0].team:t);
+/* offscreen scratch for the merged coverage compositing (#48): the union
+   border (fill + destination-out of the shrunk union) and the EMP blink
+   mask (all-circles minus working-circles) both need destination-out,
+   which on the main canvas would punch holes through the map beneath.
+   One scratch, sized to the fitted map rect at device resolution and
+   reused per frame per team pass; null when the environment cannot
+   provide a second canvas context (then the fallback path draws). */
+var antiScratchCv=null;
+function antiScratch(w,h){
+  if(!antiScratchCv){
+    try{
+      var cv=document.createElement("canvas");
+      if(!cv||!cv.getContext)return null;
+      var g=cv.getContext&&cv.getContext("2d");
+      if(!g)return null;
+      cv._ctx=g;antiScratchCv=cv;
+    }catch(e){return null;}
+  }
+  if(antiScratchCv.width!==w)antiScratchCv.width=w;
+  if(antiScratchCv.height!==h)antiScratchCv.height=h;
+  return antiScratchCv;
+}
+
+/* antinuke tint (#48): the HIGHEST-elo roster player of the ally team —
+   the merged side coverage is attributed to the side's strongest player
+   ("the designated defender"), so every launcher of the side merges
+   under one colour; on 1:1 teams this is simply the team colour, and
+   the elo pin is the assurance for FFA / shared-side replays where the
+   launchers belong to players with diverging colours */
+function antiAllyColor(model,ally,fallbackTeam){
+  var ps=(model.players||[]).filter(function(p){
+    return (p.ally!==undefined?p.ally:allyOfTeam(model,p.team))===ally;
+  });
+  ps.sort(function(a,b){return (b.elo||0)-(a.elo||0);});
+  return teamColorStr(ps.length?ps[0].team:(fallbackTeam!==undefined?fallbackTeam:ally));
 }
 /* which side a team fights on (teamMeta carries ally per team; teams with
    no meta fall back to their own number) */
@@ -943,13 +970,15 @@ function draw(model,tm){profSeg("backdrop");
   profSeg("coverage");
   // anti-nuke coverage: always visible once the launcher completes (ZK's
   // own coverage circle reads the same nuke_coverage value, 2500 elmos).
-  // D+B display: the whole hatch + border uses the team's FIRST-PLAYER
-  // tint; hovering a launcher spotlights its range as a white circle. An
-  // EMP-shocked launcher cannot intercept: the DISABLED part of its range
-  // (whatever other still-working antinukes of the same side do NOT
-  // keep covered) blinks red hatched, 0.2 s on / 0.8 s off while playing;
-  // the part that stays covered keeps its working coverage view through
-  // those launchers' own circles.
+  // #48: all launchers of one ALLY TEAM merge into a single coverage
+  // shape - one outer border and one hatch interior with no per-unit
+  // seams - attributed to the side's highest-elo player (the "designated
+  // defender"; on 1:1 teams that is just the team colour). Hovering a
+  // launcher still spotlights its own range as a white circle (D). An
+  // EMP-shocked launcher cannot intercept: the part of the side's range
+  // that NO still-working launcher keeps covered blinks red-hatched,
+  // 0.2 s on / 0.8 s off while playing (paused shows it steady so a
+  // pause never hides the hole); the still-covered part never blinks.
   var hoveredAnti=null;
   if(PTR){
     (model.antiNukeUnits||[]).forEach(function(u){
@@ -960,73 +989,112 @@ function draw(model,tm){profSeg("backdrop");
       if(Math.hypot(PTR[0]-sx,PTR[1]-sy)<=Math.max(13*VIEW.z,22))hoveredAnti=u;
     });
   }
+  /* alive-at-tm launchers grouped per ally team */
+  var antiByAlly={},antiGroups=[];
   (model.antiNukeUnits||[]).forEach(function(u){
     var pos=u.posAt(tm);
     if(!pos||(pos.bd!==undefined&&pos.bd<1))return;
-    var b=0;
-    for(var si=0;si<(u.states?u.states.n:0);si++){if(u.states.t[si]>tm)break;b=u.states.b[si];}
-    var anned=(b&4)!==0;
     var rx=u.antiNuke*pxPerElmo;
     if(rx<3)return;
-    var ax=pos.x*W,ay=pos.y*H;
-    var col=antiColorStr(model,u.t);
-    if(anned){
-      /* blink 0.2 s on / 0.8 s off (wall clock; while playing - paused
-         shows the disabled region steady so a pause never hides it) */
-      if(playing&&wallNow%1000>=200)return;
-      /* the DISABLED region: this circle minus every other same-side
-         still-working antinuke circle (those keep covering their overlap
-         and draw their own hatch over it) */
-      var working=[];
-      (model.antiNukeUnits||[]).forEach(function(v){
-        if(v===u)return;
-        var vp=v.posAt(tm);
-        if(!vp||(vp.bd!==undefined&&vp.bd<1))return;
-        var vb=0;
-        for(var si2=0;si2<(v.states?v.states.n:0);si2++){if(v.states.t[si2]>tm)break;vb=v.states.b[si2];}
-        if((vb&4)!==0)return;
-        if(allyOfTeam(model,v.t)!==allyOfTeam(model,u.t))return;
-        working.push({x:vp.x*W,y:vp.y*H,r:v.antiNuke*pxPerElmo});
-      });
-      cx.save();
-      cx.beginPath();
-      cx.moveTo(ax+rx,ay);cx.arc(ax,ay,rx,0,7);
-      working.forEach(function(o){
-        if(o.r<3)return;
-        cx.moveTo(o.x+o.r,o.y);cx.arc(o.x,o.y,o.r,0,7);
-      });
-      /* even-odd subtraction: plainly wrong in a >2-circle triple
-         overlap (a point inside three circles flips back to "enabled") -
-         real coverage rarely stacks more than two deep; accepted */
-      cx.clip("evenodd");
-      cx.fillStyle=hatchPattern("255,50,40");
-      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
-      cx.strokeStyle="rgba(255,50,40,.7)";
-      cx.lineWidth=1.4;
-      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.stroke();
-      cx.lineWidth=1;
-      cx.restore();
-    }else{
-      /* thinly HATCHED interior (sparse 1px diagonals, no translucent
-         wash - several overlapping coverages stay readable) + a plain
-         border, in the team's first-player tint */
-      cx.fillStyle=hatchPattern(col);
-      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
-      cx.strokeStyle="rgba("+col+",.7)";
-      cx.lineWidth=1.4;
-      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.stroke();
-      cx.lineWidth=1;
+    var b=0;
+    for(var si=0;si<(u.states?u.states.n:0);si++){if(u.states.t[si]>tm)break;b=u.states.b[si];}
+    var ally=allyOfTeam(model,u.t);
+    var g=antiByAlly[ally];
+    if(!g){
+      g=antiByAlly[ally]={ally:ally,list:[],working:[],emp:false,
+        col:antiAllyColor(model,ally,u.t)};
+      antiGroups.push(g);
     }
-    /* hover spotlight (D): this launcher's range as a white circle */
-    if(hoveredAnti===u){
-      cx.strokeStyle="rgba(255,255,255,.9)";
-      cx.lineWidth=1.6;
-      cx.fillStyle="rgba(255,255,255,.06)";
-      cx.beginPath();cx.arc(ax,ay,rx,0,7);cx.fill();
-      cx.stroke();
-      cx.lineWidth=1;
+    g.list.push({x:pos.x*W,y:pos.y*H,r:rx});
+    if((b&4)!==0)g.emp=true;
+    else g.working.push({x:pos.x*W,y:pos.y*H,r:rx});
+  });
+  /* exposed for the page tests (grouping/attribution, not art) */
+  window._antiGroups=antiGroups;
+  function antiUnion(c2d,arr,inset){
+    c2d.beginPath();
+    arr.forEach(function(c){
+      var rr=Math.max(0.1,c.r-inset);
+      c2d.moveTo(c.x+rr,c.y);
+      c2d.arc(c.x,c.y,rr,0,7);
+    });
+  }
+  var ANTI_BW=1.4;
+  var sc=antiScratch(Math.max(1,Math.round(W*DPR)),Math.max(1,Math.round(H*DPR)));
+  antiGroups.forEach(function(g){
+    if(sc&&sc._ctx){
+      var sx=sc._ctx;
+      sx.setTransform(DPR,0,0,DPR,0,0);
+      /* steady pass: ONE merged shape of the side's WORKING coverage -
+         opaque union fill, then the shrunk union punched out with
+         destination-out leaves exactly a border along the OUTER
+         boundary of the union (arcs inside the union die inside the
+         shrunk fill), then the interior hatch */
+      if(g.working.length){
+        sx.clearRect(0,0,W,H);
+        sx.globalCompositeOperation="source-over";
+        antiUnion(sx,g.working,0);
+        sx.fillStyle="rgb("+g.col+")";
+        sx.fill();
+        sx.globalCompositeOperation="destination-out";
+        antiUnion(sx,g.working,ANTI_BW);
+        sx.fillStyle="#000";
+        sx.fill();
+        sx.globalCompositeOperation="source-over";
+        antiUnion(sx,g.working,ANTI_BW);
+        sx.fillStyle=hatchPattern(g.col);
+        sx.fill();
+        cx.drawImage(sc,0,0,W,H);
+      }
+      /* blink pass: the DISABLED region = every circle minus the working
+         circles (a lone EMP'd launcher = its whole range; overlapping
+         coverages = only the true gap), red-hatched, 0.2 s on / 0.8 s
+         off while playing; paused draws it steady so the hole is never
+         hidden by a pause */
+      if(g.emp&&(wallNow%1000<200||!playing)){
+        sx.clearRect(0,0,W,H);
+        sx.globalCompositeOperation="source-over";
+        antiUnion(sx,g.list,0);
+        sx.fillStyle=hatchPattern("255,50,40");
+        sx.fill();
+        if(g.working.length){
+          sx.globalCompositeOperation="destination-out";
+          antiUnion(sx,g.working,0);
+          sx.fillStyle="#000";
+          sx.fill();
+          sx.globalCompositeOperation="source-over";
+        }
+        cx.drawImage(sc,0,0,W,H);
+      }
+    }else{
+      /* no scratch context (headless stubs): plain per-circle draws so
+         the paths still execute - overlap doubling is the price */
+      (g.emp?g.list:(g.working.length?g.working:g.list)).forEach(function(c){
+        cx.fillStyle=hatchPattern(g.col);
+        cx.beginPath();cx.arc(c.x,c.y,c.r,0,7);cx.fill();
+        cx.strokeStyle="rgba("+g.col+",.7)";
+        cx.lineWidth=ANTI_BW;
+        cx.beginPath();cx.arc(c.x,c.y,c.r,0,7);cx.stroke();
+        cx.lineWidth=1;
+      });
     }
   });
+  /* hover spotlight (D): the launcher's own range as a white circle */
+  if(hoveredAnti){
+    var hpos=hoveredAnti.posAt(tm);
+    if(hpos&&(hpos.bd===undefined||hpos.bd>=1)){
+      var hrx=hoveredAnti.antiNuke*pxPerElmo;
+      if(hrx>=3){
+        var hx2=hpos.x*W,hy2=hpos.y*H;
+        cx.strokeStyle="rgba(255,255,255,.9)";
+        cx.lineWidth=1.6;
+        cx.fillStyle="rgba(255,255,255,.06)";
+        cx.beginPath();cx.arc(hx2,hy2,hrx,0,7);cx.fill();cx.stroke();
+        cx.lineWidth=1;
+      }
+    }
+  }
+
   profSeg("zones");
   // wreck zones: independent of the dots (metal spots are useful even with
   // the dots hidden) - hull around each cluster + live metal per spot

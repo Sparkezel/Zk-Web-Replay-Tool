@@ -37,6 +37,18 @@ function pageSnapshot() {
       [3, { unitID: 3, defID: 12, samples: [
         { frame: 6, x: 2048, z: 8192, hp: 255, build: 255 },
       ] }],
+      /* #48 merge fixture: TWO antinukes on the SAME SIDE (teams 0 and 2,
+         both allyteam 0) - unit 4 is EMP-shocked from frame 100 on, unit 5
+         keeps working; the merged coverage must attribute to the side's
+         highest-elo player (Charlie, elo 2000, team 2) */
+      [4, { unitID: 4, defID: 12, samples: [
+        { frame: 6, x: 4096, z: 2048, hp: 255, build: 255 },
+        { frame: 2700, x: 4096, z: 2048, hp: 255, build: 255 },
+      ] }],
+      [5, { unitID: 5, defID: 12, samples: [
+        { frame: 6, x: 2304, z: 2304, hp: 255, build: 255 },
+        { frame: 2700, x: 2304, z: 2304, hp: 255, build: 255 },
+      ] }],
     ]),
     unitDefs: new Map([
       [10, { defID: 10, name: "fencer", humanName: "Fencer", metalCost: 220, health: 900, canMove: true, iconType: "moduleshare" }],
@@ -49,6 +61,8 @@ function pageSnapshot() {
       { kind: "spawn", frame: 6, unitID: 2, int1: 11, int2: 0, int3: -1 },
       { kind: "spawn", frame: 6, unitID: 3, int1: 12, int2: 1, int3: -1 },
       { kind: "death", frame: 1500, unitID: 3, int1: 1, int2: 0, int3: 42 },
+      { kind: "spawn", frame: 6, unitID: 4, int1: 12, int2: 0, int3: -1 },
+      { kind: "spawn", frame: 6, unitID: 5, int1: 12, int2: 2, int3: -1 },
     ],
     gameOvers: [{ frame: 2700, winners: [0] }],
     projectiles: new Map(),
@@ -63,8 +77,20 @@ function pageSnapshot() {
   };
 }
 
+function pageRoster() {
+  return {
+    players: [
+      { name: "Alpha", team: 0, elo: 1200, spectator: false, script: "player0" },
+      { name: "Bravo", team: 1, elo: 1500, spectator: false, script: "player1" },
+      { name: "Charlie", team: 2, elo: 2000, spectator: false, script: "player2" },
+    ],
+    teams: [{ num: 0, allyteam: 0 }, { num: 1, allyteam: 1 }, { num: 2, allyteam: 0 }],
+    allyteams: [{ num: 0 }, { num: 1 }],
+    modoptions: {}, mapoptions: {},
+  };
+}
 function buildArtifact(dir: string): string {
-  const zkr = buildZkrFromResim(pageSnapshot(), { projectiles: "heavy", posRate: 1 });
+  const zkr = buildZkrFromResim(pageSnapshot(), { projectiles: "heavy", posRate: 1, roster: pageRoster() });
   const p = path.join(dir, "battle.zkr");
   writeFileSync(p, zkr);
   return p;
@@ -294,4 +320,46 @@ test("healthv2 shading + wreck markers draw without breaking the loop", async ()
   tl.value = 55;
   (tl.oninput as (e: unknown) => void).call(tl, { target: { value: 55 } });
   assert.ok(state.raf.length > 0, "rAF loop still alive");
+});
+
+test("#48: same-side antinukes merge into one coverage per ally team, attributed to the top-elo player", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-page-anti-"));
+  const artifact = buildArtifact(dir);
+  const { byId } = await runPage(artifact);
+  const tl = byId("timeline");
+  const seek = (v: number) => {
+    tl.value = v;
+    (tl.oninput as (e: unknown) => void).call(tl, { target: { value: v } });
+  };
+  const groups = () => (globalThis as Record<string, unknown>)._antiGroups as Array<{
+    ally: number; list: unknown[]; working: unknown[]; emp: boolean; col: string;
+  }>;
+  const page = globalThis as unknown as { teamColorStr: (t: number) => string };
+
+  // t=10s: both side-0 antinukes alive (unit 4 EMP since f100=3.3s, unit 5
+  // working), team 1's antinuke (unit 3, dies at 50s) still alive
+  seek(10);
+  let gs = groups();
+  assert.equal(gs.length, 2, "one merged coverage per ALLY team (0 and 1)");
+  const g0 = gs.find((g) => g.ally === 0)!;
+  const g1 = gs.find((g) => g.ally === 1)!;
+  assert.equal(g0.list.length, 2, "both same-side launchers land in ONE merged group");
+  assert.equal(g0.working.length, 1, "the EMP-shocked launcher is not in the working set");
+  assert.equal(g0.emp, true, "the group knows part of its range is disabled");
+  assert.equal(g1.list.length, 1);
+  // attribution: the side's highest-elo player is Charlie (2000, team 2),
+  // NOT Alpha (1200, team 0) who owns one of the launchers
+  assert.equal(g0.col, page.teamColorStr(2), "coverage tint = the top-elo player's colour");
+  assert.notEqual(page.teamColorStr(0), page.teamColorStr(2),
+    "the fixture teams must differ in colour for the attribution to be observable");
+
+  // t=60s: team 1's launcher is dead - its coverage group disappears;
+  // the merged side-0 group keeps exactly its two launchers
+  seek(60);
+  gs = groups();
+  assert.equal(gs.length, 1, "a dead launcher leaves no coverage group");
+  assert.equal(gs[0]!.ally, 0);
+  assert.equal(gs[0]!.list.length, 2);
+  assert.equal(gs[0]!.working.length, 1);
+  assert.equal(gs[0]!.emp, true);
 });
