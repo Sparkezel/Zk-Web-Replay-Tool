@@ -1485,11 +1485,44 @@ advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
          comm lightninggun, aoe 8) stay plain beams. Cyan = EMP */
       ["spideremp_spider",              { col: "72,214,255", r: 64, dur: 2 }],
       ["striderscorpion_multilightning", { col: "72,214,255", r: 80, dur: 2 }],
+      /* the Paladin's EMP rockets (recorded aoe 64) - real missile flights,
+         the last sample IS the impact */
+      ["striderbantha_emp_missile",      { col: "72,214,255", r: 64, dur: 2 }],
       /* the Ogre's Banisher rocket salvo (lua aoe 160 -> r 80): the heavy
          riot tank's splashes deserve their ring */
       ["tankriot_tawf_banisher",        { col: "255,160,90", r: 80, dur: 2 }],
     ];
     const explosions = [];
+    /* EMP beam weapons (Venom / Scorpion multi-stunner / comm multistunner):
+       beam projectiles die at the MUZZLE, so a beam flight's last sample is
+       the FIRER - the impact ring used to land on the Scorpion's own icon.
+       The true impact is the struck unit: the RECORDED target (PTGT, exact,
+       from resims on the extended widget) when present, else the firer's
+       engagement victim at the impact time (nearest same-team unit to the
+       muzzle sample = the firer). No anchor found -> no ring: a ring on the
+       wrong spot is worse than none */
+    const EMP_BEAM_WEAPONS = new Set(["spideremp_spider", "striderscorpion_multilightning", "commweapon_multistunner"]);
+    const empBeamImpact = (p, imp) => {
+      let best = null, bestD = 1e9;
+      for (const u of units) {
+        if (u.team !== p.team || !u.track || !u.track.n) continue;
+        if (imp.t < u.born - 0.01 || (u.died >= 0 && imp.t > u.died + 0.2)) continue;
+        const tp = trackAt(u.track, imp.t);
+        if (!tp) continue;
+        const d = Math.hypot((tp.x - imp.x) * wmw, (tp.y - imp.z) * wmh);
+        if (d < bestD) { bestD = d; best = u; }
+      }
+      if (!best || bestD > 200) return null;   /* sane muzzle radius */
+      const rows = engagements[best.id];
+      if (!rows) return null;
+      let row = null;
+      for (const r of rows) { if (r.t <= imp.t + 0.05) row = r; else break; }
+      if (!row) return null;
+      const v = units.find((x) => x.id === row.v);
+      if (!v || !v.track || !v.track.n) return null;
+      const vp = trackAt(v.track, imp.t);
+      return vp ? { x: vp.x, z: vp.y } : null;
+    };
     /* Zenith meteors are projectiles of the named "Meteor" weapondef; ground
        napalm patches are FIRE only — ZK's lups_napalm classification
        (weapon description / fx; the internal def names carry _napalm_ too,
@@ -1571,7 +1604,12 @@ advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
       }
       const ib = IMPACT_BLAST_DEFS.find(([n]) => String(w.name || "").toLowerCase() === n);
       if (ib && !p.intercepted) {
-        explosions.push({ t: imp.t, x: imp.x, y: imp.z,
+        let bx = imp.x, bz = imp.z, ring = true;
+        if (EMP_BEAM_WEAPONS.has(String(w.name || "").toLowerCase())) {
+          const anchor = p.tgt ?? empBeamImpact(p, imp);
+          if (anchor) { bx = anchor.x; bz = anchor.z; } else ring = false;
+        }
+        if (ring) explosions.push({ t: imp.t, x: bx, y: bz,
           r: (w.aoe ?? 0) > 0 ? w.aoe : ib[1].r, col: ib[1].col, fade: "normal", dur: ib[1].dur });
       }
       const isFire = w.nd === 1 || /napalm/i.test(String(w.name || ""));

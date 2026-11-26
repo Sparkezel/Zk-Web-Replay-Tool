@@ -419,6 +419,12 @@ local projClassByID = {}
 -- strike would have landed
 local STRAT_MISSILE_KEYS = { tacnuke = true, empmissile = true, missileslow = true,
   seismic = true, napalmmissile = true, staticnuke = true }
+-- EMP beam weapons whose IMPACT matters: beam projectiles die at the
+-- muzzle, so the flight's last sample is the FIRER - the recorded target
+-- (usually the struck unit) is the only correct impact anchor. Full-name
+-- set (a unit-key set would sweep in every commweapon projectile)
+local PTGT_BEAM_NAMES = { spideremp_spider = true, striderscorpion_multilightning = true,
+  commweapon_multistunner = true }
 local lastPtgt = {}
 -- ZK's own napalm classification (LuaRules/gadgets/lups_napalm.lua): weapon
 -- description contains "Napalm" or the lups heat/napalm fx is set. Area
@@ -626,7 +632,7 @@ function widget:GameFrame(frame)
         -- the API (ok = false -> no line).
         local wd = WeaponDefs[wdefID]
         local wkey = wd ~= nil and wd.name ~= nil and string.match(wd.name, "^([^_]+)") or nil
-        if wkey ~= nil and STRAT_MISSILE_KEYS[wkey] then
+        if wkey ~= nil and (STRAT_MISSILE_KEYS[wkey] or PTGT_BEAM_NAMES[wd.name]) then
           local ok, ttype, tdata = pcall(Spring.GetProjectileTarget, pid)
           local tx, tz
           if ok and ttype ~= nil then

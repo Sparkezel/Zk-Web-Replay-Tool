@@ -1349,3 +1349,58 @@ test("engagement rows decode into per-attacker arrow sessions with engAt TTL", a
   // units with no engagements carry no entry; no other attacker keys appear
   assert.equal(Object.keys(model.engagements).length, 1);
 });
+
+test("EMP impacts: beam rings anchor at the struck unit, Paladin rockets ring at their target", async () => {
+  const snap = syntheticSnapshot();
+  // a Scorpion (team 0) parked at (3000,3000), striking a Bandit (team 1)
+  // parked far away at (9000,9000)
+  snap.unitDefs.set(70, { defID: 70, name: "striderscorpion", metalCost: 3000, health: 8000, canMove: true, iconType: "t3riot", humanName: "Scorpion" });
+  snap.units.set(70, { unitID: 70, defID: 70, samples: [
+    { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
+    { frame: 1200, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 70, int1: 70, int2: 0, int3: -1 });
+  snap.unitDefs.set(71, { defID: 71, name: "bandit", metalCost: 130, health: 90, canMove: true, iconType: "raider3", humanName: "Bandit" });
+  snap.units.set(71, { unitID: 71, defID: 71, samples: [
+    { frame: 6, x: 9000, z: 9000, hp: 255, build: 255 },
+    { frame: 1200, x: 9000, z: 9000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 71, int1: 71, int2: 1, int3: -1 });
+  // the scorpion's multi-stunner hits the bandit at frame 300
+  snap.events.push({ kind: "engage", frame: 300, unitID: 70, int1: 71, int2: -1, int3: -1 });
+  // the beam flight: zero-span, both samples AT the muzzle - the old code
+  // anchored the ring here (the scorpion's own icon)
+  snap.weaponDefs.set(45, { defID: 45, name: "striderscorpion_multilightning", type: "LightningCannon", range: 490, aoe: 80 });
+  snap.projectiles.set(300, { proID: 300, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 300,
+    samples: [{ frame: 300, x: 3000, z: 3000, y: 30 }, { frame: 306, x: 3000, z: 3000, y: 30 }] });
+  // the Paladin's EMP rockets: a real missile flight, impact at its last
+  // sample (12 frames apart - a wider gap would SPLIT into two flights at
+  // the packer's 18-frame rule and ring the muzzle fragment too)
+  snap.weaponDefs.set(46, { defID: 46, name: "striderbantha_emp_missile", type: "MissileLauncher", range: 1200, aoe: 64 });
+  snap.projectiles.set(301, { proID: 301, weaponDefID: 46, projClass: 4, ownerTeam: 1, startFrame: 400,
+    samples: [{ frame: 400, x: 4000, z: 4000, y: 200 }, { frame: 412, x: 11000, z: 11000, y: 0 }] });
+  // a second scorpion beam: same firer still engaged with the same victim -
+  // it rings at the victim too (the scorpion simply shot again)
+  snap.projectiles.set(302, { proID: 302, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 500,
+    samples: [{ frame: 500, x: 3100, z: 3100, y: 30 }] });
+  // a beam from the fencer (team 0, unit 1 - it has NO engagement rows and
+  // the scorpion is far outside the muzzle radius): NO ring at all
+  snap.projectiles.set(303, { proID: 303, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 500,
+    samples: [{ frame: 500, x: 1100, z: 2100, y: 30 }] });
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+
+  const cyan = model.explosions.filter((e) => e.col === "72,214,255");
+  assert.equal(cyan.length, 3,
+    "three EMP rings: both scorpion shots (anchored at the victim) and the rockets - the fencer's anchorless beam paints none");
+  const beamRings = cyan.filter((e) => e.r === 80);
+  assert.equal(beamRings.length, 2, "both scorpion beams ring");
+  for (const beamRing of beamRings) {
+    assert.ok(Math.abs(beamRing.x - 9000 / 16384) < 1e-4 && Math.abs(beamRing.y - 9000 / 16384) < 1e-4,
+      "the multi-stunner ring lands at the STRUCK bandit, not at the scorpion's muzzle");
+  }
+  assert.ok(Math.abs(beamRings[0]!.x - 3000 / 16384) > 0.1, "sanity: the old wrong anchor (the muzzle) is far away");
+  const rocketRing = cyan.find((e) => e.r === 64)!;
+  assert.ok(Math.abs(rocketRing.x - 11000 / 16384) < 1e-4 && Math.abs(rocketRing.y - 11000 / 16384) < 1e-4,
+    "the Paladin's EMP rockets ring at their impact (the last flight sample)");
+});
