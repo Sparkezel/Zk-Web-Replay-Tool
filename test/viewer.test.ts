@@ -826,6 +826,17 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(37, { defID: 37, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
   snap.projectiles.set(108, { proID: 108, weaponDefID: 37, projClass: 3, ownerTeam: 1, startFrame: 595,
     samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 600, x: 7500, z: 7450, y: 340 }] });
+  // a WIDE genuine kill: a fast Trinity and its interceptor end in the same
+  // probe frame, but one probe interval of closing speed leaves their last
+  // samples 500 elmos apart (measured on the stress replay: 326) - past the
+  // old fixed 300 gate, which painted a fake ground detonation at the
+  // intercept. The cadence-scaled radius must still pair them.
+  snap.weaponDefs.set(50, { defID: 50, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
+  snap.projectiles.set(116, { proID: 116, weaponDefID: 50, projClass: 3, ownerTeam: 0, startFrame: 690,
+    samples: [{ frame: 690, x: 6000, z: 6000, y: 400 }, { frame: 696, x: 6300, z: 6300, y: 300 }] });
+  snap.weaponDefs.set(51, { defID: 51, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
+  snap.projectiles.set(117, { proID: 117, weaponDefID: 51, projClass: 3, ownerTeam: 1, startFrame: 691,
+    samples: [{ frame: 691, x: 6900, z: 6900, y: 400 }, { frame: 696, x: 6700, z: 6600, y: 300 }] });
   // PTGT: commanded warhead destinations. The clean Trinity gets one row
   // (its circle anchors at the target, not the last sample); the
   // INTERCEPTED Trinity gets a stale early row plus the real one - the
@@ -905,13 +916,13 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "staticnuke_crblmssl flight gets the nuke_missile.png marker");
   assert.equal(model.projectiles.find((p) => p.icon === "antinuke_proj")!.weaponDefID, 34,
     "the antinuke interceptor flight gets the antinuke_proj.png marker");
-  assert.ok(model.projectiles.filter((p) => p.icon).length === 4,
-    "Eos/Shockley flights stay plain trails; the interceptor pair and both Trinities carry markers");
+  assert.ok(model.projectiles.filter((p) => p.icon).length === 6,
+    "Eos/Shockley flights stay plain trails; both interceptor pairs and all three Trinities carry markers");
   // incoming-strike visualisation: the five silo missiles (+ Trinity) carry
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 6, "Eos + both Shockleys + both Trinities + the Zeno carry strike colours");
+  assert.ok(missAF.length === 7, "Eos + both Shockleys + all three Trinities + the Zeno carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
@@ -937,8 +948,19 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "a warhead whose end matches no rocket detonates normally");
   // the earlier interceptor flight (105) ends far from any warhead end -
   // it must not mark anything
-  assert.ok(model.projectiles.filter((p) => p.intercepted).length === 1,
-    "exactly the paired warhead reads as intercepted");
+  assert.ok(model.projectiles.filter((p) => p.intercepted).length === 2,
+    "exactly the two paired warheads read as intercepted");
+  // the WIDE kill (proID 116 vs 117): 500 elmos apart at the same frame -
+  // one probe interval of closing speed, the stress-replay geometry that
+  // used to slip past a fixed 300 and paint a fake ground detonation
+  const wide = model.projectiles.find((p) => p.weaponDefID === 50)!;
+  assert.equal(wide.intercepted, true,
+    "a same-frame kill with last samples 500 elmos apart still pairs as an intercept");
+  assert.ok(model.explosions.filter((e) => e.r === 960 && Math.abs(e.t - 696 / 30) < 0.01).length === 0,
+    "no ground detonation for the wide kill");
+  assert.ok(model.feedData.some((f) => f.cls === "intercept" &&
+    Math.abs(f.tm - 696 / 30) < 1e-3),
+    "the wide kill gets its intercept feed line");
 
   // ---- recorded warhead targets (PTGT) ----
   // the clean Trinity's flight carries the commanded destination as map
@@ -1012,8 +1034,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "a single Eos flight leaves one plain launch line");
   assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "2 \u00d7 Shockley missiles launched!"),
     "two Shockley flights 0.07 s apart aggregate into one volley line");
-  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 2,
-    "both Trinity flights get news; their 6 s gap never aggregates them");
+  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 3,
+    "all three Trinity flights get news; their gaps never aggregate them");
 
   // ---- launched vs killed-in-silo missile units ----
   const u12 = model.units.find((u) => u.id === 12)!;

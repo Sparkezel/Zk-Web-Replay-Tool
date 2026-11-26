@@ -1543,7 +1543,28 @@ advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
        The Hole, every real pair lands in the SAME probe frame (dt 0.00 s)
        at 19-256 elmos, while a missed rocket's target survives and its
        flight ends far away much later. */
-    const ICEPT_SPAN_SEC = 0.3, ICEPT_RADIUS = 300;
+    /* probe staleness widens the pairing gate: both flights' LAST samples
+       precede the true kill by up to one probe interval, during which they
+       keep closing on each other. Measured pairs: The Hole's clean kills
+       sit 19-256 elmos apart, but a genuine kill of a FAST pair (Trinity +
+       interceptor converging at ~1400 el/s, stress replay t=2679) left its
+       same-frame last samples 326 elmos apart - past the old fixed 300,
+       which painted a full fake ground detonation at the intercept point.
+       The closest NON-pair (a landed tacnuke vs an unrelated rocket end)
+       sits 2516 elmos away, so the radius scales with the artifact's own
+       PROJ probe cadence (median sample gap): 0.2 s probes get 900, 1 Hz
+       artifacts widen in proportion. The TIME gate stays tight at 0.3 s. */
+    let projProbeGap = 0.2;
+    {
+      const gaps = [];
+      for (const p of projectiles) {
+        if (p.path && p.path.n > 1)
+          gaps.push((p.path.t[p.path.n - 1] - p.path.t[0]) / (p.path.n - 1));
+      }
+      gaps.sort((a, b) => a - b);
+      if (gaps.length) projProbeGap = gaps[gaps.length >> 1];
+    }
+    const ICEPT_SPAN_SEC = 0.3, ICEPT_RADIUS = 400 + Math.ceil(projProbeGap * 2500);
     const rocketEnds = projectiles
       .filter((p) => {
         const w = wdef.get(p.weaponDefID);
