@@ -173,7 +173,7 @@
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="cloaks" checked> cloaks</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv1"> healthv1</label>
           <label class="chip" style="white-space:nowrap"><input type="checkbox" id="hpv2" checked> healthv2</label>
-          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="targets"> targets</label>
+          <label class="chip" style="white-space:nowrap"><input type="checkbox" id="targets" checked> conflict arrows</label>
           <span class="chip" id="chip">10 min/s preview</span>
         </div>
       </div>
@@ -1098,7 +1098,7 @@ function draw(model,tm){profSeg("backdrop");
   }
 
   profSeg("arrows");
-  // engagement arrows (toggle: targets): small yellow arrows from each
+  // conflict arrows (toggle: targets): small arrows from each
   // attacker to the victim it is currently landing hits on — the
   // recorded "engage" rows are ground truth from the engine's own
   // UnitDamaged callin (victim change + 0.6 s keep-alive), so an arrow
