@@ -130,7 +130,30 @@ function chunkStream(msgs: Msg[]): Uint8Array {
   return out;
 }
 
-function buildToyDemo(): Uint8Array {
+/** one TeamStatistics record (80 bytes: i32 frame, 12 floats, 7 i32); only
+ *  the fields the tests check are set */
+interface ToyTeamStat { frame: number; metalProduced: number; unitsKilled: number }
+
+/** DemoRecorder::WriteTeamStats layout: every team's u32 count first, then
+ *  all records team by team */
+function teamStatsBlock(teams: ToyTeamStat[][]): Uint8Array {
+  const n = teams.reduce((a, t) => a + t.length, 0);
+  const out = new Uint8Array(4 * teams.length + 80 * n);
+  const dv = new DataView(out.buffer);
+  teams.forEach((t, i) => dv.setUint32(4 * i, t.length, true));
+  let o = 4 * teams.length;
+  for (const t of teams) {
+    for (const r of t) {
+      dv.setInt32(o, r.frame, true);
+      dv.setFloat32(o + 12, r.metalProduced, true);
+      dv.setInt32(o + 76, r.unitsKilled, true);
+      o += 80;
+    }
+  }
+  return out;
+}
+
+function buildToyDemo(teamStats: ToyTeamStat[][] = [[], []]): Uint8Array {
   const script = STARTSCRIPT_EXCERPT;
   const streamMsgs: Msg[] = [
     keyFrame(0, 0),
@@ -161,8 +184,9 @@ function buildToyDemo(): Uint8Array {
   setI(2);                           // numPlayers
   setI(2 * 20);                      // playerStatSize
   setI(20);                          // playerStatElemSize
-  setI(2);                           // numTeams
-  setI(8);                           // teamStatSize (counts only)
+  const teamBlock = teamStatsBlock(teamStats);
+  setI(teamStats.length);            // numTeams
+  setI(teamBlock.byteLength);        // teamStatSize
   setI(80);                          // teamStatElemSize
   setI(15);                          // teamStatPeriod
   setI(1);                           // winningAllyTeamsSize
@@ -172,10 +196,9 @@ function buildToyDemo(): Uint8Array {
   [[1234, 5678, 946129, 2340, 436], [772, 9173, 650219, 2144, 416]].forEach((vals, p) => {
     vals.forEach((v, i) => psDv.setInt32(p * 20 + i * 4, v, true));
   });
-  const teamCounts = new Uint8Array(8); // all zero like real autohost demos
-  const body = new Uint8Array(script.length + stream.byteLength + winners.byteLength + playerStats.byteLength + teamCounts.byteLength);
+  const body = new Uint8Array(script.length + stream.byteLength + winners.byteLength + playerStats.byteLength + teamBlock.byteLength);
   let p = 0;
-  for (const part of [new TextEncoder().encode(script), stream, winners, playerStats, teamCounts]) {
+  for (const part of [new TextEncoder().encode(script), stream, winners, playerStats, teamBlock]) {
     body.set(part, p);
     p += part.byteLength;
   }
@@ -214,6 +237,29 @@ test("parse demo header + startscript + stream", () => {
   assert.equal(demo.stream.counts[2], 2); // NEWFRAME
   assert.equal(demo.stream.counts[7], 2); // CHAT
   assert.equal(demo.stream.counts[30], 1); // GAMEOVER
+});
+
+test("team stats: all counts come first, then each team's records", () => {
+  const team0 = [
+    { frame: 0, metalProduced: 0, unitsKilled: 0 },
+    { frame: 450, metalProduced: 120.5, unitsKilled: 1 },
+    { frame: 900, metalProduced: 300, unitsKilled: 4 },
+  ];
+  const team1 = [
+    { frame: 0, metalProduced: 0, unitsKilled: 0 },
+    { frame: 450, metalProduced: 80, unitsKilled: 2 },
+  ];
+  const demo = parseDemo(gunzip(buildToyDemo([team0, team1])));
+  assert.equal(demo.teamStats.size, 2);
+  for (const [team, want] of [[0, team0], [1, team1]] as const) {
+    const got = demo.teamStats.get(team)!;
+    assert.deepEqual(got.map((r) => r.frame), want.map((r) => r.frame), `team ${team} frames`);
+    assert.deepEqual(got.map((r) => r.metalProduced), want.map((r) => r.metalProduced), `team ${team} metal`);
+    assert.deepEqual(got.map((r) => r.unitsKilled), want.map((r) => r.unitsKilled), `team ${team} kills`);
+  }
+  const secs = readZkr(buildZkrFromDemo(demo));
+  const eco = JSON.parse(new TextDecoder().decode(secs.find((s) => s.id === SECTION.ECO)!.payload));
+  assert.deepEqual(eco.teams.map((t: { stats: { frame: number }[] }) => t.stats.map((r) => r.frame)), [[0, 450, 900], [0, 450]]);
 });
 
 test("startscript parser handles multi-line lua values", () => {
