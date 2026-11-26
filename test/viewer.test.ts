@@ -860,8 +860,9 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // casualty and must survive.
   snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
   snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
-  // census-driven death blasts: a Skuttle (180 - the census threshold itself)
-  // and a Detriment (1280 NUCLEAR_MISSILE - nuke grade, vector art)
+  // census-driven death blasts: a Skuttle (90 - the effective damage
+  // radius, half the lua aoe 180, per gui_blastRadius) and a Detriment
+  // (640 NUCLEAR_MISSILE, effective radius - nuke grade, vector art)
   snap.unitDefs.set(23, { defID: 23, name: "jumpbomb", metalCost: 100, health: 800, canMove: true, iconType: "jumpbomb", humanName: "Skuttle" });
   snap.units.set(15, { unitID: 15, defID: 23, samples: [
     { frame: 320, x: 4000, z: 4000, hp: 255, build: 255 },
@@ -1060,13 +1061,15 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(model.wrecks[0]!.x - 16000 / 16384) < 1e-4 && model.wrecks[0]!.metal === 40,
     "the late corner casualty — a REAL wreck — survives the gate");
 
-  // census-driven death blasts: the Skuttle-class 180 circle, the
-  // Detriment's 1280 NUCLEAR_MISSILE blast with the vector nuke art
-  const skutBlast = model.explosions.find((e) => e.r === 180);
+  // census-driven death blasts: the Skuttle-class 90 circle (effective
+  // radius = half the lua areaOfEffect diameter, matching ZK's own
+  // blast-radius widget), the Detriment's 640 NUCLEAR_MISSILE blast
+  // with the vector nuke art
+  const skutBlast = model.explosions.find((e) => e.r === 90);
   assert.ok(skutBlast && Math.abs(skutBlast.t - 354 / 30) < 1e-6 &&
     Math.abs(skutBlast.x - 4000 / 16384) < 1e-4 && skutBlast.fx === false,
     "Skuttle death blast: circle at its death position/time, no blast art");
-  const detBlast = model.explosions.find((e) => e.r === 1280);
+  const detBlast = model.explosions.find((e) => e.r === 640);
   assert.ok(detBlast && detBlast.fx === true && detBlast.col === "255,72,56" &&
     Math.abs(detBlast.t - 366 / 30) < 1e-6,
     "Detriment death blast: nuke-grade, red, uses the vector blast art");

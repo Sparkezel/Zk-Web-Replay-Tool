@@ -1749,105 +1749,116 @@ advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
        The silo missile UNITS (Eos/Shockley/Quake/Inferno) are
        deliberately absent: their detonations come from the warhead
        FLIGHT impacts, and a missile killed in its silo leaves no blast
-       in the replay story. The nuke ART (fx) goes on the three 1280-elmo
-       death blasts: Detriment and Advanced Geothermal (both die through
-       the very same NUCLEAR_MISSILE weapon, out-blasting the Trinity
-       warhead's 960) and the Singularity Reactor (Naked Singularity).
+       in the replay story. RADII here are the EFFECTIVE (damage) blast
+       radius - HALF the lua/TDF areaOfEffect, which is a diameter:
+       Spring's weaponDef carries damageAreaOfEffect = areaOfEffect/2,
+       and ZK's own blast widget (gui_blastRadius.lua) draws exactly
+       that value. Anchors measured on real artifacts: crblmssl lua
+       1920 -> recorded 960, jumparty napalm_sprayer lua 128 -> recorded
+       64, and the Pyro's PYRO_DEATH spells it out (areaofeffect 256,
+       customParams area_damage_radius 128). The first census shipped
+       the raw diameters, drawing every death blast (incl. the Snitch's
+       and the Paladin's) twice its in-game size.
+       The nuke ART (fx) goes on the three 640-elmo death blasts:
+       Detriment and Advanced Geothermal (both die through the very
+       same NUCLEAR_MISSILE weapon) and the Singularity Reactor (Naked
+       Singularity) - the biggest unit deaths in the game, though a
+       Trinity warhead strike (960) still out-blasts them.
        Dynamic commander defs are generated per level at runtime, so the
-       pattern match below carries the chassis' 420-elmo blast to every
+       pattern match below carries the chassis' 210-elmo blast to every
        dynXX<N>_ level. Everything else uses the neutral blast colour. */
     const NUKE_RED_LOCAL = "255,72,56";
     const DEATH_BLAST_DEFS = {
-      "striderdetriment": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Detriment
-      "energysingu": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Singularity Reactor - Naked Singularity, same 1280, shares the art
-      "energyheavygeo": { r: 1280, col: NUKE_RED_LOCAL, fx: true },   // Advanced Geothermal
-      "turretheavy": { r: 520 },   // Desolator (ESTOR_BUILDING)
-      "turretantiheavy": { r: 520 },   // Lucifer (ESTOR_BUILDING)
-      "turretaaheavy": { r: 520 },   // Artemis (ESTOR_BUILDING)
-      "striderfunnelweb": { r: 520 },   // Funnelweb (ESTOR_BUILDING)
-      "striderantiheavy": { r: 520 },   // Ultimatum (ESTOR_BUILDING)
-      "energygeo": { r: 520 },   // Geothermal Generator (ESTOR_BUILDING)
-      "bomberassault": { r: 520 },   // Odin (ESTOR_BUILDING)
-      "amphbomb": { r: 500 },   // Limpet (AMPHBOMB_DEATH)
-      "zenith": { r: 480 },   // Zenith (ATOMIC_BLAST)
-      "striderbantha": { r: 480 },   // Paladin (ATOMIC_BLAST)
-      "staticnuke": { r: 480 },   // Trinity (ATOMIC_BLAST)
-      "staticheavyarty": { r: 480 },   // Big Bertha (ATOMIC_BLAST)
-      "raveparty": { r: 480 },   // Disco Rave Party (ATOMIC_BLAST)
-      "pw_hq_attacker": { r: 480 },   // Attacker Command (ATOMIC_BLAST)
-      "pw_generic": { r: 480 },   // Generic Neutral Structure (ATOMIC_BLAST)
-      "mahlazer": { r: 480 },   // Starlight (ATOMIC_BLAST)
-      "energyfusion": { r: 480 },   // Fusion Reactor (ATOMIC_BLAST)
-      "striderhub": { r: 420 },   // Strider Hub (ESTOR_BUILDINGEX)
-      "obj_artefact": { r: 420 },   // Ancient Artefact (ESTOR_BUILDINGEX)
-      "energypylon": { r: 420 },   // Energy Pylon (ESTOR_BUILDINGEX)
-      "dynsupport1": { r: 420 },   // Engineer Commander (ESTOR_BUILDINGEX)
-      "dynstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
-      "dynrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
-      "dynassault1": { r: 420 },   // Guardian Commander (ESTOR_BUILDINGEX)
-      "cremcom1": { r: 420 },   // Commander (ESTOR_BUILDINGEX)
-      "corcom1": { r: 420 },   // Battle Commander (ESTOR_BUILDINGEX)
-      "commsupport1": { r: 420 },   // Support Commander (ESTOR_BUILDINGEX)
-      "commstrike1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
-      "commrecon1": { r: 420 },   // Recon Commander (ESTOR_BUILDINGEX)
-      "benzcom1": { r: 420 },   // Siege Commander (ESTOR_BUILDINGEX)
-      "armcom1": { r: 420 },   // Strike Commander (ESTOR_BUILDINGEX)
-      "shieldbomb": { r: 384 },   // Snitch (shieldbomb_DEATH)
-      "cloakbomb": { r: 176, col: "72,214,255" },   // Imp (cloakbomb_DEATH, lua aoe 352 -> radius 176 per the Skuttle convention); electric-blue blast, not fire
-      "turretsunlance": { r: 340 },   // Sunlance (LARGE_BUILDINGEX)
-      "turretriot": { r: 340 },   // Stardust (LARGE_BUILDINGEX)
-      "turretaafar": { r: 340 },   // Chainsaw (LARGE_BUILDINGEX)
-      "staticrearm": { r: 340 },   // Airpad (LARGE_BUILDINGEX)
-      "staticmissilesilo": { r: 340 },   // Missile Silo (LARGE_BUILDINGEX)
-      "staticarty": { r: 340 },   // Cerberus (LARGE_BUILDINGEX)
-      "staticantinuke": { r: 340 },   // Antinuke (LARGE_BUILDINGEX)
-      "nebula": { r: 340 },   // Nebula (LARGE_BUILDINGEX)
-      "gunshipkrow": { r: 340 },   // Krow (LARGE_BUILDINGEX)
-      "factoryveh": { r: 340 },   // Rover Assembly (LARGE_BUILDINGEX)
-      "factorytank": { r: 340 },   // Tank Foundry (LARGE_BUILDINGEX)
-      "factoryspider": { r: 340 },   // Spider Factory (LARGE_BUILDINGEX)
-      "factoryship": { r: 340 },   // Shipyard (LARGE_BUILDINGEX)
-      "factoryshield": { r: 340 },   // Shieldbot Factory (LARGE_BUILDINGEX)
-      "factoryplane": { r: 340 },   // Airplane Plant (LARGE_BUILDINGEX)
-      "factoryjump": { r: 340 },   // Jumpbot Factory (LARGE_BUILDINGEX)
-      "factoryhover": { r: 340 },   // Hovercraft Platform (LARGE_BUILDINGEX)
-      "factorygunship": { r: 340 },   // Gunship Plant (LARGE_BUILDINGEX)
-      "factorycloak": { r: 340 },   // Cloakbot Factory (LARGE_BUILDINGEX)
-      "factoryamph": { r: 340 },   // Amphbot Factory (LARGE_BUILDINGEX)
-      "striderarty": { r: 320 },   // Merlin (ATOMIC_BLASTSML)
-      "shipcarrier": { r: 320 },   // Reef (ATOMIC_BLASTSML)
-      "plateveh": { r: 294 },   // Rover Plate (FAC_PLATEEX)
-      "platetank": { r: 294 },   // Tank Plate (FAC_PLATEEX)
-      "platespider": { r: 294 },   // Spider Plate (FAC_PLATEEX)
-      "plateship": { r: 294 },   // Ship Plate (FAC_PLATEEX)
-      "plateshield": { r: 294 },   // Shieldbot Plate (FAC_PLATEEX)
-      "plateplane": { r: 294 },   // Airplane Plate (FAC_PLATEEX)
-      "platejump": { r: 294 },   // Jumpbot Plate (FAC_PLATEEX)
-      "platehover": { r: 294 },   // Hovercraft Plate (FAC_PLATEEX)
-      "plategunship": { r: 294 },   // Gunship Plate (FAC_PLATEEX)
-      "platecloak": { r: 294 },   // Cloakbot Plate (FAC_PLATEEX)
-      "plateamph": { r: 294 },   // Amphbot Plate (FAC_PLATEEX)
-      "commander_egg": { r: 280 },   // Commander Egg (COMMANDER_EGG_EMP)
-      "turrettorp": { r: 260 },   // Urchin (MEDIUM_BUILDINGEX)
-      "turretimpulse": { r: 260 },   // Newton (MEDIUM_BUILDINGEX)
-      "turretheavylaser": { r: 260 },   // Stinger (MEDIUM_BUILDINGEX)
-      "turretemp": { r: 260 },   // Faraday (MEDIUM_BUILDINGEX)
-      "turretaaflak": { r: 260 },   // Thresher (MEDIUM_BUILDINGEX)
-      "hoverarty": { r: 260 },   // Lance (MEDIUM_BUILDINGEX)
-      "striderscorpion": { r: 256 },   // Scorpion (CRAWL_BLASTSML)
-      "striderdante": { r: 256 },   // Dante (CRAWL_BLASTSML)
-      "turretlaser": { r: 180 },   // Lotus (SMALL_BUILDINGEX)
-      "turretgauss": { r: 180 },   // Gauss (SMALL_BUILDINGEX)
-      "turretaalaser": { r: 180 },   // Razor (SMALL_BUILDINGEX)
-      "turretaaclose": { r: 180 },   // Hacksaw (SMALL_BUILDINGEX)
-      "staticstorage": { r: 180 },   // Storage (SMALL_BUILDINGEX)
-      "staticsonar": { r: 180 },   // Sonar Station (SMALL_BUILDINGEX)
-      "staticradar": { r: 180 },   // Radar Tower (SMALL_BUILDINGEX)
-      "staticmex": { r: 180 },   // Metal Extractor (SMALL_BUILDINGEX)
-      "staticheavyradar": { r: 180 },   // Advanced Radar (SMALL_BUILDINGEX)
-      "jumpbomb": { r: 180 },   // Skuttle (jumpbomb_DEATH)
-      "energywind": { r: 180 },   // Wind/Tidal Generator (SMALL_BUILDINGEX)
-      "energysolar": { r: 180 },   // Solar Collector (SMALL_BUILDINGEX)
+      "striderdetriment": { r: 640, col: NUKE_RED_LOCAL, fx: true },   // Detriment
+      "energysingu": { r: 640, col: NUKE_RED_LOCAL, fx: true },   // Singularity Reactor - Naked Singularity, same 1280, shares the art
+      "energyheavygeo": { r: 640, col: NUKE_RED_LOCAL, fx: true },   // Advanced Geothermal
+      "turretheavy": { r: 260 },   // Desolator (ESTOR_BUILDING)
+      "turretantiheavy": { r: 260 },   // Lucifer (ESTOR_BUILDING)
+      "turretaaheavy": { r: 260 },   // Artemis (ESTOR_BUILDING)
+      "striderfunnelweb": { r: 260 },   // Funnelweb (ESTOR_BUILDING)
+      "striderantiheavy": { r: 260 },   // Ultimatum (ESTOR_BUILDING)
+      "energygeo": { r: 260 },   // Geothermal Generator (ESTOR_BUILDING)
+      "bomberassault": { r: 260 },   // Odin (ESTOR_BUILDING)
+      "amphbomb": { r: 250 },   // Limpet (AMPHBOMB_DEATH)
+      "zenith": { r: 240 },   // Zenith (ATOMIC_BLAST)
+      "striderbantha": { r: 240 },   // Paladin (ATOMIC_BLAST)
+      "staticnuke": { r: 240 },   // Trinity (ATOMIC_BLAST)
+      "staticheavyarty": { r: 240 },   // Big Bertha (ATOMIC_BLAST)
+      "raveparty": { r: 240 },   // Disco Rave Party (ATOMIC_BLAST)
+      "pw_hq_attacker": { r: 240 },   // Attacker Command (ATOMIC_BLAST)
+      "pw_generic": { r: 240 },   // Generic Neutral Structure (ATOMIC_BLAST)
+      "mahlazer": { r: 240 },   // Starlight (ATOMIC_BLAST)
+      "energyfusion": { r: 240 },   // Fusion Reactor (ATOMIC_BLAST)
+      "striderhub": { r: 210 },   // Strider Hub (ESTOR_BUILDINGEX)
+      "obj_artefact": { r: 210 },   // Ancient Artefact (ESTOR_BUILDINGEX)
+      "energypylon": { r: 210 },   // Energy Pylon (ESTOR_BUILDINGEX)
+      "dynsupport1": { r: 210 },   // Engineer Commander (ESTOR_BUILDINGEX)
+      "dynstrike1": { r: 210 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "dynrecon1": { r: 210 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "dynassault1": { r: 210 },   // Guardian Commander (ESTOR_BUILDINGEX)
+      "cremcom1": { r: 210 },   // Commander (ESTOR_BUILDINGEX)
+      "corcom1": { r: 210 },   // Battle Commander (ESTOR_BUILDINGEX)
+      "commsupport1": { r: 210 },   // Support Commander (ESTOR_BUILDINGEX)
+      "commstrike1": { r: 210 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "commrecon1": { r: 210 },   // Recon Commander (ESTOR_BUILDINGEX)
+      "benzcom1": { r: 210 },   // Siege Commander (ESTOR_BUILDINGEX)
+      "armcom1": { r: 210 },   // Strike Commander (ESTOR_BUILDINGEX)
+      "shieldbomb": { r: 192 },   // Snitch (shieldbomb_DEATH, lua aoe 384 -> radius 192)
+      "cloakbomb": { r: 176, col: "72,214,255" },   // Imp (cloakbomb_DEATH, lua aoe 352 -> radius 176); electric-blue blast, not fire
+      "turretsunlance": { r: 170 },   // Sunlance (LARGE_BUILDINGEX)
+      "turretriot": { r: 170 },   // Stardust (LARGE_BUILDINGEX)
+      "turretaafar": { r: 170 },   // Chainsaw (LARGE_BUILDINGEX)
+      "staticrearm": { r: 170 },   // Airpad (LARGE_BUILDINGEX)
+      "staticmissilesilo": { r: 170 },   // Missile Silo (LARGE_BUILDINGEX)
+      "staticarty": { r: 170 },   // Cerberus (LARGE_BUILDINGEX)
+      "staticantinuke": { r: 170 },   // Antinuke (LARGE_BUILDINGEX)
+      "nebula": { r: 170 },   // Nebula (LARGE_BUILDINGEX)
+      "gunshipkrow": { r: 170 },   // Krow (LARGE_BUILDINGEX)
+      "factoryveh": { r: 170 },   // Rover Assembly (LARGE_BUILDINGEX)
+      "factorytank": { r: 170 },   // Tank Foundry (LARGE_BUILDINGEX)
+      "factoryspider": { r: 170 },   // Spider Factory (LARGE_BUILDINGEX)
+      "factoryship": { r: 170 },   // Shipyard (LARGE_BUILDINGEX)
+      "factoryshield": { r: 170 },   // Shieldbot Factory (LARGE_BUILDINGEX)
+      "factoryplane": { r: 170 },   // Airplane Plant (LARGE_BUILDINGEX)
+      "factoryjump": { r: 170 },   // Jumpbot Factory (LARGE_BUILDINGEX)
+      "factoryhover": { r: 170 },   // Hovercraft Platform (LARGE_BUILDINGEX)
+      "factorygunship": { r: 170 },   // Gunship Plant (LARGE_BUILDINGEX)
+      "factorycloak": { r: 170 },   // Cloakbot Factory (LARGE_BUILDINGEX)
+      "factoryamph": { r: 170 },   // Amphbot Factory (LARGE_BUILDINGEX)
+      "striderarty": { r: 160 },   // Merlin (ATOMIC_BLASTSML)
+      "shipcarrier": { r: 160 },   // Reef (ATOMIC_BLASTSML)
+      "plateveh": { r: 147 },   // Rover Plate (FAC_PLATEEX)
+      "platetank": { r: 147 },   // Tank Plate (FAC_PLATEEX)
+      "platespider": { r: 147 },   // Spider Plate (FAC_PLATEEX)
+      "plateship": { r: 147 },   // Ship Plate (FAC_PLATEEX)
+      "plateshield": { r: 147 },   // Shieldbot Plate (FAC_PLATEEX)
+      "plateplane": { r: 147 },   // Airplane Plate (FAC_PLATEEX)
+      "platejump": { r: 147 },   // Jumpbot Plate (FAC_PLATEEX)
+      "platehover": { r: 147 },   // Hovercraft Plate (FAC_PLATEEX)
+      "plategunship": { r: 147 },   // Gunship Plate (FAC_PLATEEX)
+      "platecloak": { r: 147 },   // Cloakbot Plate (FAC_PLATEEX)
+      "plateamph": { r: 147 },   // Amphbot Plate (FAC_PLATEEX)
+      "commander_egg": { r: 140 },   // Commander Egg (COMMANDER_EGG_EMP)
+      "turrettorp": { r: 130 },   // Urchin (MEDIUM_BUILDINGEX)
+      "turretimpulse": { r: 130 },   // Newton (MEDIUM_BUILDINGEX)
+      "turretheavylaser": { r: 130 },   // Stinger (MEDIUM_BUILDINGEX)
+      "turretemp": { r: 130 },   // Faraday (MEDIUM_BUILDINGEX)
+      "turretaaflak": { r: 130 },   // Thresher (MEDIUM_BUILDINGEX)
+      "hoverarty": { r: 130 },   // Lance (MEDIUM_BUILDINGEX)
+      "striderscorpion": { r: 128 },   // Scorpion (CRAWL_BLASTSML)
+      "striderdante": { r: 128 },   // Dante (CRAWL_BLASTSML)
+      "turretlaser": { r: 90 },   // Lotus (SMALL_BUILDINGEX)
+      "turretgauss": { r: 90 },   // Gauss (SMALL_BUILDINGEX)
+      "turretaalaser": { r: 90 },   // Razor (SMALL_BUILDINGEX)
+      "turretaaclose": { r: 90 },   // Hacksaw (SMALL_BUILDINGEX)
+      "staticstorage": { r: 90 },   // Storage (SMALL_BUILDINGEX)
+      "staticsonar": { r: 90 },   // Sonar Station (SMALL_BUILDINGEX)
+      "staticradar": { r: 90 },   // Radar Tower (SMALL_BUILDINGEX)
+      "staticmex": { r: 90 },   // Metal Extractor (SMALL_BUILDINGEX)
+      "staticheavyradar": { r: 90 },   // Advanced Radar (SMALL_BUILDINGEX)
+      "jumpbomb": { r: 90 },   // Skuttle (jumpbomb_DEATH, lua aoe 180 -> radius 90)
+      "energywind": { r: 90 },   // Wind/Tidal Generator (SMALL_BUILDINGEX)
+      "energysolar": { r: 90 },   // Solar Collector (SMALL_BUILDINGEX)
     };
     /* units whose EXPLODE weapon leaves lingering ground: the Pyro dies in
        a flame ball - jumpraid's PYRO_DEATH (128 elmos / 13.3 s per game
@@ -1860,7 +1871,7 @@ advradar:2.5,ampharty:2,amphassault:2.6,amphraider:1.9,amphskirm:1.8,
     for (const u of units) {
       if (u.died < 0 || u.morph) continue;
       const db = DEATH_BLAST_DEFS[u.def ?? ""] ??
-        (/^dyn[a-z]+[1-9]\d*_/.test(u.def ?? "") ? { r: 420 } : null);
+        (/^dyn[a-z]+[1-9]\d*_/.test(u.def ?? "") ? { r: 210 } : null);
       const pd = PATCH_DEATH_DEFS[u.def ?? ""] ?? null;
       if (!db && !pd) continue;
       /* an unfinished nanoframe crumples - it does not go up in its full
