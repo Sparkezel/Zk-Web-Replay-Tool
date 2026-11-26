@@ -577,10 +577,12 @@ function widget:GameFrame(frame)
       if tonumber(Spring.GetUnitRulesParam(uid, "disarmed") or 0) == 1 then bits = bits + 2 end
       -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
       -- build-up is ignored by design - the effect only reads at 100%).
-      -- Gate on build COMPLETION: the engine answers GetUnitIsStunned true
-      -- for units still under construction (a nanoframe is inactive), which
-      -- smeared a yellow EMP dot over every factory bar before this gate
-      if stunned == true and (build or 1) >= 1 then bits = bits + 4 end
+      -- GetUnitIsStunned returns (stunned or beingBuilt, stunned, beingBuilt):
+      -- the SECOND value is the paralysis alone, so nanoframes stay clear.
+      -- Hidden units are skipped: Zero-K scripts paralyze a popped Claw mine
+      -- and a launched silo missile while they wait unseen to be removed
+      local stunned = select(2, Spring.GetUnitIsStunned(uid))
+      if stunned == true and not Spring.GetUnitNoDraw(uid) then bits = bits + 4 end
       if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
         -- state semantics need no "all zero" baseline row: the decode treats
         -- everything before the first event as healthy; but a transition BACK
