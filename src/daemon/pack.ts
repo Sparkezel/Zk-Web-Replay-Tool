@@ -384,6 +384,10 @@ export interface PackOptions {
    *  game time (which the demo header reports for the FULL game) is capped
    *  so the viewer timeline ends where the recorded data ends */
   lastSimFrame?: number;
+  /** synthetic roster for test artifacts, emitted as the ROST section when
+   *  no demo is provided — players/teams/allyteams pass through as-is, in
+   *  the same shape buildRosterSection writes for a real demo */
+  roster?: unknown;
 }
 
 /** Downsample unit sample lists by `rate`, always keeping the last sample. */
@@ -416,6 +420,8 @@ export function buildZkrFromResim(snap: SnapshotData, opts: PackOptions = {}): U
       { id: SECTION.META, version: 1, payload: metaWithDims(opts.demo, snap, opts.lastSimFrame), codec },
       { id: SECTION.ROSTER, version: 1, payload: buildRosterSection(opts.demo), codec },
     );
+  } else if (opts.roster !== undefined) {
+    secs.push({ id: SECTION.ROSTER, version: 1, payload: utf8(JSON.stringify(opts.roster)), codec });
   }
   secs.push(
     { id: SECTION.UNITDEF, version: 4, payload: encodeUnitDefs(snap), codec },
