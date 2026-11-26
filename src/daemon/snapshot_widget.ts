@@ -303,6 +303,65 @@ function widget:FeatureDestroyed(featureID)
   emit('{"t":"uwrk","f":' .. Spring.GetGameFrame() .. ',"u":' .. featureID .. '}')
 end
 
+-- ---- engagements: who is fighting whom --------------------------------
+-- Users want to see how fights flow: a small arrow from the attacker to
+-- its current target while the two are engaged. Ground truth is the
+-- engine's own UnitDamaged callin (a spectator/replay view sees every
+-- hit). Emit an "eng" row when an attacker's victim CHANGES, plus a
+-- keep-alive refresh every 18 frames (0.6 s) while the SAME pair keeps
+-- landing hits - the viewer holds an arrow alive for ~1.2 s past the
+-- last row, so a healthy fight never flickers. One row per (attacker,
+-- victim, 0.6 s) instead of one per damage tick keeps a big 8v8 in the
+-- low thousands of rows. Excluded, matching the user's spec: ballistic
+-- artillery GUNS (Cannon type with trajectoryHeight > 0 - the arcs
+-- already have their own flight layer) and the strategic silo missiles
+-- (they have their own strike/blast layers and would flood the map);
+-- everything else records - assaults, raiders, riots, AA, skirms with
+-- lobbed rockets (Recluse's arc is a 1.5-elmo MissileLauncher hop, not
+-- artillery), beams, lightning guns, flamethrowers.
+local ENG_MISSILE_DEFS = {
+  tacnuke = true, empmissile = true, missileslow = true,
+  seismic = true, napalmmissile = true, staticnuke = true, staticantinuke = true,
+}
+-- artillery units never draw engagement arrows: their shells/rockets already
+-- have the FLIGHT layer, and arrows to targets 1.5k elmos away are noise.
+-- Census from ZK's own unit data (every unit whose description says
+-- artillery). Sling, Racketeer, Impaler and Phantom are REINSTATED by user
+-- ruling - their arrows return with painterly colours in the viewer.
+-- Firewalker's mortar is a Cannon WITHOUT trajectoryHeight and Merlin's
+-- rocket battery flies flat (th=1), so the weapon-level gates can never
+-- catch these - the exclusion is per ATTACKER UNIT, not per weapon.
+-- Lobbed skirm rockets (Recluse th=1.5, r250) stay eligible precisely
+-- because their unit is not in this table.
+local ENG_ARTY_DEFS = {
+  hoverarty = true, jumparty = true,
+  shiparty = true, shipheavyarty = true, staticarty = true, striderarty = true,
+  tankarty = true, tankheavyarty = true, veharty = true,
+  chickenblobber = true, chickenr = true, chickenspire = true,
+}
+local engLast = {}   -- attackerUnitID -> { v = victimUnitID, f = frame of last emit }
+function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
+                            weaponDefID, projectileID, attackerID, attackerDefID, attackerTeam)
+  if attackerID == nil or attackerID <= 0 or attackerID == unitID then return end
+  local ad = attackerDefID and UnitDefs[attackerDefID]
+  if ad == nil then return end
+  local an = string.lower(ad.name or "")
+  if ENG_MISSILE_DEFS[an] or an == "terraunit" or string.find(an, "^fakeunit") then return end
+  if ENG_ARTY_DEFS[an] then return end
+  -- ballistic artillery ARTILLERY GUNS: they draw flights, not
+  -- engagements. Cannon-with-trajectoryHeight only: lobbed skirm
+  -- rockets (Recluse, spiderskirm, carries a gentle 1.5-elmo arc;
+  -- Scalpel/Fencer likewise) are MissileLaunchers, not artillery, and
+  -- their arrows WERE being swallowed by a bare trajectoryHeight test
+  local wd = weaponDefID and WeaponDefs[weaponDefID]
+  if wd ~= nil and wd.type == "Cannon" and (wd.trajectoryHeight or 0) > 0 then return end
+  local f = Spring.GetGameFrame()
+  local last = engLast[attackerID]
+  if last ~= nil and last.v == unitID and f - last.f < 18 then return end
+  engLast[attackerID] = { v = unitID, f = f }
+  emit('{"t":"eng","f":' .. f .. ',"u":' .. attackerID .. ',"v":' .. unitID .. '}')
+end
+
 -- 1-second lifecycle poll (the headless engine skips the callins above)
 local function pollWreckFeatures()
   local alive = {}
@@ -331,7 +390,7 @@ end
 -- hit stdout AND infolog.txt, so every dropped projectile skipped here is
 -- volume saved in both sinks.
 local DROPPED_TYPES = { AircraftBomb = true, Melee = true, Shield = true,
-  LightningCannon = true, TorpedoLauncher = true }
+  TorpedoLauncher = true }
 local projClassByID = {}
 -- sent strategic missiles, by ZK's weapon-name unit key (the viewer matches
 -- the same keys): these get their COMMANDED target polled once per flight,
@@ -349,6 +408,21 @@ local function isNapalmWeapon(d, cp)
   return cp ~= nil and (cp.lups_napalm_fx ~= nil or cp.lups_heat_fx ~= nil)
 end
 local function classifyWeapon(d, cp)
+  -- NAMED OVERRIDES FIRST (mirror of classify.ts): exact weapon names beat
+  -- any type/range rule. Beam set = the fat purple lasers (Lance/Lucifer/
+  -- Grizzly/Stinger/Paladin/Detriment); several sit under the 900 beam gate.
+  -- Arc set = the Cyclops's flat r450 Cannon, otherwise dropped and invisible
+  local NAMED_BEAMS = {
+    hoverarty_ata = true, turretantiheavy_ata = true, amphassault_laser = true,
+    turretheavylaser_laser = true, striderbantha_ata = true,
+    striderdetriment_aalaser = true, striderdetriment_trilaser = true,
+    striderdetriment_obliteration_blaster = true,
+  }
+  local NAMED_ARCS = { tankheavyassault_cor_gol = true,
+    tankriot_tawf_banisher = true }
+  local wname = string.lower(d.name or "")
+  if NAMED_BEAMS[wname] then return 1 end
+  if NAMED_ARCS[wname] then return 2 end
   -- NAPALM FIRST, before the name-drop patterns: ZK prefixes weapon names
   -- with the unit key, so the Firewalker's mortar is jumparty_napalm_sprayer
   -- and a name filter would silently drop it. Class 2 (artillery) fits the
@@ -370,6 +444,11 @@ local function classifyWeapon(d, cp)
     return 0
   end
   if cp ~= nil and cp.interceptor == "1" then return 5 end
+  -- LightningCannon: the whole type is ZK's lightning guns (Knight, Venom,
+  -- Felon's Shield Gun, Paladin, Scorpion, the comm lightninggun module) -
+  -- beams at ANY range, so short ones (Venom 240) do not fall through the
+  -- 900-elmo beam gate
+  if wtype == "LightningCannon" then return 1 end
   if (wtype == "BeamLaser" or wtype == "LaserCannon") and range >= 900 then return 1 end
   if wtype == "Cannon" and (range >= 1000 or ((d.trajectoryHeight or 0) > 0 and range >= 800)) then return 2 end
   return 0
@@ -470,9 +549,11 @@ function widget:GameFrame(frame)
       if tonumber(Spring.GetUnitRulesParam(uid, "on_fire") or 0) == 1 then bits = bits + 1 end
       if tonumber(Spring.GetUnitRulesParam(uid, "disarmed") or 0) == 1 then bits = bits + 2 end
       -- Spring's own EMP: stunned means the FULL paralysis (partial EMP
-      -- build-up is ignored by design - the effect only reads at 100%)
-      local stunned = select(1, Spring.GetUnitIsStunned(uid))
-      if stunned == true then bits = bits + 4 end
+      -- build-up is ignored by design - the effect only reads at 100%).
+      -- Gate on build COMPLETION: the engine answers GetUnitIsStunned true
+      -- for units still under construction (a nanoframe is inactive), which
+      -- smeared a yellow EMP dot over every factory bar before this gate
+      if stunned == true and (build or 1) >= 1 then bits = bits + 4 end
       if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
         -- state semantics need no "all zero" baseline row: the decode treats
         -- everything before the first event as healthy; but a transition BACK

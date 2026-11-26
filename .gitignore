@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 # local artifact backups (the deployed example artifact itself IS tracked)
 mockup/battle.zkr.*
+.zkr-work*/

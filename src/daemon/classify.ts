@@ -37,9 +37,14 @@ const ARTY_LOBED_MIN_RANGE = 800;
 /** Missile path threshold (elmo); spec §C. */
 const MISSILE_MIN_RANGE = 900;
 
-/** Weapon types that never get a path or line (dropped bucket). */
+/** Weapon types that never get a path or line (dropped bucket).
+ *  LightningCannon is NOT here: every lightning gun in ZK (Knight, Venom,
+ *  Felon's Shield Gun, Paladin, Scorpion, the comm lightninggun module)
+ *  is a short sharp arc worth showing — they classify as beams below
+ *  regardless of range, so short ones like Venom's 240 or the Scorpion's
+ *  490 do not fall through the 900-elmo beam gate. */
 const DROPPED_TYPES = new Set([
-  "AircraftBomb", "Melee", "Shield", "LightningCannon", "TorpedoLauncher",
+  "AircraftBomb", "Melee", "Shield", "TorpedoLauncher",
 ]);
 
 /** Name substrings of junk / fake weapons (dropped bucket). "party" was
@@ -58,8 +63,31 @@ const ARTY_TYPES = new Set(["Cannon"]);
 /** Beam types rendered as origin->impact lines. */
 const BEAM_TYPES = new Set(["BeamLaser", "LaserCannon"]);
 
+/** Named big-beam overrides (the fat purple laser set): Lance's Tachyon,
+ *  Lucifer's beam, the Grizzly/Stinger lasers, the Paladin's laser and the
+ *  Detriment's three lasers. Several sit under the 900-elmo beam gate
+ *  (Grizzly r660, Detriment r550-820) and would otherwise be dropped;
+ *  the recording is only the flight path — the fat purple look is a
+ *  paint-time decision in the viewer. */
+const BEAM_WEAPON_NAMES = new Set([
+  "hoverarty_ata", "turretantiheavy_ata", "amphassault_laser",
+  "turretheavylaser_laser", "striderbantha_ata", "striderdetriment_aalaser",
+  "striderdetriment_trilaser", "striderdetriment_obliteration_blaster",
+]);
+/** Named "plain projectile" overrides: the Cyclops's main gun is a short
+ *  flat Cannon (r450, no arc) which no generic rule can catch — recorded
+ *  as artillery-class flights so it draws the normal yellow dash + blip.
+ *  The Ogre's Banisher rockets (r320 MissileLauncher) same story, and they
+ *  additionally carry an AoE the viewer paints as an impact ring. */
+const ARC_WEAPON_NAMES = new Set(["tankheavyassault_cor_gol", "tankriot_tawf_banisher"]);
+
 export function classifyProjectile(w: WeaponDefInfo): number {
   const name = (w.name ?? "").toLowerCase();
+
+  // named overrides first - they are exact weapon names, more precise
+  // than any type/range rule can ever be
+  if (BEAM_WEAPON_NAMES.has(name)) return 1;
+  if (ARC_WEAPON_NAMES.has(name)) return 2;
 
   // ground napalm (ZK's own classification: description / lups fx, not merely
   // any area damage) is recorded first regardless — ZK prefixes weapon names
@@ -83,6 +111,10 @@ export function classifyProjectile(w: WeaponDefInfo): number {
   if (MISSILE_TYPES.has(type) && range >= MISSILE_MIN_RANGE) {
     return name.includes("nuke") || w.customParams?.["isnuke"] === "1" ? 3 : 4;
   }
+
+  // lightning guns: beams at ANY range - the whole type is lightning
+  // guns (see the DROPPED_TYPES comment)
+  if (type === "LightningCannon") return 1;
 
   if (BEAM_TYPES.has(type) && range >= BEAM_MIN_RANGE) return 1;
 
