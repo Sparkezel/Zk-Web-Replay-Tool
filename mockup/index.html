@@ -1137,7 +1137,8 @@ function draw(model,tm){profSeg("backdrop");
     model.units.forEach(function(u){
       if(u.sr<200)return;
       var pos=u.posAt(tm);
-      if(!pos||pos.sh===undefined)return;
+      /* a shield still under construction projects nothing yet */
+      if(!pos||pos.sh===undefined||(pos.bd!==undefined&&pos.bd<1))return;
       var rx=u.sr*pxPerElmo;
       if(rx<3)return;
       cx.fillStyle=ZkrReplay.shieldColor(pos.sh,.2);
@@ -1155,7 +1156,8 @@ function draw(model,tm){profSeg("backdrop");
     model.units.forEach(function(u){
       if(u.cr<=0)return;
       var pos=u.posAt(tm);
-      if(!pos)return;
+      /* an area cloaker still under construction runs no field */
+      if(!pos||(pos.bd!==undefined&&pos.bd<1))return;
       var fieldOn,fieldStalled=false;
       if(pos.cf!==undefined){fieldOn=pos.cf;fieldStalled=pos.cs;}
       else fieldOn=pos.ck;
@@ -1335,7 +1337,7 @@ function draw(model,tm){profSeg("backdrop");
     }
     /* cloaked (own cloak or inside an Iris field): small cyan dot
        beneath the icon — non-intrusive, readable at any zoom */
-    if(pos.ck){
+    if(pos.ck&&(pos.bd===undefined||pos.bd>=1)){
       cx.fillStyle="#4be3ff";
       cx.beginPath();cx.arc(x,y+r+2.2,1.8,0,7);cx.fill();
     }
@@ -1377,7 +1379,7 @@ function draw(model,tm){profSeg("backdrop");
        ALWAYS for personal-shield units (thug/felon/commander shield module
        — radius < 200, never an area circle). Charge fills from the bottom,
        same deep blue -> deep red gradient as the circles */
-    if(u.sr>0&&pos.sh!==undefined&&(u.sr<200||!shieldsOn)){
+    if(u.sr>0&&pos.sh!==undefined&&(pos.bd===undefined||pos.bd>=1)&&(u.sr<200||!shieldsOn)){
       cx.fillStyle="#000";cx.fillRect(x+r+2,y-r,3,2*r);
       cx.fillStyle=ZkrReplay.shieldColor(pos.sh,1);
       cx.fillRect(x+r+2,y-r+2*r*(1-pos.sh),3,2*r*pos.sh);
@@ -1400,11 +1402,15 @@ function draw(model,tm){profSeg("backdrop");
     /* the named big guns (Lance/Lucifer/Grizzly/Stinger/Paladin/Detriment)
        paint a FAT PURPLE BEAM: a glow stroke plus a bright core from the
        shot's origin to its live position — a laser reads as a line, not
-       as a travelling dash. Keyed on the unit-key prefix of the weapon
-       name; only their beam weapons are ever recorded as class-1 flights */
-    var fbk=pr.wname?pr.wname.split("_")[0]:"";
-    if(!pr.tpath&&(fbk==="hoverarty"||fbk==="turretantiheavy"||fbk==="amphassault"||
-       fbk==="turretheavylaser"||fbk==="striderbantha"||fbk==="striderdetriment")){
+       as a travelling dash. Keyed on EXACT weapon names: the old unit-key
+       PREFIX also matched the Paladin's EMP ROCKETS
+       (striderbantha_emp_missile) and drew them as laser lines instead
+       of the missiles they are */
+    var fbk=pr.wname||"";
+    if(!pr.tpath&&(fbk==="hoverarty_ata"||fbk==="turretantiheavy_ata"||
+       fbk==="amphassault_laser"||fbk==="turretheavylaser_laser"||
+       fbk==="striderbantha_ata"||fbk==="striderbantha_lightning"||
+       fbk==="striderdetriment_trilaser"||fbk==="striderdetriment_obliteration_blaster")){
       if(pr.bo){
         cx.strokeStyle="rgba(176,120,255,.28)";
         cx.lineWidth=4.6;

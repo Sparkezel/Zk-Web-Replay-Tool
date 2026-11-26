@@ -826,6 +826,17 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   snap.weaponDefs.set(37, { defID: 37, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
   snap.projectiles.set(108, { proID: 108, weaponDefID: 37, projClass: 3, ownerTeam: 1, startFrame: 595,
     samples: [{ frame: 595, x: 5000, z: 5000, y: 600 }, { frame: 600, x: 7500, z: 7450, y: 340 }] });
+  // a WIDE genuine kill: a fast Trinity and its interceptor end in the same
+  // probe frame, but one probe interval of closing speed leaves their last
+  // samples 500 elmos apart (measured on the stress replay: 326) - past the
+  // old fixed 300 gate, which painted a fake ground detonation at the
+  // intercept. The cadence-scaled radius must still pair them.
+  snap.weaponDefs.set(50, { defID: 50, name: "staticnuke_crblmssl", type: "StarburstLauncher", range: 72000, aoe: 960 });
+  snap.projectiles.set(116, { proID: 116, weaponDefID: 50, projClass: 3, ownerTeam: 0, startFrame: 690,
+    samples: [{ frame: 690, x: 6000, z: 6000, y: 400 }, { frame: 696, x: 6300, z: 6300, y: 300 }] });
+  snap.weaponDefs.set(51, { defID: 51, name: "staticantinuke_amd_rocket", type: "StarburstLauncher", range: 3800, aoe: 210 });
+  snap.projectiles.set(117, { proID: 117, weaponDefID: 51, projClass: 3, ownerTeam: 1, startFrame: 691,
+    samples: [{ frame: 691, x: 6900, z: 6900, y: 400 }, { frame: 696, x: 6700, z: 6600, y: 300 }] });
   // PTGT: commanded warhead destinations. The clean Trinity gets one row
   // (its circle anchors at the target, not the last sample); the
   // INTERCEPTED Trinity gets a stale early row plus the real one - the
@@ -849,8 +860,9 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   // casualty and must survive.
   snap.events.push({ kind: "wreck", frame: 300, unitID: 900, int1: 40, int2: 16000, int3: 8 });
   snap.events.push({ kind: "wreck", frame: 2100, unitID: 901, int1: 40, int2: 16000, int3: 8 });
-  // census-driven death blasts: a Skuttle (180 - the census threshold itself)
-  // and a Detriment (1280 NUCLEAR_MISSILE - nuke grade, vector art)
+  // census-driven death blasts: a Skuttle (90 - the effective damage
+  // radius, half the lua aoe 180, per gui_blastRadius) and a Detriment
+  // (640 NUCLEAR_MISSILE, effective radius - nuke grade, vector art)
   snap.unitDefs.set(23, { defID: 23, name: "jumpbomb", metalCost: 100, health: 800, canMove: true, iconType: "jumpbomb", humanName: "Skuttle" });
   snap.units.set(15, { unitID: 15, defID: 23, samples: [
     { frame: 320, x: 4000, z: 4000, hp: 255, build: 255 },
@@ -905,13 +917,13 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "staticnuke_crblmssl flight gets the nuke_missile.png marker");
   assert.equal(model.projectiles.find((p) => p.icon === "antinuke_proj")!.weaponDefID, 34,
     "the antinuke interceptor flight gets the antinuke_proj.png marker");
-  assert.ok(model.projectiles.filter((p) => p.icon).length === 4,
-    "Eos/Shockley flights stay plain trails; the interceptor pair and both Trinities carry markers");
+  assert.ok(model.projectiles.filter((p) => p.icon).length === 6,
+    "Eos/Shockley flights stay plain trails; both interceptor pairs and all three Trinities carry markers");
   // incoming-strike visualisation: the five silo missiles (+ Trinity) carry
   // their own colour and AOE for the target circle; the interceptor flies
   // colourless (defensive, no target to mark)
   const missAF = model.projectiles.filter((p) => p.mcol);
-  assert.ok(missAF.length === 6, "Eos + both Shockleys + both Trinities + the Zeno carry strike colours");
+  assert.ok(missAF.length === 7, "Eos + both Shockleys + all three Trinities + the Zeno carry strike colours");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.mcol, "255,72,56", "Eos red");
   assert.equal(missAF.find((p) => p.weaponDefID === 31)!.maoe, 192, "Eos AOE from WDEF");
   assert.equal(missAF.find((p) => p.weaponDefID === 32)!.mcol, "72,214,255", "Shockley blue");
@@ -937,8 +949,19 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "a warhead whose end matches no rocket detonates normally");
   // the earlier interceptor flight (105) ends far from any warhead end -
   // it must not mark anything
-  assert.ok(model.projectiles.filter((p) => p.intercepted).length === 1,
-    "exactly the paired warhead reads as intercepted");
+  assert.ok(model.projectiles.filter((p) => p.intercepted).length === 2,
+    "exactly the two paired warheads read as intercepted");
+  // the WIDE kill (proID 116 vs 117): 500 elmos apart at the same frame -
+  // one probe interval of closing speed, the stress-replay geometry that
+  // used to slip past a fixed 300 and paint a fake ground detonation
+  const wide = model.projectiles.find((p) => p.weaponDefID === 50)!;
+  assert.equal(wide.intercepted, true,
+    "a same-frame kill with last samples 500 elmos apart still pairs as an intercept");
+  assert.ok(model.explosions.filter((e) => e.r === 960 && Math.abs(e.t - 696 / 30) < 0.01).length === 0,
+    "no ground detonation for the wide kill");
+  assert.ok(model.feedData.some((f) => f.cls === "intercept" &&
+    Math.abs(f.tm - 696 / 30) < 1e-3),
+    "the wide kill gets its intercept feed line");
 
   // ---- recorded warhead targets (PTGT) ----
   // the clean Trinity's flight carries the commanded destination as map
@@ -1012,8 +1035,8 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
     "a single Eos flight leaves one plain launch line");
   assert.ok(model.feedData.some((f) => f.cls === "launch" && f.txt === "2 \u00d7 Shockley missiles launched!"),
     "two Shockley flights 0.07 s apart aggregate into one volley line");
-  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 2,
-    "both Trinity flights get news; their 6 s gap never aggregates them");
+  assert.equal(model.feedData.filter((f) => f.cls === "launch" && /Trinity/.test(f.txt)).length, 3,
+    "all three Trinity flights get news; their gaps never aggregate them");
 
   // ---- launched vs killed-in-silo missile units ----
   const u12 = model.units.find((u) => u.id === 12)!;
@@ -1038,13 +1061,15 @@ test("states, antinuke coverage, missile explosions, napalm and superweapon news
   assert.ok(Math.abs(model.wrecks[0]!.x - 16000 / 16384) < 1e-4 && model.wrecks[0]!.metal === 40,
     "the late corner casualty — a REAL wreck — survives the gate");
 
-  // census-driven death blasts: the Skuttle-class 180 circle, the
-  // Detriment's 1280 NUCLEAR_MISSILE blast with the vector nuke art
-  const skutBlast = model.explosions.find((e) => e.r === 180);
+  // census-driven death blasts: the Skuttle-class 90 circle (effective
+  // radius = half the lua areaOfEffect diameter, matching ZK's own
+  // blast-radius widget), the Detriment's 640 NUCLEAR_MISSILE blast
+  // with the vector nuke art
+  const skutBlast = model.explosions.find((e) => e.r === 90);
   assert.ok(skutBlast && Math.abs(skutBlast.t - 354 / 30) < 1e-6 &&
     Math.abs(skutBlast.x - 4000 / 16384) < 1e-4 && skutBlast.fx === false,
     "Skuttle death blast: circle at its death position/time, no blast art");
-  const detBlast = model.explosions.find((e) => e.r === 1280);
+  const detBlast = model.explosions.find((e) => e.r === 640);
   assert.ok(detBlast && detBlast.fx === true && detBlast.col === "255,72,56" &&
     Math.abs(detBlast.t - 366 / 30) < 1e-6,
     "Detriment death blast: nuke-grade, red, uses the vector blast art");
@@ -1348,4 +1373,59 @@ test("engagement rows decode into per-attacker arrow sessions with engAt TTL", a
   assert.equal(ZkrReplay.engAt(rows, 520 / 30 + 0.7, 0.5), null, "shorter ttl expires sooner");
   // units with no engagements carry no entry; no other attacker keys appear
   assert.equal(Object.keys(model.engagements).length, 1);
+});
+
+test("EMP impacts: beam rings anchor at the struck unit, Paladin rockets ring at their target", async () => {
+  const snap = syntheticSnapshot();
+  // a Scorpion (team 0) parked at (3000,3000), striking a Bandit (team 1)
+  // parked far away at (9000,9000)
+  snap.unitDefs.set(70, { defID: 70, name: "striderscorpion", metalCost: 3000, health: 8000, canMove: true, iconType: "t3riot", humanName: "Scorpion" });
+  snap.units.set(70, { unitID: 70, defID: 70, samples: [
+    { frame: 6, x: 3000, z: 3000, hp: 255, build: 255 },
+    { frame: 1200, x: 3000, z: 3000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 70, int1: 70, int2: 0, int3: -1 });
+  snap.unitDefs.set(71, { defID: 71, name: "bandit", metalCost: 130, health: 90, canMove: true, iconType: "raider3", humanName: "Bandit" });
+  snap.units.set(71, { unitID: 71, defID: 71, samples: [
+    { frame: 6, x: 9000, z: 9000, hp: 255, build: 255 },
+    { frame: 1200, x: 9000, z: 9000, hp: 255, build: 255 },
+  ] });
+  snap.events.push({ kind: "spawn", frame: 6, unitID: 71, int1: 71, int2: 1, int3: -1 });
+  // the scorpion's multi-stunner hits the bandit at frame 300
+  snap.events.push({ kind: "engage", frame: 300, unitID: 70, int1: 71, int2: -1, int3: -1 });
+  // the beam flight: zero-span, both samples AT the muzzle - the old code
+  // anchored the ring here (the scorpion's own icon)
+  snap.weaponDefs.set(45, { defID: 45, name: "striderscorpion_multilightning", type: "LightningCannon", range: 490, aoe: 80 });
+  snap.projectiles.set(300, { proID: 300, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 300,
+    samples: [{ frame: 300, x: 3000, z: 3000, y: 30 }, { frame: 306, x: 3000, z: 3000, y: 30 }] });
+  // the Paladin's EMP rockets: a real missile flight, impact at its last
+  // sample (12 frames apart - a wider gap would SPLIT into two flights at
+  // the packer's 18-frame rule and ring the muzzle fragment too)
+  snap.weaponDefs.set(46, { defID: 46, name: "striderbantha_emp_missile", type: "MissileLauncher", range: 1200, aoe: 64 });
+  snap.projectiles.set(301, { proID: 301, weaponDefID: 46, projClass: 4, ownerTeam: 1, startFrame: 400,
+    samples: [{ frame: 400, x: 4000, z: 4000, y: 200 }, { frame: 412, x: 11000, z: 11000, y: 0 }] });
+  // a second scorpion beam: same firer still engaged with the same victim -
+  // it rings at the victim too (the scorpion simply shot again)
+  snap.projectiles.set(302, { proID: 302, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 500,
+    samples: [{ frame: 500, x: 3100, z: 3100, y: 30 }] });
+  // a beam from the fencer (team 0, unit 1 - it has NO engagement rows and
+  // the scorpion is far outside the muzzle radius): NO ring at all
+  snap.projectiles.set(303, { proID: 303, weaponDefID: 45, projClass: 1, ownerTeam: 0, startFrame: 500,
+    samples: [{ frame: 500, x: 1100, z: 2100, y: 30 }] });
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+
+  const cyan = model.explosions.filter((e) => e.col === "72,214,255");
+  assert.equal(cyan.length, 3,
+    "three EMP rings: both scorpion shots (anchored at the victim) and the rockets - the fencer's anchorless beam paints none");
+  const beamRings = cyan.filter((e) => e.r === 80);
+  assert.equal(beamRings.length, 2, "both scorpion beams ring");
+  for (const beamRing of beamRings) {
+    assert.ok(Math.abs(beamRing.x - 9000 / 16384) < 1e-4 && Math.abs(beamRing.y - 9000 / 16384) < 1e-4,
+      "the multi-stunner ring lands at the STRUCK bandit, not at the scorpion's muzzle");
+  }
+  assert.ok(Math.abs(beamRings[0]!.x - 3000 / 16384) > 0.1, "sanity: the old wrong anchor (the muzzle) is far away");
+  const rocketRing = cyan.find((e) => e.r === 64)!;
+  assert.ok(Math.abs(rocketRing.x - 11000 / 16384) < 1e-4 && Math.abs(rocketRing.y - 11000 / 16384) < 1e-4,
+    "the Paladin's EMP rockets ring at their impact (the last flight sample)");
 });
