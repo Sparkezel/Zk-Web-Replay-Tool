@@ -32,6 +32,17 @@ ICON_ALIASES = {
     "commander1": "armcommander",
     "commander2": "armcommander",
     "commander3": "armcommander",
+    # dyncomm levels 0/4/5 embed the same armcommander art (dynamic_comm_defs
+    # generates iconType commander<N> per level; icontypes.lua maps every
+    # one of them to icons/armcommander.dds)
+    "commander0": "armcommander",
+    "commander4": "armcommander",
+    "commander5": "armcommander",
+    # chicken units whose own art is commented out in icontypes.lua and
+    # resolve to another unit's icon there
+    "chickendodo": "kbotbomb",      # icontypes: chickendodo -> kbotbomb.dds
+    "chickenleaper": "jumpjetraider",  # icontypes: chickenleaper -> jumpjetraider.dds
+    "chickenminiq": "chickenq",     # icontypes: chickenminiq -> chickenq.dds
     # the five stockpiled silo missiles (Eos/Shockley/Zeno/Quake/Inferno)
     # resolve to the cruise-missile icon; the file is committed so the
     # sync must not consider it missing when the game ships no
@@ -40,6 +51,11 @@ ICON_ALIASES = {
     # ZK maps stealth to the sniper icon (icontypes.lua:751) - the game
     # ships no stealth.* of its own
     "stealth": "sniper",
+    # smallgunship (the Gull carrier drone) resolves to the plain gunship
+    # icon; pw_assault_small (planetary wars extra commands) to pw_assault
+    # (both straight from icontypes.lua)
+    "smallgunship": "gunship",
+    "pw_assault_small": "pw_assault",
 }
 
 
