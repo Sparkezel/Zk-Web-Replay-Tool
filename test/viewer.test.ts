@@ -741,6 +741,50 @@ test("commander morph reads chassis + level, cancelled nanoframes read cancelled
 });
 
 
+test("Zenith meteors: shots and dropped meteors that land leave an impact, the hovering stock is not drawn (#46)", async () => {
+  const snap = syntheticSnapshot();
+  // the four meteor weapons as a real WDEF records them (Comet Catcher: aoe 128 each)
+  snap.weaponDefs.set(60, { defID: 60, name: "zenith_meteor_float", type: "MissileLauncher", range: 8800, aoe: 128 });
+  snap.weaponDefs.set(61, { defID: 61, name: "zenith_meteor_aim", type: "MissileLauncher", range: 8800, aoe: 128 });
+  snap.weaponDefs.set(62, { defID: 62, name: "zenith_meteor", type: "MissileLauncher", range: 8800, aoe: 128 });
+  snap.weaponDefs.set(63, { defID: 63, name: "zenith_meteor_uncontrolled", type: "Cannon", range: 8800, aoe: 128 });
+  // one meteor hovers over the Zenith, is swapped for the aim stage in
+  // mid-air, then for the shot; the shot's last sample is one probe step
+  // (200 elmos in x and z) before it lands
+  snap.projectiles.set(200, { proID: 200, weaponDefID: 60, projClass: 4, ownerTeam: 0, startFrame: 30,
+    samples: [{ frame: 30, x: 8000, z: 8000, y: 2650 }, { frame: 36, x: 8010, z: 8005, y: 2650 }] });
+  snap.projectiles.set(201, { proID: 201, weaponDefID: 61, projClass: 4, ownerTeam: 0, startFrame: 42,
+    samples: [{ frame: 42, x: 8010, z: 8005, y: 2650 }, { frame: 48, x: 8100, z: 8100, y: 2600 }] });
+  snap.projectiles.set(202, { proID: 202, weaponDefID: 62, projClass: 4, ownerTeam: 0, startFrame: 54,
+    samples: [{ frame: 54, x: 11600, z: 11600, y: 450 }, { frame: 60, x: 11800, z: 11800, y: 230 },
+      { frame: 66, x: 12000, z: 12000, y: 10 }] });
+  // a meteor the Zenith dropped when it lost power falls at (7000, 7000)
+  snap.projectiles.set(203, { proID: 203, weaponDefID: 63, projClass: 2, ownerTeam: 0, startFrame: 66,
+    samples: [{ frame: 66, x: 7000, z: 7000, y: 2650 }, { frame: 72, x: 7000, z: 7000, y: 100 }] });
+  // a dropped meteor the Zenith takes back when its power returns: a new
+  // hovering meteor starts where it ends, so it never lands
+  snap.projectiles.set(204, { proID: 204, weaponDefID: 63, projClass: 2, ownerTeam: 0, startFrame: 80,
+    samples: [{ frame: 80, x: 5000, z: 5000, y: 2650 }, { frame: 86, x: 5000, z: 5000, y: 2500 }] });
+  snap.projectiles.set(205, { proID: 205, weaponDefID: 60, projClass: 4, ownerTeam: 0, startFrame: 90,
+    samples: [{ frame: 90, x: 5000, z: 5000, y: 2500 }, { frame: 96, x: 5000, z: 5000, y: 2650 }] });
+  const zkr = buildZkrFromResim(snap, { projectiles: "heavy" });
+  const model = ZkrReplay.artifactToModel(await ZkrReplay.parse(new Uint8Array(Buffer.from(zkr))));
+  const names = model.projectiles.map((p) => p.wname);
+  assert.ok(!names.includes("zenith_meteor_float"), "the hovering stock is not a flight");
+  for (const n of ["zenith_meteor_aim", "zenith_meteor", "zenith_meteor_uncontrolled"]) {
+    assert.ok(names.includes(n), `${n} is a flight`);
+  }
+  assert.ok(!model.explosions.some((e) => e.col === "168,96,255"), "meteors use the standard blast colour, not the slow purple");
+  const impacts = model.explosions.filter((e) => e.col === "255,150,90" && e.r === 128)
+    .map((e) => [Math.round(e.x * 16384), Math.round(e.y * 16384)])
+    .sort((a, b) => a[0] - b[0]);
+  assert.equal(impacts.length, 2, "the shot and the landed meteor; none for the taken-back one or in mid-air");
+  // landed meteor: straight down; shot: half a probe step past its last sample
+  for (const [got, want] of impacts.map((e, i) => [e, [[7000, 7000], [12100, 12100]][i]!] as const)) {
+    assert.ok(Math.abs(got[0]! - want[0]!) <= 2 && Math.abs(got[1]! - want[1]!) <= 2, `impact at ${got} (want ${want})`);
+  }
+});
+
 test("states, antinuke coverage, missile explosions, napalm and superweapon news decode", async () => {
   const snap = syntheticSnapshot();
   // anti-nuke launcher with ZK's real coverage (staticantinuke 2500 elmos)
