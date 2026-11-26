@@ -1805,10 +1805,10 @@ var REPLAYS=[
      the 5 Hz default against the 1 Hz --pos-rate 5 experiment */
   {label:"Otago 8v8 · 5 Hz sample (default)",art:"battle.zkr",title:"[A] Teams All Welcome #1"},
   {label:"Otago 8v8 · 1 Hz sample (artifact-size experiment)",art:"battle4.zkr",title:"[A] Teams All Welcome #1"},
-  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"}
-  /* Comet Catcher (battle2.zkr) is OFF THE LIST until the decoder rewrite:
-     its 15 MB full-game recording OOMs the current viewer; it gets resimmed
-     (at 1 Hz or onto typed arrays) as soon as that lands */
+  {label:"The Hole v5 · nuke / antinuke / missile silo tests",art:"battle3.zkr",title:"The Hole v5"},
+  /* the full stress recording loads at ~420 MB now (the object decode
+     needed >8 GB and OOMed); kept on the picker as the big-game proof */
+  {label:"Comet Catcher Remake 1.8 (full stress test)",art:"battle2.zkr",title:"Comet Catcher Remake 1.8"}
 ];
 var curReplay=REPLAYS[0];
 function loadArtifact(url){
