@@ -69,6 +69,12 @@ Design basis: barreplay (mabn) sectioned-artifact format, adapted to Zero-K.
     own flight layer), the strategic silo missiles, `terraunit` and
     `fakeunit_*`. The viewer's arrow layer TTLs an arrow out ~1.2 s after
     the last row (Engagement TTL: hits refresh twice per TTL window).
+20. Stockpile (STCK section, EVNT `kind=8`): `(frame, unitID, count)` — one
+    row whenever a stockpiling unit's count changes (built, fired, or lost);
+    the packer folds the widget's `stk` rows into per-unit count tracks so
+    the viewer can draw stock over time. Silos that build missiles count
+    finished-but-unlaunched stock; missiles removed by launch or death
+    decrement it.
 
 ## C. Projectiles (`P`) — revised policy
 
