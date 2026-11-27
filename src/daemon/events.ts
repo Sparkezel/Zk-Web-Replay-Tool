@@ -70,6 +70,15 @@ export interface StateRecord {
   slow: number;
 }
 
+/** stockpile count change per unit, checked once a second: the engine
+ *  stockpile (Trinity, Scylla, Reef, Artemis) or the Zenith's
+ *  meteorsControlled rules param */
+export interface StockRecord {
+  unitID: number;
+  frame: number;
+  count: number;
+}
+
 export interface PosSample {
   frame: number;
   x: number;
@@ -162,6 +171,8 @@ export interface SnapshotData {
   metalSpots: Array<{ x: number; z: number; metal?: number }>;
   /** sparse per-unit state transitions (slow / EMP / disarm / fire) */
   states: StateRecord[];
+  /** stockpile count changes (missiles / meteors held) */
+  stockpile?: StockRecord[];
   startboxes?: StartboxData;
 }
 
@@ -180,6 +191,7 @@ export function newSnapshot(): SnapshotData {
     gameOvers: [],
     metalSpots: [],
     states: [],
+    stockpile: [],
   };
 }
 
@@ -367,6 +379,16 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
         z: num(ev["z"], 0),
         metal: ev["m"] !== undefined && ev["m"] !== null ? num(ev["m"], 0) : undefined,
       });
+      return;
+    }
+    case "stk": {
+      // stockpile counts, batched by the widget once a second:
+      // p = [[unitID, frame, count], ...], one row per change
+      const rows = (snap.stockpile ??= []);
+      for (const row of (ev["p"] ?? []) as Array<[number, number, number]>) {
+        if (!Array.isArray(row) || row.length < 3) continue;
+        rows.push({ unitID: num(row[0], -1), frame: num(row[1], 0), count: num(row[2], 0) });
+      }
       return;
     }
     case "stat": {

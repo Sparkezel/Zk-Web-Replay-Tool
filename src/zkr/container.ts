@@ -56,6 +56,7 @@ export const SECTION = {
   STARTBOX: "STBX",
   METALSPOT: "MESP",
   STATES: "STAT",
+  STOCKPILE: "STCK",
   CHAT: "CHAT",
   MAPDRAW: "DRAW",
   MACRO: "MACR",
