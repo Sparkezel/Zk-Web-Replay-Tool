@@ -190,10 +190,14 @@ export function encodeEvents(snap: SnapshotData): Uint8Array {
  *   repeat: u32 proID, u32 weaponDefID, u8 class, u16 ownerTeam,
  *           u32 firstFrame, u16 sampleCount
  *           u16 originX, u16 originY, u16 originZ
- *           repeat sample: s16 dX, s16 dZ, s16 absQY
+ *           repeat sample: s16 dX, s16 dZ, u16 absQY
  *
  * `PROJ` v2 — v1 plus real sample timing (see POS v2):
- *           repeat sample: s16 dX, s16 dZ, s16 absQY, s16 frameDelta
+ *           repeat sample: s16 dX, s16 dZ, u16 absQY, s16 frameDelta
+ *
+ * absQY is the height as a 0..65535 fraction of the map's z size (heights
+ * above it clamp). Writers before this wrote it with s16, which stores the
+ * same bytes, so every artifact decodes it as unsigned.
  */
 export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset = "heavy"): Uint8Array {
   const mapW = snap.meta.mapW ?? 0;
@@ -220,7 +224,7 @@ export function encodeProjectiles(snap: SnapshotData, preset: ProjectilePreset =
     for (const s of p.samples) {
       const qx = quantize(s.x, mapW);
       const qz = quantize(s.z, mapH);
-      w.s16(qx - prevX).s16(qz - prevZ).s16(quantize(s.y, mapH));
+      w.s16(qx - prevX).s16(qz - prevZ).u16(quantize(s.y, mapH));
       w.s16(s.frame - prevFrame);
       prevX = qx;
       prevZ = qz;
