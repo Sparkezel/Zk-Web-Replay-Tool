@@ -567,7 +567,10 @@
       for (let k = 1; k < m; k++) {
         cx += dv.getInt16(o, true) / 65535; o += 2;
         cz += dv.getInt16(o, true) / 65535; o += 2;
-        const cy = dv.getInt16(o, true) / 65535; o += 2;
+        /* unsigned: the height is a 0..65535 fraction (older writers used
+           s16 for the same bytes, so a signed read wrapped every height
+           above half the map's z size to a negative value) */
+        const cy = dv.getUint16(o, true) / 65535; o += 2;
         if (version >= 2) {
           frame += dv.getInt16(o, true); o += 2;
         } else {
