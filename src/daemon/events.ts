@@ -86,6 +86,9 @@ export interface PosSample {
   /** this unit's area-cloak field wants to run but is unpowered/stalled
    *  (cloak_shield rules param == 1; the viewer flashes the circle red) */
   cloakStalled?: boolean | undefined;
+  /** a Zero-K script has hidden the unit (Spring.GetUnitNoDraw): a popped
+   *  Claw mine or a launched silo missile waiting unseen to be removed */
+  hidden?: boolean | undefined;
   /** shield charge fraction 0..1; undefined when the unit has no shield */
   shield?: number | undefined;
 }
@@ -328,6 +331,7 @@ export function ingestEvent(snap: SnapshotData, ev: Record<string, unknown>): vo
           cloaked: ckByte === -1 ? undefined : (ckByte & 1) === 1,
           cloakField: ckByte === -1 ? undefined : (ckByte & 2) === 2,
           cloakStalled: ckByte === -1 ? undefined : (ckByte & 4) === 4,
+          hidden: ckByte === -1 ? undefined : (ckByte & 8) === 8,
           shield: shRaw < 0 ? undefined : Math.max(0, Math.min(1, shRaw)),
         });
       }

@@ -107,7 +107,9 @@ export function quantizationOf(snap: SnapshotData): Quantization {
  *                          u8 buildFrac,
  *                          u8 flags (bit0 = cloaked,
  *                                    bit1 = own area-cloak field active,
- *                                    bit2 = own area-cloak field stalled),
+ *                                    bit2 = own area-cloak field stalled,
+ *                                    bit3 = hidden by a script; decoders that
+ *                                    mask the byte with 7 ignore it),
  *                          u8 shieldFrac (255 = no shield/unknown,
  *                                         0..254 = charge × 254)
  *
@@ -143,7 +145,7 @@ export function encodePos(snap: SnapshotData): Uint8Array {
         .u8(Math.max(0, Math.min(255, Math.round(s.build ?? 255))));
       // flags: bit0 = cloaked now (own/ally-field/personal), bit1 = this
       // unit's own area-cloak field active, bit2 = field stalled/unpowered
-      w.u8((s.cloaked ? 1 : 0) | (s.cloakField ? 2 : 0) | (s.cloakStalled ? 4 : 0));
+      w.u8((s.cloaked ? 1 : 0) | (s.cloakField ? 2 : 0) | (s.cloakStalled ? 4 : 0) | (s.hidden ? 8 : 0));
       // shield charge: 255 = no shield/unknown, else 0..254 = charge x 254
       w.u8(s.shield === undefined ? 255
         : Math.max(0, Math.min(254, Math.round(s.shield * 254))));
