@@ -24,7 +24,7 @@ export { quantize, encodePos, encodeEvents, encodeProjectiles, encodeLinks, buil
 export type { PackOptions } from "./daemon/pack.js";
 export { provisionEngine, downloadFile, extractZip, headlessBinaryPath } from "./daemon/provision.js";
 export { loadDemoFile, runHeadlessCapture, writeStartscript } from "./daemon/run.js";
-export { resimBattle, parseArgs, injectWidget } from "./daemon/index.js";
+export { resimBattle, parseArgs, injectWidget, enableLocalWidgets, LOCAL_WIDGETS_CONFIG } from "./daemon/index.js";
 export type { ResimJob, ResimResult } from "./daemon/index.js";
 export {
   decodeDxt1, encodePng, extractMapImage, extractMapImageFromBuffer, extractMapImageFromArchive,

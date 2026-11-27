@@ -10,7 +10,7 @@ import path from "node:path";
 import {
   classifyProjectile, presetRecords, ingestLine, newSnapshot,
   buildZkrFromResim, quantize, readZkr, SECTION,
-  resimBattle, parseArgs, injectWidget, SNAPSHOT_WIDGET_NAME,
+  resimBattle, parseArgs, injectWidget, SNAPSHOT_WIDGET_NAME, enableLocalWidgets, LOCAL_WIDGETS_CONFIG,
 } from "../dist/index.js";
 
 const W = (name: string, extra: Record<string, unknown> = {}) => ({
@@ -216,6 +216,20 @@ test("widget injection replaces speed placeholders and leaves none behind", () =
   assert.match(lua, /local targetSpeed = tonumber\("5"\) or 1/);
   assert.match(lua, /Spring\.GetGameSpeed/);
   assert.equal(injectWidget(path.join(dir, "nope"), 5), null);
+});
+
+test("local widgets config: written into a fresh write dir, an existing one is kept", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "zkr-cfg-"));
+  const file = path.join(dir, "LuaUI", "Config", "ZK_data.lua");
+  assert.equal(enableLocalWidgets(dir), "written");
+  const text = readFileSync(file, "utf8");
+  assert.equal(text, LOCAL_WIDGETS_CONFIG);
+  // the key Zero-K's widget handler reads (LuaUI/cawidgets.lua: cadata["Local Widgets Config"])
+  assert.match(text, /\["Local Widgets Config"\] = \{useLocalWidgets = true/);
+  // a config that is already there (a player's, or one Zero-K saved) is never rewritten
+  writeFileSync(file, "return { mine = 1 }\n");
+  assert.equal(enableLocalWidgets(dir), "kept");
+  assert.equal(readFileSync(file, "utf8"), "return { mine = 1 }\n");
 });
 
 test("no-engine resim packs a cheap-parse artifact", async () => {
