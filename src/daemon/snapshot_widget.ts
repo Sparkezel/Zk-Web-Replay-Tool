@@ -67,6 +67,10 @@ local shieldPowerByDef = {}
 local emit
 
 local lastStates = {}
+-- the weapon and frame of each unit's last hit (UnitDamaged): Zero-K's
+-- widget handler passes no weaponDefID to UnitDestroyed (LuaUI/cawidgets.lua
+-- forwards six arguments), so the killing weapon is the hit of the death frame
+local lastHit = {}
 local statRows = {}
 local function flushStatRows()
   if #statRows == 0 then return end
@@ -246,10 +250,18 @@ end
 function widget:UnitDestroyed(unitID, unitDefID, unitTeam, attackerID, attackerDefID, attackerTeam, weaponDefID)
   lastStates[unitID] = nil
   if excludedDefIDs[unitDefID] then excludedUnitIDs[unitID] = nil return end
-  if attackerDefID ~= nil and attackerDefID >= 0 then maybeWdef(attackerDefID) end
+  -- a hit in this frame (or the one before) is the killing blow; anything
+  -- older is not (self-destruct, reclaim and morph deaths get -1)
+  local hit = lastHit[unitID]
+  lastHit[unitID] = nil
+  local killWeapon = weaponDefID or -1
+  if weaponDefID == nil and hit ~= nil and Spring.GetGameFrame() - hit.f <= 1 then
+    killWeapon = hit.w
+  end
+  maybeWdef(killWeapon)
   emit('{"t":"death","f":' .. Spring.GetGameFrame() .. ',"u":' .. unitID ..
     ',"k":' .. (attackerID or -1) .. ',"kt":' .. (attackerTeam or -1) ..
-    ',"w":' .. (weaponDefID or attackerDefID or -1) .. '}')
+    ',"w":' .. killWeapon .. '}')
 end
 
 -- wreck features: Spring spawns a *_dead / *_heap feature when a unit dies;
@@ -352,6 +364,9 @@ local ENG_ARTY_DEFS = {
 local engLast = {}   -- attackerUnitID -> { v = victimUnitID, f = frame of last emit }
 function widget:UnitDamaged(unitID, unitDefID, unitTeam, damage, paralyzer,
                             weaponDefID, projectileID, attackerID, attackerDefID, attackerTeam)
+  if weaponDefID ~= nil then
+    lastHit[unitID] = { w = weaponDefID, f = Spring.GetGameFrame() }
+  end
   if attackerID == nil or attackerID <= 0 or attackerID == unitID then return end
   local ad = attackerDefID and UnitDefs[attackerDefID]
   if ad == nil then return end
