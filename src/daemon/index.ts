@@ -116,6 +116,7 @@ export async function resimBattle(job: ResimJob, log: Logger = consoleLogger): P
       const writeDir = path.join(root, "engine-write");
       mkdirSync(path.join(writeDir, "LuaUI", "Widgets"), { recursive: true });
       injectWidget(writeDir, speedFactor, log, projPreset);
+      enableLocalWidgets(writeDir, log);
       log.info(`resimulating battle ${battleID} with engine at ${engineDir}`);
       const run = await runHeadlessCapture({
         engineDir, scriptPath: gamePath, logDir: path.join(root, "logs"), log,
@@ -220,6 +221,30 @@ export function injectWidget(
   writeFileSync(widgetPath, widgetSource);
   log.info(`snapshot widget injected: ${widgetPath}`);
   return widgetPath;
+}
+
+/** Zero-K loads raw (local) widgets only when LuaUI/Config/ZK_data.lua has a
+ *  "Local Widgets Config" entry (LuaUI/cawidgets.lua); a fresh write dir has
+ *  none, so on a clean machine the injected widget never loads and the resim
+ *  records nothing. This minimal config switches local widgets on. */
+export const LOCAL_WIDGETS_CONFIG =
+  'return {\n\t["Local Widgets Config"] = {useLocalWidgets = true, useLocalWidgetsFirst = true},\n}\n';
+
+/** Write LOCAL_WIDGETS_CONFIG into the engine's write dir when it has no
+ *  ZK_data.lua yet; an existing file is never changed (it only gets a warning
+ *  when it lacks the local-widgets entry). */
+export function enableLocalWidgets(writeDir: string, log: Logger = consoleLogger): "written" | "kept" {
+  const file = path.join(writeDir, "LuaUI", "Config", "ZK_data.lua");
+  if (existsSync(file)) {
+    if (!readFileSync(file, "utf8").includes("Local Widgets Config")) {
+      log.warn(`${file} has no "Local Widgets Config" entry; Zero-K will not load the snapshot widget`);
+    }
+    return "kept";
+  }
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, LOCAL_WIDGETS_CONFIG);
+  log.info(`local widgets enabled: ${file}`);
+  return "written";
 }
 
 /** Parse CLI argv into a ResimJob. Exported for tests. */
