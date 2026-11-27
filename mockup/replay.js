@@ -511,7 +511,7 @@
         hp[k] = u8[o]; o += 1;
         bd[k] = u8[o]; o += 1;
         if (version >= 3) {
-          fl[k] = u8[o] & 7; o += 1;
+          fl[k] = u8[o] & 15; o += 1;
           sh[k] = u8[o]; o += 1;
         } else if (version === 2) {
           fl[k] = u8[o] & 1; o += 1;
@@ -896,7 +896,9 @@
        150 of The Hole's missiles died in the post-gameover sweep, their
        impacts notwithstanding. The only in-data launch sign is a staging
        sample (x at the extreme edge, z at either extreme); the missile
-       stockpiles at its silo deep inside the map before that. */
+       stockpiles at its silo deep inside the map before that. Newer
+       artifacts carry the exact sign: the launch script hides the
+       missile (cruisemissile.lua), so the first hidden sample counts too. */
     const MISSILE_UNIT_DEFS = new Set(["tacnuke", "empmissile", "missileslow", "seismic", "napalmmissile"]);
     const launchTmByUnit = new Map();
     for (const uu of (artifact.pos ? artifact.pos.units : [])) {
@@ -904,7 +906,7 @@
       if (!info || !MISSILE_UNIT_DEFS.has(info.name)) continue;
       const sp = uu.samples;
       for (let k = 0; k < sp.n; k++) {
-        if (sp.x[k] > 0.95 && (sp.y[k] < 0.05 || sp.y[k] > 0.95)) {
+        if ((sp.fl[k] & 8) !== 0 || (sp.x[k] > 0.95 && (sp.y[k] < 0.05 || sp.y[k] > 0.95))) {
           launchTmByUnit.set(uu.unitID, sp.t[k]);
           break;
         }
@@ -2093,6 +2095,9 @@
       cf: track.v3 ? (fl & 2) !== 0 : undefined,
       cs: track.v3 ? (fl & 4) !== 0 : undefined,
       sh: track.sh[i] === 255 ? undefined : track.sh[i] / 254,
+      /* hidden by a Zero-K script (a popped Claw mine, a launched silo
+         missile): players do not see it, so the page does not draw it */
+      hid: (fl & 8) !== 0,
     };
   }
 

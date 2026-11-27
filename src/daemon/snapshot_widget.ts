@@ -576,17 +576,20 @@ function widget:GameFrame(frame)
       -- cloak bits: 1 = unit cloaked right now (own/personal/ally-field), the
       -- viewer draws a cyan dot under it; 2 = THIS unit's area-cloak field is
       -- active (ZK's cloak_shield gadget rules param: 2 = grown and running,
-      -- 1 = stalled/unpowered -> bit 4, 0 = toggled off)
+      -- 1 = stalled/unpowered -> bit 4, 0 = toggled off); 8 = a Zero-K script
+      -- has hidden the unit (a popped Claw mine, a launched silo missile wait
+      -- unseen to be removed), so the viewer does not draw it
       local ck = false
       if Spring.GetUnitIsCloaked ~= nil then ck = Spring.GetUnitIsCloaked(uid) or false end
       local cs = Spring.GetUnitRulesParam(uid, "cloak_shield")
       local cf = cs == 2
       local csBit = cs == 1
+      local hidden = Spring.GetUnitNoDraw(uid) == true
       local sh = shieldFrac(uid, Spring.GetUnitDefID(uid))
       local row = "[" .. uid .. "," .. ipos(x) .. "," .. ipos(z) ..
         "," .. frac(maxHp and maxHp > 0 and hp / maxHp or nil) ..
         "," .. frac(build) .. "," ..
-        ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0)) ..
+        ((ck and 1 or 0) + (cf and 2 or 0) + (csBit and 4 or 0) + (hidden and 8 or 0)) ..
         "," .. frac(sh) .. "]"
       if rowsLen + #row + 1 > POS_LINE_BUDGET then flushRows() end
       rows[#rows + 1] = row
@@ -612,7 +615,7 @@ function widget:GameFrame(frame)
       -- Hidden units are skipped: Zero-K scripts paralyze a popped Claw mine
       -- and a launched silo missile while they wait unseen to be removed
       local stunned = select(2, Spring.GetUnitIsStunned(uid))
-      if stunned == true and not Spring.GetUnitNoDraw(uid) then bits = bits + 4 end
+      if stunned == true and not hidden then bits = bits + 4 end
       if meta == nil or meta.bits ~= bits or meta.slq ~= slq then
         -- state semantics need no "all zero" baseline row: the decode treats
         -- everything before the first event as healthy; but a transition BACK

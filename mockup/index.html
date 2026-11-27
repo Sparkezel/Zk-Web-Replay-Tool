@@ -503,7 +503,7 @@ function buildArtifactModel(artifact){
       states:u.states||[],
       sr:u.shieldRadius||0,
       posAt:function(tm){if(tm<u.born||(this.diedShown>0&&tm>=this.diedShown))return null;
-        var s=ZkrReplay.trackAt(u.track,tm);return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
+        var s=ZkrReplay.trackAt(u.track,tm);if(s.hid)return null;return {x:s.x,y:s.y,hp:s.hp,bd:s.bd,ck:s.ck,cf:s.cf,cs:s.cs,sh:s.sh}}};});
   /* attacker id -> view unit, for the target-arrow layer */
   var unitById={};
   units.forEach(function(u){unitById[u.id]=u;});
