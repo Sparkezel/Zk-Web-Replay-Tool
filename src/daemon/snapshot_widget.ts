@@ -180,6 +180,17 @@ local function maybeUdef(defID)
     ',"ic":"' .. (d.iconType or "") .. '","hn":"' .. (d.humanName or "") .. '"' .. cr .. sr .. an .. '}')
 end
 
+-- Zero-K marks most fake weapons (targeting proxies, bogus bombs) with
+-- customParams.bogus - its own cmd_fire_once and unit_show_shooter gadgets
+-- read it; a few carry only a description that starts with "Fake" (the
+-- Reef's Fake Targeting Weapon, the Outlaw's Fake Weapon)
+local function isFakeWeapon(d, cp)
+  if cp ~= nil and cp.bogus ~= nil then
+    return true
+  end
+  return tostring(d.description or ""):find("^Fake") ~= nil
+end
+
 local function maybeWdef(defID)
   if defID == nil or defID < 0 or knownWeaponDefs[defID] then return end
   knownWeaponDefs[defID] = true
@@ -214,7 +225,8 @@ local function maybeWdef(defID)
     ',"aoe":' .. num(aoe) .. ',"adr":' .. num(adr) .. ',"adu":' .. num(adu) ..
     ',"nd":' .. nd ..
     ',"cp":{"isnuke":"' .. tostring(cp.isnuke or "") ..
-    '","interceptor":"' .. tostring(cp.interceptor or "") .. '"}}')
+    '","interceptor":"' .. tostring(cp.interceptor or "") ..
+    '","bogus":"' .. (isFakeWeapon(d, cp) and "1" or "") .. '"}}')
 end
 
 function widget:Initialize()
@@ -460,6 +472,9 @@ local function classifyWeapon(d, cp)
   local name = string.lower(d.name or "")
   if name:find("fake", 1, true) or name:find("bogus", 1, true) or
      name:find("tele_beacon_target", 1, true) then return 0 end
+  if isFakeWeapon(d, cp) then
+    return 0
+  end
   local wtype = d.type or ""
   if DROPPED_TYPES[wtype] then return 0 end
   local isnuke = (cp ~= nil and cp.isnuke == "1") or name:find("nuke", 1, true) ~= nil
