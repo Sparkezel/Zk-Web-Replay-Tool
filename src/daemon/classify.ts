@@ -96,6 +96,11 @@ export function classifyProjectile(w: WeaponDefInfo): number {
   if (w.napalm) return 2;
 
   if (DROPPED_NAME_PATTERNS.some((p) => name.includes(p))) return 0;
+  // Zero-K's own fake-weapon marker (customParams.bogus, or a description
+  // starting with "Fake"), sent by the widget as cp.bogus = "1": catches
+  // fakes whose internal name has no "fake", e.g. the Reef's
+  // shipcarrier_carriertargeting
+  if (w.customParams?.["bogus"] === "1") return 0;
 
   const type = w.type ?? "";
   if (DROPPED_TYPES.has(type)) return 0;
