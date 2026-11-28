@@ -1331,18 +1331,20 @@ function draw(model,tm){profSeg("backdrop");
       cx.beginPath();cx.arc(x,y,r,0,7);cx.fill();
     }
     cx.globalAlpha=1;
-    /* stockpile count (#47): missiles or meteors held, a small white number
-       at the icon's upper right while above zero (Zero-K's own health bar
-       shows "stocked/total" beside the bar; one number reads at replay
-       zoom). Constant on-screen size like the clamped icons */
+    /* stockpile count (#47): missiles or meteors held, a white number
+       CENTERED under the icon (2x the old size - one number reads at
+       replay zoom from across the panel) while above zero. Zero-K's own
+       health bar shows "stocked/total" beside it; the number sits 10 CSS
+       px below the icon edge, clear of the state dots. Constant on-screen
+       size like the clamped icons */
     var stk=ZkrReplay.stockAt(u.stock,tm);
     if(stk>0){
-      cx.font="bold "+(9*DPR/VIEW.z).toFixed(2)+"px system-ui,sans-serif";
-      cx.textAlign="left";cx.textBaseline="middle";
+      cx.font="bold "+(18*DPR/VIEW.z).toFixed(2)+"px system-ui,sans-serif";
+      cx.textAlign="center";cx.textBaseline="middle";
       cx.strokeStyle="#000";cx.lineWidth=2*DPR/VIEW.z;
-      cx.strokeText(String(stk),x+r*0.7,y-r*0.7);
+      cx.strokeText(String(stk),x,y+r+10*DPR/VIEW.z);
       cx.fillStyle="#fff";
-      cx.fillText(String(stk),x+r*0.7,y-r*0.7);
+      cx.fillText(String(stk),x,y+r+10*DPR/VIEW.z);
       cx.textAlign="start";cx.textBaseline="alphabetic";cx.lineWidth=1;
     }
     /* under construction: icon-width yellow build bar (3 px, black
